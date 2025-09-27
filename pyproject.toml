@@ -1,0 +1,33 @@
+[build-system]
+requires = ["hatchling>=1.26"]
+build-backend = "hatchling.build"
+
+[project]
+name = "opt-data"
+version = "0.1.0"
+description = "Utilities for exploring and transforming options market datasets."
+readme = "README.md"
+requires-python = ">=3.10"
+license = {text = "MIT"}
+authors = [
+  {name = "Michael Yang"}
+]
+keywords = ["options", "data", "analysis"]
+dependencies = []
+
+[project.optional-dependencies]
+dev = [
+  "pytest>=7.4",
+  "ruff>=0.5"
+]
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/opt_data"]
+
+[tool.ruff]
+line-length = 100
+
+[tool.pytest.ini_options]
+minversion = "7.0"
+pythonpath = ["src"]
+addopts = "-ra"

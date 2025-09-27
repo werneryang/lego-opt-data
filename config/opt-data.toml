@@ -1,0 +1,61 @@
+# opt-data 配置模板
+# 复制为 config/opt-data.local.toml 或通过环境变量覆盖
+
+[ib]
+host = "127.0.0.1"
+port = 7497          # 纸面账户默认端口；真实账户可改为 7496
+client_id = 101
+market_data_type = 2 # 1=实时, 2=冻结, 3=延迟, 4=延迟冻结
+
+[timezone]
+name = "America/New_York"
+update_time = "17:00"
+
+[paths]
+raw = "data/raw/ib/chain"
+clean = "data/clean/ib/chain"
+state = "state"
+contracts_cache = "state/contracts_cache"
+run_logs = "state/run_logs"
+
+[universe]
+file = "config/universe.csv"    # 标的清单（Symbol,conid）
+refresh_days = 30                # 可选：多少天后提醒更新成分
+
+[filters]
+moneyness_pct = 0.30             # ±30%
+expiry_types = ["monthly", "quarterly"]
+
+[rate_limits.discovery]
+per_minute = 5
+burst = 5
+
+[rate_limits.snapshot]
+per_minute = 20
+burst = 10
+max_concurrent = 4
+
+[rate_limits.historical]
+per_minute = 20
+burst = 10
+
+[storage]
+hot_days = 14
+cold_codec = "zstd"
+cold_codec_level = 7
+hot_codec = "snappy"
+
+[compaction]
+enabled = true
+schedule = "weekly"
+weekday = "sunday"
+start_time = "03:00"            # 本地时区运行
+min_file_size_mb = 32
+max_file_size_mb = 256
+
+[logging]
+level = "INFO"
+format = "json"
+
+[cli]
+default_generic_ticks = "100,101,104,106,258" # 包含 IV、Greeks、OI 的通用 tick 列表
