@@ -8,6 +8,7 @@ from typing import Optional
 import typer
 
 from .config import load_config
+from .pipeline.backfill import BackfillPlanner
 from .util.calendar import to_et_date
 
 
@@ -28,8 +29,11 @@ def backfill(
         raise typer.Exit(code=2)
 
     selected = [s.strip().upper() for s in symbols.split(",")] if symbols else None
+
+    planner = BackfillPlanner(cfg)
+    queue = planner.plan(start_date, selected)
     typer.echo(
-        f"[backfill] start={start_date} symbols={selected or 'ALL'} raw_root={cfg.paths.raw}"
+        f"[backfill] planned {len(queue)} tasks -> {planner.queue_path(start_date)}"
     )
 
 

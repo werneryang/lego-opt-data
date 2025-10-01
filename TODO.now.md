@@ -9,6 +9,7 @@
 
 ## 进行中
 - IB 会话连接测试（需要本地 Gateway/权限）
+- 合约发现逻辑实现：已完成过滤与队列计划，待对接 IB 接口及缓存写入
 
 ## 阻塞
 - （空）
@@ -20,3 +21,6 @@
 - [x] 工具模块：限速器/日历/队列（`util/ratelimit.py`, `util/calendar.py`, `util/queue.py`）
 - [x] 存储：分区与写入（`storage/layout.py`, `storage/writer.py`），冷热压缩策略
 - [x] 单元测试：配置加载、分区路径与编解码策略、限速器（`tests/*`）
+- [x] 到期过滤工具与合约筛选（`util/expiry.py`, `ib/discovery.filter_by_scope`）
+- [x] Universe 加载与回填计划队列（`universe.py`, `pipeline/backfill.py`, CLI backfill 集成）
+- [x] 新增单测：到期过滤、Universe 解析、回填队列生成（`tests/test_expiry.py`, `tests/test_universe.py`, `tests/test_backfill_planner.py`）
