@@ -10,9 +10,6 @@
 - [ ] IB 会话连接测试需本地 IB Gateway/TWS 实机环境，待线下联调
 - [ ] 小规模端到端测试（真实 IB 数据）取决于权限与速率配额
 
-## 阻塞
-- （空）
-
 ## Done 2025-09-26
 - [x] 依赖入库（pyproject：pandas/pyarrow/typer/ib-insync/APScheduler/dotenv/pmc）
 - [x] 配置与 CLI 雏形（`src/opt_data/config.py`, `src/opt_data/cli.py`）
