@@ -41,8 +41,9 @@
 1. 新需求 → 更新 `TODO.now.md` 并与 `PLAN.md` 对齐。
 2. 设计决策 → 在 `docs/ADR-xxxx.md` 或 `SCOPE.md` 记录。
 3. 开发 → 遵循模块化结构，提交前运行 `make fmt lint test`。
-4. 数据/调度变更 → 更新 `docs/ops-runbook.md` 与配置模板。
-5. 部署 → 按 `docs/ops-runbook.md` 操作，并记录结果或问题。
+4. 在执行大规模回填前，复制配置到测试目录（如 `config/opt-data.test.toml`），对 AAPL/MSFT 进行冒烟验证，确认输出完整后再切换正式目录。
+5. 数据/调度变更 → 更新 `docs/ops-runbook.md` 与配置模板。
+6. 部署 → 按 `docs/ops-runbook.md` 操作，并记录结果或问题。
 
 ## 审核与验收
 - 代码合并需 CI 通过、至少一次评审；关键路径变更需额外回归测试或数据抽样验证。

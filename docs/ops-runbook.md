@@ -9,6 +9,7 @@
    - `IB_CLIENT_ID`（默认 `101`）
    - `IB_MARKET_DATA_TYPE`（`1=实时`, `2=冻结`, `3=延迟`, `4=延迟冻结`）
 4. 根据需要更新 `config/opt-data.toml` 中的限速、并发、路径与调度窗口。
+5. 准备测试环境配置（避免污染正式目录）：复制 `config/opt-data.toml` 为 `config/opt-data.test.toml`，将 `paths.raw/clean/state/contracts_cache/run_logs` 指向 `data_test/` 与 `state_test/` 等独立路径。
 
 ## 常用命令
 - `make install`：创建/更新虚拟环境并安装依赖（默认调用 `python3`）。
@@ -17,6 +18,17 @@
 - `python -m opt_data.cli backfill --start 2024-10-01 --symbols AAPL,MSFT --execute`：即时执行回填并写入原始/清洗数据。
 - `make update`：执行当天 17:00 ET 日更任务（需保证交易日时间）。
 - `make compact DAYS=14`：对超过指定天数的分区执行合并与压缩转换。
+
+## 冒烟验证（测试目录）
+1. 确认 `config/opt-data.test.toml` 指向测试目录（如 `data_test/`、`state_test/`），并包含要测试的标的（例如 `AAPL, MSFT`）。
+2. 生成队列但不执行：`python -m opt_data.cli backfill --start 2024-10-01 --symbols AAPL,MSFT --config config/opt-data.test.toml`。
+3. 执行冒烟：`python -m opt_data.cli backfill --start 2024-10-01 --symbols AAPL,MSFT --execute --config config/opt-data.test.toml`（可选 `--limit 1`）。
+4. 验证生成的分区：
+   - 原始：`data_test/raw/ib/chain/date=YYYY-MM-DD/underlying=AAPL|MSFT/...`
+   - 清洗：`data_test/clean/ib/chain/view=clean/...`
+   - 调整：`data_test/clean/ib/chain/view=adjusted/...`
+5. 抽查字段（bid/ask/mid/iv/greeks/open_interest、`trade_date`、`asof_ts`、`underlying_close`），确认 `(trade_date, conid)` 唯一；队列文件 `state_test/backfill_*.jsonl` 应为空或仅剩未处理任务。
+6. 冒烟通过后方可在正式目录执行区间回填。
 
 ## 调度配置
 ### macOS（开发环境）
