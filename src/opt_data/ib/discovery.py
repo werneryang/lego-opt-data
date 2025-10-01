@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Dict, List, Iterable, Optional, TYPE_CHECKING
+from typing import Any, Callable, Dict, List, Iterable, Optional, TYPE_CHECKING
 import json
 import logging
 from datetime import date
@@ -116,6 +116,7 @@ def discover_contracts_for_symbol(
     *,
     underlying_conid: Optional[int] = None,
     force_refresh: bool = False,
+    acquire_token: Optional[Callable[[], None]] = None,
 ) -> List[Dict[str, Any]]:
     """Discover option contracts for *symbol* using IB and cache results."""
 
@@ -131,6 +132,8 @@ def discover_contracts_for_symbol(
             return cached
 
     ib = session.ensure_connected()
+    if acquire_token:
+        acquire_token()
     params = ib.reqSecDefOptParams(symbol, "", "STK", underlying_conid or 0)
 
     candidates: List[Dict[str, Any]] = []
@@ -181,6 +184,8 @@ def discover_contracts_for_symbol(
                 tradingClass=candidate["tradingClass"],
             )
             try:
+                if acquire_token:
+                    acquire_token()
                 details = ib.reqContractDetails(option)
             except Exception as exc:  # pragma: no cover - network failure
                 logger.warning(

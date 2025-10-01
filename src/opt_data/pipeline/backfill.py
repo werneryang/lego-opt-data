@@ -1,12 +1,13 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import date
+from datetime import date, timedelta
 from pathlib import Path
 from typing import Callable, List, Sequence, Optional, Dict, Any
 
 import logging
 import math
+import time
 import pandas as pd
 
 from ..config import AppConfig
@@ -16,6 +17,8 @@ from ..ib.session import IBSession
 from ..ib.discovery import discover_contracts_for_symbol
 from ..storage.writer import ParquetWriter
 from ..storage.layout import partition_for
+from ..util.calendar import is_trading_day
+from ..util.ratelimit import TokenBucket
 from .cleaning import CleaningPipeline
 
 logger = logging.getLogger(__name__)
@@ -118,6 +121,7 @@ def fetch_option_snapshots(
     *,
     timeout: float = 10.0,
     poll_interval: float = 0.5,
+    acquire_token: Optional[Callable[[], None]] = None,
 ) -> List[Dict[str, Any]]:
     from ib_insync import Option  # type: ignore
 
@@ -134,6 +138,8 @@ def fetch_option_snapshots(
             tradingClass=info.get("tradingClass"),
         )
 
+        if acquire_token:
+            acquire_token()
         ticker = ib.reqMktData(option, genericTickList=generic_ticks, snapshot=True)
         elapsed = 0.0
         while elapsed < timeout and not _has_market_data(ticker):
@@ -200,13 +206,30 @@ class BackfillRunner:
             )
         )
         self.snapshot_fetcher = snapshot_fetcher or (
-            lambda ib, contracts, ticks: fetch_option_snapshots(ib, contracts, ticks)
+            lambda ib, contracts, ticks, acquire_token=None: fetch_option_snapshots(
+                ib, contracts, ticks, acquire_token=acquire_token
+            )
         )
         self.underlying_fetcher = underlying_fetcher or (
             lambda ib, symbol, dt, conid=None: fetch_underlying_close(ib, symbol, dt, conid)
         )
         self.writer = writer or ParquetWriter(cfg)
         self.cleaner = cleaner or CleaningPipeline.create(cfg)
+
+        self._limiters: Dict[str, TokenBucket] = {
+            "discovery": TokenBucket.create(
+                capacity=self.cfg.rate_limits.discovery.burst,
+                refill_per_minute=self.cfg.rate_limits.discovery.per_minute,
+            ),
+            "snapshot": TokenBucket.create(
+                capacity=self.cfg.rate_limits.snapshot.burst,
+                refill_per_minute=self.cfg.rate_limits.snapshot.per_minute,
+            ),
+            "historical": TokenBucket.create(
+                capacity=self.cfg.rate_limits.historical.burst,
+                refill_per_minute=self.cfg.rate_limits.historical.per_minute,
+            ),
+        }
 
     def run(
         self,
@@ -238,6 +261,7 @@ class BackfillRunner:
                 symbol = task["symbol"]
                 underlying_conid = task.get("underlying_conid")
                 try:
+                    self._acquire("historical")
                     underlying_close = self.underlying_fetcher(
                         ib, symbol, start_date, underlying_conid
                     )
@@ -249,6 +273,7 @@ class BackfillRunner:
                         self.cfg,
                         underlying_conid=underlying_conid,
                         force_refresh=force_refresh,
+                        acquire_token=self._make_acquire("discovery"),
                     )
                     if not contracts:
                         logger.warning(
@@ -261,6 +286,7 @@ class BackfillRunner:
                         ib,
                         contracts,
                         self.cfg.cli.default_generic_ticks,
+                        acquire_token=self._make_acquire("snapshot"),
                     )
                     if not snapshots:
                         logger.warning(
@@ -325,3 +351,36 @@ class BackfillRunner:
                     queue.save()
                     break
         return processed
+
+    def run_range(
+        self,
+        start_date: date,
+        end_date: date,
+        symbols: Optional[Sequence[str]] = None,
+        *,
+        force_refresh: bool = False,
+        limit_per_day: Optional[int] = None,
+    ) -> int:
+        if end_date < start_date:
+            raise ValueError("end date must be on or after start date")
+
+        total_processed = 0
+        current = start_date
+        while current <= end_date:
+            if is_trading_day(current):
+                total_processed += self.run(
+                    current,
+                    symbols,
+                    limit=limit_per_day,
+                    force_refresh=force_refresh,
+                )
+            current += timedelta(days=1)
+        return total_processed
+
+    def _acquire(self, name: str, tokens: int = 1) -> None:
+        limiter = self._limiters[name]
+        while not limiter.try_acquire(tokens):
+            time.sleep(1.0)
+
+    def _make_acquire(self, name: str) -> Callable[[], None]:
+        return lambda: self._acquire(name)

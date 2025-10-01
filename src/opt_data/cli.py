@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import sys
-from datetime import date, datetime
+from datetime import date, datetime, timedelta
 from pathlib import Path
 from typing import Optional
 
@@ -9,7 +9,7 @@ import typer
 
 from .config import load_config
 from .pipeline.backfill import BackfillPlanner, BackfillRunner
-from .util.calendar import to_et_date
+from .util.calendar import to_et_date, is_trading_day
 
 
 app = typer.Typer(add_completion=False, help="opt-data CLI entrypoint")
@@ -20,33 +20,79 @@ def backfill(
     start: str = typer.Option(..., help="Start date YYYY-MM-DD"),
     symbols: Optional[str] = typer.Option(None, help="Comma separated symbols, optional"),
     config: Optional[str] = typer.Option(None, help="Path to config TOML"),
+    end: Optional[str] = typer.Option(
+        None, help="End date YYYY-MM-DD or 'today'. Defaults to start date."
+    ),
+    days: Optional[int] = typer.Option(
+        None, help="Number of calendar days to backfill starting from start"
+    ),
     execute: bool = typer.Option(False, "--execute/--plan-only", help="Run backfill immediately"),
     limit: Optional[int] = typer.Option(
-        None, help="Limit number of symbols to process during execution"
+        None, help="Limit number of symbols to process per day during execution"
     ),
     force_refresh: bool = typer.Option(False, help="Ignore cached contracts when executing"),
 ) -> None:
     cfg = load_config(Path(config) if config else None)
-    try:
-        start_date = date.fromisoformat(start)
-    except ValueError:
-        typer.echo("Invalid --start date, expected YYYY-MM-DD", err=True)
+
+    def parse_date(value: str) -> date:
+        if value == "today":
+            return to_et_date(datetime.utcnow())
+        try:
+            return date.fromisoformat(value)
+        except ValueError as exc:
+            raise typer.BadParameter("Expected YYYY-MM-DD or 'today'") from exc
+
+    start_date = parse_date(start)
+
+    if end and days:
+        typer.echo("Cannot specify both --end and --days", err=True)
+        raise typer.Exit(code=2)
+
+    if days is not None and days <= 0:
+        typer.echo("--days must be positive", err=True)
+        raise typer.Exit(code=2)
+
+    if end:
+        end_date = parse_date(end)
+    elif days:
+        end_date = start_date + timedelta(days=days - 1)
+    else:
+        end_date = start_date
+
+    if end_date < start_date:
+        typer.echo("--end must be on or after --start", err=True)
         raise typer.Exit(code=2)
 
     selected = [s.strip().upper() for s in symbols.split(",")] if symbols else None
 
     planner = BackfillPlanner(cfg)
-    queue = planner.plan(start_date, selected)
-    queue_path = planner.queue_path(start_date)
-    typer.echo(f"[backfill] planned {len(queue)} tasks -> {queue_path}")
+
+    current = start_date
+    total_tasks = 0
+    planned_days = 0
+    while current <= end_date:
+        if is_trading_day(current):
+            queue = planner.plan(current, selected)
+            queue_path = planner.queue_path(current)
+            typer.echo(
+                f"[backfill] planned {len(queue)} tasks for {current.isoformat()} -> {queue_path}"
+            )
+            total_tasks += len(queue)
+            planned_days += 1
+        current += timedelta(days=1)
+
+    typer.echo(
+        f"[backfill] planning complete: {planned_days} trading days, total tasks={total_tasks}"
+    )
 
     if execute:
         runner = BackfillRunner(cfg)
-        processed = runner.run(
+        processed = runner.run_range(
             start_date,
+            end_date,
             selected,
-            limit=limit,
             force_refresh=force_refresh,
+            limit_per_day=limit,
         )
         typer.echo(f"[backfill] executed tasks={processed} output_root={cfg.paths.raw}")
 

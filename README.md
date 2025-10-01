@@ -7,7 +7,7 @@ A lightweight Python toolkit for loading, inspecting, and transforming options m
 1. Create a Python 3.11 virtual environment: `python3.11 -m venv .venv`
 2. Activate it and install dependencies: `source .venv/bin/activate` then `pip install -e .[dev]`
 3. Run the test suite: `pytest`
-4. Plan and execute a smoke backfill: `python -m opt_data.cli backfill --start 2024-10-01 --symbols AAPL,MSFT --execute`
+4. Plan and execute a smoke backfill (using your isolated config): `python -m opt_data.cli backfill --start 2024-10-01 --symbols AAPL,MSFT --execute --config config/opt-data.test.toml`
 
 If you prefer `uv` or another package manager, adapt the commands accordingly; the project is configured via `pyproject.toml` and uses Hatch for builds.
 

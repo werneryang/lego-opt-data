@@ -107,10 +107,13 @@ def fake_contract_fetcher(
 
 
 def fake_snapshot_fetcher(
-    ib: Any, contracts: List[Dict[str, Any]], ticks: str
+    ib: Any, contracts: List[Dict[str, Any]], ticks: str, **kwargs: Any
 ) -> List[Dict[str, Any]]:
+    acquire = kwargs.get("acquire_token")
     rows = []
     for c in contracts:
+        if callable(acquire):
+            acquire()
         r = dict(c)
         r.update(
             {
@@ -178,3 +181,29 @@ def test_backfill_runner_persists_raw_data(tmp_path: Path) -> None:
     queue_file = cfg.paths.state / "backfill_2024-10-01.jsonl"
     assert queue_file.exists()
     assert queue_file.read_text(encoding="utf-8") == ""
+
+
+def test_run_range_skips_non_trading(monkeypatch, tmp_path: Path) -> None:
+    cfg = _cfg(tmp_path)
+
+    calls: List[date] = []
+
+    def fake_run(self, dt: date, symbols=None, limit=None, force_refresh=False):  # type: ignore[override]
+        calls.append(dt)
+        return 1
+
+    monkeypatch.setattr(BackfillRunner, "run", fake_run)
+
+    runner = BackfillRunner(
+        cfg,
+        session_factory=lambda: FakeSession(),
+        contract_fetcher=fake_contract_fetcher,
+        snapshot_fetcher=fake_snapshot_fetcher,
+        underlying_fetcher=fake_underlying_fetcher,
+    )
+
+    total = runner.run_range(date(2024, 10, 4), date(2024, 10, 7))
+
+    # 2024-10-04 is Friday, 05/06 weekend skipped, 07 Monday processed
+    assert total == 2
+    assert calls == [date(2024, 10, 4), date(2024, 10, 7)]

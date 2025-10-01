@@ -29,6 +29,8 @@ coverage.xml
 # Local data and artifacts
 data/
 !data/.gitkeep
+data_test/
 state/
 !state/.gitkeep
+state_test/
 outputs/
