@@ -1,16 +1,14 @@
 # 本周任务（滚动更新）
 
 ## 待办
-- [ ] 完成 IB 基础连接联调（本地 Gateway）
-- [ ] 清洗流水线与公司行动调整模块占位与实现
-- [ ] 小规模端到端集成测试（AAPL/MSFT 回填一日，真实 IB 接入）
-- [ ] 根据运行结果更新 `docs/ops-runbook.md` 与 `PLAN.md`
+- （空）
 
 ## 进行中
-- IB 会话连接测试（需要本地 Gateway/权限）
+- （空）
 
 ## 阻塞
-- [ ] `make test` 依赖本地虚拟环境（运行 `make install` 后重试）
+- [ ] IB 会话连接测试需本地 IB Gateway/TWS 实机环境，待线下联调
+- [ ] 小规模端到端测试（真实 IB 数据）取决于权限与速率配额
 
 ## 阻塞
 - （空）
@@ -28,3 +26,6 @@
 - [x] IB 合约发现实现（`ib/discovery.discover_contracts_for_symbol`），含缓存与过滤
 - [x] 回填执行器骨架写入 raw 数据（`pipeline/backfill.BackfillRunner`，CLI `backfill --execute`）
 - [x] 新增单测：合约发现缓存、BackfillRunner 写入 parquet（`tests/test_discovery.py`, `tests/test_backfill_runner.py`）
+- [x] 清洗流水线与公司行动调整（`pipeline/cleaning.py`, `pipeline/actions.py`）及测试
+- [x] 文档更新（数据契约、Runbook、PLAN、README、AGENTS）与 Python 版本说明
+- [x] 本地 `make install`（Python 3.11）并通过 `make test`

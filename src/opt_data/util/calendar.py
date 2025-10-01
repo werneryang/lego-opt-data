@@ -24,4 +24,3 @@ def is_trading_day(d: date) -> bool:
     cal = mcal.get_calendar("XNYS")
     schedule = cal.schedule(start_date=d, end_date=d)
     return not schedule.empty
-

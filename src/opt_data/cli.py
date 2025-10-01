@@ -21,7 +21,9 @@ def backfill(
     symbols: Optional[str] = typer.Option(None, help="Comma separated symbols, optional"),
     config: Optional[str] = typer.Option(None, help="Path to config TOML"),
     execute: bool = typer.Option(False, "--execute/--plan-only", help="Run backfill immediately"),
-    limit: Optional[int] = typer.Option(None, help="Limit number of symbols to process during execution"),
+    limit: Optional[int] = typer.Option(
+        None, help="Limit number of symbols to process during execution"
+    ),
     force_refresh: bool = typer.Option(False, help="Ignore cached contracts when executing"),
 ) -> None:
     cfg = load_config(Path(config) if config else None)
@@ -36,9 +38,7 @@ def backfill(
     planner = BackfillPlanner(cfg)
     queue = planner.plan(start_date, selected)
     queue_path = planner.queue_path(start_date)
-    typer.echo(
-        f"[backfill] planned {len(queue)} tasks -> {queue_path}"
-    )
+    typer.echo(f"[backfill] planned {len(queue)} tasks -> {queue_path}")
 
     if execute:
         runner = BackfillRunner(cfg)
@@ -70,9 +70,7 @@ def compact(
     config: Optional[str] = typer.Option(None, help="Path to config TOML"),
 ) -> None:
     cfg = load_config(Path(config) if config else None)
-    typer.echo(
-        f"[compact] older_than={older_than} data_roots=[{cfg.paths.raw}, {cfg.paths.clean}]"
-    )
+    typer.echo(f"[compact] older_than={older_than} data_roots=[{cfg.paths.raw}, {cfg.paths.clean}]")
 
 
 @app.command()

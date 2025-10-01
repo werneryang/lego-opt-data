@@ -8,7 +8,12 @@ import logging
 from datetime import date
 
 from ..config import AppConfig
-from ..util.expiry import is_standard_monthly_expiry, is_quarterly_expiry, filter_expiries, third_friday
+from ..util.expiry import (
+    is_standard_monthly_expiry,
+    is_quarterly_expiry,
+    filter_expiries,
+    third_friday,
+)
 
 if TYPE_CHECKING:  # pragma: no cover
     from .session import IBSession
@@ -77,7 +82,9 @@ def filter_by_scope(
     return out
 
 
-def discover_contracts(*_: Any, **__: Any) -> List[Dict[str, Any]]:  # pragma: no cover - placeholder
+def discover_contracts(
+    *_: Any, **__: Any
+) -> List[Dict[str, Any]]:  # pragma: no cover - placeholder
     """Deprecated placeholder kept for backward compatibility."""
     return []
 
@@ -176,7 +183,11 @@ def discover_contracts_for_symbol(
             try:
                 details = ib.reqContractDetails(option)
             except Exception as exc:  # pragma: no cover - network failure
-                logger.warning("reqContractDetails failed", extra={"symbol": symbol, "right": right, "expiry": expiry_yyyymmdd}, exc_info=exc)
+                logger.warning(
+                    "reqContractDetails failed",
+                    extra={"symbol": symbol, "right": right, "expiry": expiry_yyyymmdd},
+                    exc_info=exc,
+                )
                 continue
             for detail in details:
                 contract = detail.contract
@@ -193,9 +204,14 @@ def discover_contracts_for_symbol(
                     "currency": contract.currency or "USD",
                 }
 
-    ordered = sorted(results.values(), key=lambda x: (x["expiry"], x["strike"], x["right"], x["exchange"]))
+    ordered = sorted(
+        results.values(), key=lambda x: (x["expiry"], x["strike"], x["right"], x["exchange"])
+    )
     save_cache(cache_root, symbol, cache_key, ordered)
     logger.info(
-        "Discovered %s contracts for %s", len(ordered), symbol, extra={"symbol": symbol, "contracts": len(ordered)}
+        "Discovered %s contracts for %s",
+        len(ordered),
+        symbol,
+        extra={"symbol": symbol, "contracts": len(ordered)},
     )
     return ordered

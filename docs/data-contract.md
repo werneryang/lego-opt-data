@@ -1,16 +1,17 @@
 # 数据契约：清洗与调整层 Schema
 
 ## 总览
+- **数据视图**：`data/raw/ib/chain`（原始）、`data/clean/ib/chain/view=clean`（标准化）、`view=adjusted`（公司行动调整）。
 - **分区键**：`date`（交易日）、`underlying`（标的符号）、`exchange`（主要交易所）。
 - **主键**：`trade_date + conid`。
 - **文件格式**：Parquet（Snappy for hot partitions, ZSTD for cold partitions）。
-- **时间戳**：`asof_ts` 使用 UTC，写入前统一转换。
+- **时间戳**：`asof_ts` 统一转为 UTC 并去除时区信息。
 
 ## 字段定义
 | 字段名 | 类型 | 描述 | 允许为空 | 备注 |
 | --- | --- | --- | --- | --- |
-| `trade_date` | `date` | 交易日（ET） | 否 | 与分区字段 `date` 一致 |
-| `asof_ts` | `timestamp[us]` | 数据采集时间（UTC） | 否 | 精度微秒 |
+| `trade_date` | `timestamp[ns]` | 交易日（ET，00:00） | 否 | 与分区字段 `date` 一致 |
+| `asof_ts` | `timestamp[ns]` | 数据采集时间（UTC，去时区） | 否 | 精度微秒 |
 | `underlying` | `string` | 标的符号 | 否 | 大写字母 |
 | `underlying_close` | `double` | 标的当日收盘价 | 否 | 来自 IB 或外部行情 |
 | `underlying_close_adj` | `double` | 公司行动调整后的收盘价 | 是 | 无调整时等于 `underlying_close` |

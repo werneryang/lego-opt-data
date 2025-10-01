@@ -28,4 +28,3 @@ def load_universe(path: Path) -> List[UniverseEntry]:
             conid = int(conid_raw) if conid_raw else None
             entries.append(UniverseEntry(symbol=symbol, conid=conid))
     return entries
-

@@ -9,13 +9,14 @@ import logging
 import math
 import pandas as pd
 
-from ..config import AppConfig, FiltersConfig
+from ..config import AppConfig
 from ..universe import load_universe
 from ..util.queue import PersistentQueue
 from ..ib.session import IBSession
 from ..ib.discovery import discover_contracts_for_symbol
 from ..storage.writer import ParquetWriter
 from ..storage.layout import partition_for
+from .cleaning import CleaningPipeline
 
 logger = logging.getLogger(__name__)
 
@@ -69,7 +70,9 @@ def _default_session_factory(cfg: AppConfig) -> IBSession:
     )
 
 
-def fetch_underlying_close(ib: Any, symbol: str, trade_date: date, conid: Optional[int] = None) -> float:
+def fetch_underlying_close(
+    ib: Any, symbol: str, trade_date: date, conid: Optional[int] = None
+) -> float:
     from ib_insync import Stock  # type: ignore
 
     # Qualify the underlying contract
@@ -177,11 +180,17 @@ class BackfillRunner:
         snapshot_fetcher: Optional[Callable[..., List[Dict[str, Any]]]] = None,
         underlying_fetcher: Optional[Callable[..., float]] = None,
         writer: Optional[ParquetWriter] = None,
+        cleaner: Optional[CleaningPipeline] = None,
     ) -> None:
         self.cfg = cfg
         self.session_factory = session_factory or (lambda: _default_session_factory(cfg))
         self.contract_fetcher = contract_fetcher or (
-            lambda session, symbol, trade_date, price, config, **kwargs: discover_contracts_for_symbol(
+            lambda session,
+            symbol,
+            trade_date,
+            price,
+            config,
+            **kwargs: discover_contracts_for_symbol(
                 session,
                 symbol,
                 trade_date,
@@ -197,6 +206,7 @@ class BackfillRunner:
             lambda ib, symbol, dt, conid=None: fetch_underlying_close(ib, symbol, dt, conid)
         )
         self.writer = writer or ParquetWriter(cfg)
+        self.cleaner = cleaner or CleaningPipeline.create(cfg)
 
     def run(
         self,
@@ -228,7 +238,9 @@ class BackfillRunner:
                 symbol = task["symbol"]
                 underlying_conid = task.get("underlying_conid")
                 try:
-                    underlying_close = self.underlying_fetcher(ib, symbol, start_date, underlying_conid)
+                    underlying_close = self.underlying_fetcher(
+                        ib, symbol, start_date, underlying_conid
+                    )
                     contracts = self.contract_fetcher(
                         session,
                         symbol,
@@ -239,7 +251,9 @@ class BackfillRunner:
                         force_refresh=force_refresh,
                     )
                     if not contracts:
-                        logger.warning("No contracts discovered", extra={"symbol": symbol, "date": start_date})
+                        logger.warning(
+                            "No contracts discovered", extra={"symbol": symbol, "date": start_date}
+                        )
                         queue.save()
                         continue
 
@@ -249,21 +263,53 @@ class BackfillRunner:
                         self.cfg.cli.default_generic_ticks,
                     )
                     if not snapshots:
-                        logger.warning("No market data snapshots", extra={"symbol": symbol, "date": start_date})
+                        logger.warning(
+                            "No market data snapshots", extra={"symbol": symbol, "date": start_date}
+                        )
                         queue.save()
                         continue
 
                     df = pd.DataFrame(snapshots)
                     df["trade_date"] = start_date
-                    df["asof_ts"] = pd.Timestamp.utcnow()
+                    df["underlying_close"] = underlying_close
+                    df["symbol"] = symbol
+                    if "asof" in df.columns:
+                        df["asof_ts"] = pd.to_datetime(df["asof"], errors="coerce")
+                        df.drop(columns=["asof"], inplace=True)
+                        fallback_ts = pd.Timestamp.utcnow().tz_localize(None)
+                        df.loc[df["asof_ts"].isna(), "asof_ts"] = fallback_ts
+                    else:
+                        df["asof_ts"] = pd.Timestamp.utcnow().tz_localize(None)
 
-                    for exchange, group in df.groupby("exchange"):
+                    for exchange, group in df.groupby("exchange", dropna=False):
                         partition = partition_for(
                             self.cfg,
                             self.cfg.paths.raw,
                             start_date,
                             symbol,
-                            exchange or "SMART",
+                            (exchange or "SMART"),
+                        )
+                        self.writer.write_dataframe(group.reset_index(drop=True), partition)
+
+                    clean_df, adjusted_df = self.cleaner.process(df)
+
+                    for exchange, group in clean_df.groupby("exchange", dropna=False):
+                        partition = partition_for(
+                            self.cfg,
+                            self.cfg.paths.clean / "view=clean",
+                            start_date,
+                            symbol,
+                            (exchange or "SMART"),
+                        )
+                        self.writer.write_dataframe(group.reset_index(drop=True), partition)
+
+                    for exchange, group in adjusted_df.groupby("exchange", dropna=False):
+                        partition = partition_for(
+                            self.cfg,
+                            self.cfg.paths.clean / "view=adjusted",
+                            start_date,
+                            symbol,
+                            (exchange or "SMART"),
                         )
                         self.writer.write_dataframe(group.reset_index(drop=True), partition)
 

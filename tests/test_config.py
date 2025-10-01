@@ -18,6 +18,9 @@ def test_load_config_from_custom_file(tmp_path: Path) -> None:
         state = "state"
         contracts_cache = "state/contracts_cache"
         run_logs = "state/run_logs"
+
+        [reference]
+        corporate_actions = "config/actions.csv"
         """
     ).strip()
 
@@ -29,4 +32,4 @@ def test_load_config_from_custom_file(tmp_path: Path) -> None:
     assert cfg.ib.client_id == 102
     assert cfg.paths.raw.name == "raw"
     assert cfg.paths.state.name == "state"
-
+    assert cfg.reference.corporate_actions.name == "actions.csv"

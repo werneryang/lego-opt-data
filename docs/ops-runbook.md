@@ -2,17 +2,19 @@
 
 ## 运行前准备
 1. 启动 IB Gateway/TWS，确认登录账户具有美股期权实时或延迟行情权限。
-2. 确保 `.env`（或环境变量）配置以下变量：
+2. 使用 Python ≥3.10（推荐 3.11）：`python3.11 -m venv .venv && .venv/bin/pip install --upgrade pip`，随后执行 `./.venv/bin/pip install -e .[dev]`。若直接运行 `make install`，需保证 `python3` 指向 3.10+。
+3. 确保 `.env`（或环境变量）配置以下变量：
    - `IB_HOST`（默认 `127.0.0.1`）
    - `IB_PORT`（默认 `7497` / 纸面账户，真账户为 `7496`）
    - `IB_CLIENT_ID`（默认 `101`）
    - `IB_MARKET_DATA_TYPE`（`1=实时`, `2=冻结`, `3=延迟`, `4=延迟冻结`）
-3. 根据需要更新 `config/opt-data.toml` 中的限速、并发、路径与调度窗口。
+4. 根据需要更新 `config/opt-data.toml` 中的限速、并发、路径与调度窗口。
 
 ## 常用命令
-- `make install`：创建/更新虚拟环境并安装依赖。
+- `make install`：创建/更新虚拟环境并安装依赖（默认调用 `python3`）。
 - `make fmt lint test`：代码风格、静态检查、测试。
-- `make backfill START=2024-10-01 SYMBOLS=AAPL,MSFT`：执行回填任务。
+- `make backfill START=2024-10-01 SYMBOLS=AAPL,MSFT`：初始化回填任务队列。
+- `python -m opt_data.cli backfill --start 2024-10-01 --symbols AAPL,MSFT --execute`：即时执行回填并写入原始/清洗数据。
 - `make update`：执行当天 17:00 ET 日更任务（需保证交易日时间）。
 - `make compact DAYS=14`：对超过指定天数的分区执行合并与压缩转换。
 
@@ -50,7 +52,7 @@
 
 ## 恢复流程
 1. 根据日志定位失败的 symbol/date。
-2. 调用 `opt-data backfill --start <date> --symbols <list>` 或 `opt-data update --date <date>` 进行补跑。
+2. 调用 `python -m opt_data.cli backfill --start <date> --symbols <list> --execute` 或 `python -m opt_data.cli update --date <date>` 进行补跑。
 3. 重跑后检查数据目录分区是否新增，校验 QA 指标（记录缺失率、行数）。
 4. 更新 `TODO.now.md` 与 `PLAN.md`，说明故障原因与处理方式。
 

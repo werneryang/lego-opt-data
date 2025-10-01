@@ -1,7 +1,21 @@
 from datetime import date
 from pathlib import Path
 
-from opt_data.config import AppConfig, IBConfig, TimezoneConfig, PathsConfig, UniverseConfig, FiltersConfig, RateLimitClassConfig, RateLimitsConfig, StorageConfig, CompactionConfig, LoggingConfig, CLIConfig
+from opt_data.config import (
+    AppConfig,
+    IBConfig,
+    TimezoneConfig,
+    PathsConfig,
+    UniverseConfig,
+    FiltersConfig,
+    RateLimitClassConfig,
+    RateLimitsConfig,
+    StorageConfig,
+    CompactionConfig,
+    LoggingConfig,
+    CLIConfig,
+    ReferenceConfig,
+)
 from opt_data.pipeline.backfill import BackfillPlanner
 
 
@@ -17,13 +31,16 @@ def _cfg(tmp_path: Path) -> AppConfig:
             run_logs=tmp_path / "state/run_logs",
         ),
         universe=UniverseConfig(file=tmp_path / "universe.csv", refresh_days=30),
+        reference=ReferenceConfig(corporate_actions=tmp_path / "actions.csv"),
         filters=FiltersConfig(moneyness_pct=0.3, expiry_types=["monthly", "quarterly"]),
         rate_limits=RateLimitsConfig(
             discovery=RateLimitClassConfig(per_minute=5, burst=5),
             snapshot=RateLimitClassConfig(per_minute=20, burst=10, max_concurrent=4),
             historical=RateLimitClassConfig(per_minute=20, burst=10),
         ),
-        storage=StorageConfig(hot_days=14, cold_codec="zstd", cold_codec_level=7, hot_codec="snappy"),
+        storage=StorageConfig(
+            hot_days=14, cold_codec="zstd", cold_codec_level=7, hot_codec="snappy"
+        ),
         compaction=CompactionConfig(
             enabled=True,
             schedule="weekly",

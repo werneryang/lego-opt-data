@@ -22,6 +22,9 @@ run_logs = "state/run_logs"
 file = "config/universe.csv"    # 标的清单（Symbol,conid）
 refresh_days = 30                # 可选：多少天后提醒更新成分
 
+[reference]
+corporate_actions = "config/corporate_actions.csv"
+
 [filters]
 moneyness_pct = 0.30             # ±30%
 expiry_types = ["monthly", "quarterly"]

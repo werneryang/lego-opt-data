@@ -47,9 +47,7 @@ class DataCatalog:
 
         if name not in self.sources:
             available = ", ".join(sorted(self.sources)) or "<empty>"
-            raise KeyError(
-                f"No dataset registered under '{name}'. Known datasets: {available}"
-            )
+            raise KeyError(f"No dataset registered under '{name}'. Known datasets: {available}")
         return self.sources[name]
 
     def _ensure_within_root(self, name: str, relative_path: Path) -> Path:

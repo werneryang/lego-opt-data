@@ -62,4 +62,3 @@ def filter_expiries(expiries: Iterable[date], kinds: Iterable[str]) -> List[date
             dedup.append(d)
             seen.add(d)
     return dedup
-

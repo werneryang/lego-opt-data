@@ -4,7 +4,21 @@ from typing import Any, List, Dict
 
 import pandas as pd
 
-from opt_data.config import AppConfig, IBConfig, TimezoneConfig, PathsConfig, UniverseConfig, FiltersConfig, RateLimitClassConfig, RateLimitsConfig, StorageConfig, CompactionConfig, LoggingConfig, CLIConfig
+from opt_data.config import (
+    AppConfig,
+    IBConfig,
+    TimezoneConfig,
+    PathsConfig,
+    UniverseConfig,
+    FiltersConfig,
+    RateLimitClassConfig,
+    RateLimitsConfig,
+    StorageConfig,
+    CompactionConfig,
+    LoggingConfig,
+    CLIConfig,
+    ReferenceConfig,
+)
 from opt_data.pipeline.backfill import BackfillRunner, BackfillPlanner
 
 
@@ -20,13 +34,16 @@ def _cfg(tmp_path: Path) -> AppConfig:
             run_logs=tmp_path / "logs",
         ),
         universe=UniverseConfig(file=tmp_path / "universe.csv", refresh_days=30),
+        reference=ReferenceConfig(corporate_actions=tmp_path / "actions.csv"),
         filters=FiltersConfig(moneyness_pct=0.3, expiry_types=["monthly", "quarterly"]),
         rate_limits=RateLimitsConfig(
             discovery=RateLimitClassConfig(per_minute=5, burst=5),
             snapshot=RateLimitClassConfig(per_minute=20, burst=10, max_concurrent=4),
             historical=RateLimitClassConfig(per_minute=20, burst=10),
         ),
-        storage=StorageConfig(hot_days=14, cold_codec="zstd", cold_codec_level=7, hot_codec="snappy"),
+        storage=StorageConfig(
+            hot_days=14, cold_codec="zstd", cold_codec_level=7, hot_codec="snappy"
+        ),
         compaction=CompactionConfig(
             enabled=True,
             schedule="weekly",
@@ -60,7 +77,9 @@ class FakeSession:
         self.connected = False
 
 
-def fake_contract_fetcher(session: Any, symbol: str, trade_date: date, underlying_close: float, cfg: AppConfig, **_: Any) -> List[Dict[str, Any]]:
+def fake_contract_fetcher(
+    session: Any, symbol: str, trade_date: date, underlying_close: float, cfg: AppConfig, **_: Any
+) -> List[Dict[str, Any]]:
     return [
         {
             "symbol": symbol,
@@ -87,7 +106,9 @@ def fake_contract_fetcher(session: Any, symbol: str, trade_date: date, underlyin
     ]
 
 
-def fake_snapshot_fetcher(ib: Any, contracts: List[Dict[str, Any]], ticks: str) -> List[Dict[str, Any]]:
+def fake_snapshot_fetcher(
+    ib: Any, contracts: List[Dict[str, Any]], ticks: str
+) -> List[Dict[str, Any]]:
     rows = []
     for c in contracts:
         r = dict(c)
@@ -120,6 +141,7 @@ def test_backfill_runner_persists_raw_data(tmp_path: Path) -> None:
     cfg = _cfg(tmp_path)
     cfg.paths.state.mkdir(parents=True)
     cfg.paths.raw.mkdir(parents=True)
+    cfg.paths.clean.mkdir(parents=True)
     cfg.universe.file.write_text("symbol\nAAPL\n", encoding="utf-8")
 
     planner = BackfillPlanner(cfg)
@@ -136,13 +158,22 @@ def test_backfill_runner_persists_raw_data(tmp_path: Path) -> None:
     processed = runner.run(date(2024, 10, 1), symbols=["AAPL"], limit=1)
     assert processed == 1
 
-    files = list(cfg.paths.raw.glob("**/*.parquet"))
-    assert files, "expected parquet output"
+    raw_files = list(cfg.paths.raw.glob("**/*.parquet"))
+    assert raw_files, "expected parquet output"
 
-    df = pd.read_parquet(files[0])
-    assert {"bid", "ask", "trade_date"}.issubset(df.columns)
-    trade_dates = pd.to_datetime(df["trade_date"]).dt.date.unique().tolist()
+    df_raw = pd.read_parquet(raw_files[0])
+    assert {"bid", "ask", "trade_date", "underlying_close"}.issubset(df_raw.columns)
+    trade_dates = pd.to_datetime(df_raw["trade_date"]).dt.date.unique().tolist()
     assert trade_dates == [date(2024, 10, 1)]
+
+    clean_files = list((cfg.paths.clean / "view=clean").glob("**/*.parquet"))
+    adjusted_files = list((cfg.paths.clean / "view=adjusted").glob("**/*.parquet"))
+    assert clean_files and adjusted_files
+
+    df_clean = pd.read_parquet(clean_files[0])
+    assert "mid" in df_clean.columns
+    df_adjusted = pd.read_parquet(adjusted_files[0])
+    assert "underlying_close_adj" in df_adjusted.columns
 
     queue_file = cfg.paths.state / "backfill_2024-10-01.jsonl"
     assert queue_file.exists()

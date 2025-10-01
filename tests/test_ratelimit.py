@@ -15,4 +15,3 @@ def test_token_bucket_refill_and_acquire() -> None:
     # advance 1 second, 1 token should refill (60/min -> 1/sec)
     fake_time[0] += 1.0
     assert tb.try_acquire()  # token available again
-

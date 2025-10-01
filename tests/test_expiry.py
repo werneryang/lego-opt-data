@@ -1,6 +1,11 @@
 from datetime import date
 
-from opt_data.util.expiry import third_friday, is_standard_monthly_expiry, is_quarterly_expiry, filter_expiries
+from opt_data.util.expiry import (
+    third_friday,
+    is_standard_monthly_expiry,
+    is_quarterly_expiry,
+    filter_expiries,
+)
 
 
 def test_third_friday_known_dates() -> None:
@@ -23,4 +28,3 @@ def test_filter_expiries() -> None:
     assert out_m == xs
     out_q = filter_expiries(xs, ["quarterly"])  # only Mar and Jun
     assert out_q == [date(2025, 3, 21), date(2025, 6, 20)]
-

@@ -16,11 +16,17 @@ class Partition:
 
     def path(self) -> Path:
         d = self.trade_date.strftime("%Y-%m-%d")
-        return (self.root / f"date={d}" / f"underlying={self.underlying}" / f"exchange={self.exchange}").resolve()
+        return (
+            self.root / f"date={d}" / f"underlying={self.underlying}" / f"exchange={self.exchange}"
+        ).resolve()
 
 
-def partition_for(cfg: AppConfig, root: Path, trade_date: date, underlying: str, exchange: str) -> Partition:
-    return Partition(root=root, trade_date=trade_date, underlying=underlying.upper(), exchange=exchange.upper())
+def partition_for(
+    cfg: AppConfig, root: Path, trade_date: date, underlying: str, exchange: str
+) -> Partition:
+    return Partition(
+        root=root, trade_date=trade_date, underlying=underlying.upper(), exchange=exchange.upper()
+    )
 
 
 def codec_for_date(cfg: AppConfig, trade_date: date, today: date | None = None) -> tuple[str, dict]:
@@ -32,4 +38,3 @@ def codec_for_date(cfg: AppConfig, trade_date: date, today: date | None = None) 
     if cfg.storage.cold_codec.lower() == "zstd":
         return "zstd", {"compression_level": cfg.storage.cold_codec_level}
     return cfg.storage.cold_codec, {}
-

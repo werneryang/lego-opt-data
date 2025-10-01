@@ -53,4 +53,3 @@ class PersistentQueue(Generic[T]):
                         continue
                     items.append(json.loads(line))
         return cls.create(path, items)
-

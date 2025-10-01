@@ -17,10 +17,18 @@ class TokenBucket:
     time_fn: TimeFn
 
     @classmethod
-    def create(cls, capacity: int, refill_per_minute: int, time_fn: TimeFn | None = None) -> "TokenBucket":
+    def create(
+        cls, capacity: int, refill_per_minute: int, time_fn: TimeFn | None = None
+    ) -> "TokenBucket":
         tf = time_fn or time.time
         now = tf()
-        return cls(capacity=capacity, refill_per_minute=refill_per_minute, tokens=capacity, last_ts=now, time_fn=tf)
+        return cls(
+            capacity=capacity,
+            refill_per_minute=refill_per_minute,
+            tokens=capacity,
+            last_ts=now,
+            time_fn=tf,
+        )
 
     def _refill(self) -> None:
         now = self.time_fn()
@@ -37,4 +45,3 @@ class TokenBucket:
             self.tokens -= n
             return True
         return False
-
