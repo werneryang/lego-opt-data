@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import sys
 from datetime import date, datetime
+from pathlib import Path
 from typing import Optional
 
 import typer
@@ -81,4 +82,3 @@ def main(argv: list[str] | None = None) -> int:
 
 if __name__ == "__main__":
     sys.exit(main())
-
