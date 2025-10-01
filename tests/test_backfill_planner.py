@@ -48,7 +48,7 @@ def test_backfill_planner_creates_queue(tmp_path: Path) -> None:
     path = cfg.paths.state / "backfill_2024-10-01.jsonl"
     assert path.exists()
     saved = path.read_text(encoding="utf-8").strip().splitlines()
-    assert saved[0] == '{"symbol": "AAPL", "start_date": "2024-10-01"}'
+    assert saved[0] == '{"symbol": "AAPL", "start_date": "2024-10-01", "underlying_conid": null}'
 
 
 def test_backfill_planner_filters_symbols(tmp_path: Path) -> None:
@@ -60,5 +60,4 @@ def test_backfill_planner_filters_symbols(tmp_path: Path) -> None:
     queue = planner.plan(date(2024, 10, 1), symbols=["MSFT"])
     assert len(queue) == 1
     task = queue.pop()
-    assert task == {"symbol": "MSFT", "start_date": "2024-10-01"}
-
+    assert task == {"symbol": "MSFT", "start_date": "2024-10-01", "underlying_conid": None}

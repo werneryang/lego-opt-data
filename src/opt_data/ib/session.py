@@ -17,9 +17,16 @@ class IBSession:
         # Lazy import to avoid dependency during tests without network
         from ib_insync import IB  # type: ignore
 
-        self.ib = IB()
-        self.ib.connect(self.host, self.port, clientId=self.client_id)
-        self.ib.reqMarketDataType(self.market_data_type)
+        if self.ib is None:
+            self.ib = IB()
+        if not getattr(self.ib, "isConnected", lambda: False)():
+            self.ib.connect(self.host, self.port, clientId=self.client_id)
+            self.ib.reqMarketDataType(self.market_data_type)
+
+    def ensure_connected(self) -> object:
+        self.connect()
+        assert self.ib is not None
+        return self.ib
 
     def disconnect(self) -> None:
         if self.ib is not None:
@@ -28,3 +35,9 @@ class IBSession:
             finally:
                 self.ib = None
 
+    def __enter__(self) -> "IBSession":
+        self.connect()
+        return self
+
+    def __exit__(self, exc_type, exc, tb) -> None:
+        self.disconnect()

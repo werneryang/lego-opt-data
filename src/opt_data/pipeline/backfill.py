@@ -3,11 +3,21 @@ from __future__ import annotations
 from dataclasses import dataclass
 from datetime import date
 from pathlib import Path
-from typing import Iterable, List, Sequence
+from typing import Callable, List, Sequence, Optional, Dict, Any
 
-from ..config import AppConfig
+import logging
+import math
+import pandas as pd
+
+from ..config import AppConfig, FiltersConfig
 from ..universe import load_universe
 from ..util.queue import PersistentQueue
+from ..ib.session import IBSession
+from ..ib.discovery import discover_contracts_for_symbol
+from ..storage.writer import ParquetWriter
+from ..storage.layout import partition_for
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass
@@ -33,7 +43,11 @@ class BackfillPlanner:
             entries = universe
 
         tasks: List[dict] = [
-            {"symbol": entry.symbol, "start_date": start_date.isoformat()}
+            {
+                "symbol": entry.symbol,
+                "start_date": start_date.isoformat(),
+                "underlying_conid": entry.conid,
+            }
             for entry in entries
         ]
 
@@ -44,3 +58,224 @@ class BackfillPlanner:
 
     def load_queue(self, start_date: date) -> PersistentQueue[dict]:
         return PersistentQueue.load(self.queue_path(start_date))
+
+
+def _default_session_factory(cfg: AppConfig) -> IBSession:
+    return IBSession(
+        host=cfg.ib.host,
+        port=cfg.ib.port,
+        client_id=cfg.ib.client_id,
+        market_data_type=cfg.ib.market_data_type,
+    )
+
+
+def fetch_underlying_close(ib: Any, symbol: str, trade_date: date, conid: Optional[int] = None) -> float:
+    from ib_insync import Stock  # type: ignore
+
+    # Qualify the underlying contract
+    if conid:
+        contract = Stock(symbol, "SMART", "USD", conId=conid)
+    else:
+        contract = Stock(symbol, "SMART", "USD")
+    ib.qualifyContracts(contract)
+
+    end_dt = f"{trade_date.strftime('%Y%m%d')} 23:59:59"
+    bars = ib.reqHistoricalData(
+        contract,
+        endDateTime=end_dt,
+        durationStr="1 D",
+        barSizeSetting="1 day",
+        whatToShow="TRADES",
+        useRTH=False,
+        formatDate=1,
+    )
+    if not bars:
+        raise RuntimeError(f"No historical data returned for {symbol} on {trade_date}")
+    return float(bars[-1].close)
+
+
+def _has_market_data(ticker: Any) -> bool:
+    fields = [ticker.last, ticker.close, ticker.bid, ticker.ask]
+    for val in fields:
+        if val is None:
+            continue
+        try:
+            if not math.isnan(val):
+                return True
+        except TypeError:
+            return True
+    greeks = getattr(ticker, "modelGreeks", None)
+    return greeks is not None
+
+
+def fetch_option_snapshots(
+    ib: Any,
+    contracts: List[Dict[str, Any]],
+    generic_ticks: str,
+    *,
+    timeout: float = 10.0,
+    poll_interval: float = 0.5,
+) -> List[Dict[str, Any]]:
+    from ib_insync import Option  # type: ignore
+
+    rows: List[Dict[str, Any]] = []
+    for info in contracts:
+        expiry_yyyymmdd = info["expiry"].replace("-", "")
+        option = Option(
+            symbol=info["symbol"],
+            lastTradeDateOrContractMonth=expiry_yyyymmdd,
+            strike=info["strike"],
+            right=info["right"],
+            exchange=info["exchange"],
+            currency=info.get("currency", "USD"),
+            tradingClass=info.get("tradingClass"),
+        )
+
+        ticker = ib.reqMktData(option, genericTickList=generic_ticks, snapshot=True)
+        elapsed = 0.0
+        while elapsed < timeout and not _has_market_data(ticker):
+            ib.sleep(poll_interval)
+            elapsed += poll_interval
+
+        greeks = getattr(ticker, "modelGreeks", None)
+        timestamp = getattr(ticker, "time", None)
+
+        rows.append(
+            {
+                **info,
+                "bid": float(ticker.bid) if ticker.bid is not None else math.nan,
+                "ask": float(ticker.ask) if ticker.ask is not None else math.nan,
+                "last": float(ticker.last) if ticker.last is not None else math.nan,
+                "close": float(ticker.close) if ticker.close is not None else math.nan,
+                "volume": getattr(ticker, "volume", None),
+                "open_interest": getattr(ticker, "openInterest", None),
+                "iv": getattr(greeks, "impliedVol", math.nan) if greeks else math.nan,
+                "delta": getattr(greeks, "delta", math.nan) if greeks else math.nan,
+                "gamma": getattr(greeks, "gamma", math.nan) if greeks else math.nan,
+                "theta": getattr(greeks, "theta", math.nan) if greeks else math.nan,
+                "vega": getattr(greeks, "vega", math.nan) if greeks else math.nan,
+                "market_data_type": getattr(ticker, "marketDataType", None),
+                "asof": timestamp.isoformat() if timestamp else None,
+            }
+        )
+
+        try:
+            ib.cancelMktData(option)
+        except Exception:  # pragma: no cover - cleanup best effort
+            pass
+
+    return rows
+
+
+class BackfillRunner:
+    def __init__(
+        self,
+        cfg: AppConfig,
+        *,
+        session_factory: Optional[Callable[[], IBSession]] = None,
+        contract_fetcher: Optional[Callable[..., List[Dict[str, Any]]]] = None,
+        snapshot_fetcher: Optional[Callable[..., List[Dict[str, Any]]]] = None,
+        underlying_fetcher: Optional[Callable[..., float]] = None,
+        writer: Optional[ParquetWriter] = None,
+    ) -> None:
+        self.cfg = cfg
+        self.session_factory = session_factory or (lambda: _default_session_factory(cfg))
+        self.contract_fetcher = contract_fetcher or (
+            lambda session, symbol, trade_date, price, config, **kwargs: discover_contracts_for_symbol(
+                session,
+                symbol,
+                trade_date,
+                price,
+                config,
+                **kwargs,
+            )
+        )
+        self.snapshot_fetcher = snapshot_fetcher or (
+            lambda ib, contracts, ticks: fetch_option_snapshots(ib, contracts, ticks)
+        )
+        self.underlying_fetcher = underlying_fetcher or (
+            lambda ib, symbol, dt, conid=None: fetch_underlying_close(ib, symbol, dt, conid)
+        )
+        self.writer = writer or ParquetWriter(cfg)
+
+    def run(
+        self,
+        start_date: date,
+        symbols: Optional[Sequence[str]] = None,
+        *,
+        limit: Optional[int] = None,
+        force_refresh: bool = False,
+    ) -> int:
+        planner = BackfillPlanner(self.cfg)
+        queue_path = planner.queue_path(start_date)
+        if queue_path.exists():
+            queue = planner.load_queue(start_date)
+        else:
+            queue = planner.plan(start_date, symbols)
+
+        if len(queue) == 0:
+            return 0
+
+        processed = 0
+        session = self.session_factory()
+        with session:
+            ib = session.ensure_connected()
+            max_items = len(queue) if limit is None else min(limit, len(queue))
+            for _ in range(max_items):
+                if len(queue) == 0:
+                    break
+                task = queue.pop()
+                symbol = task["symbol"]
+                underlying_conid = task.get("underlying_conid")
+                try:
+                    underlying_close = self.underlying_fetcher(ib, symbol, start_date, underlying_conid)
+                    contracts = self.contract_fetcher(
+                        session,
+                        symbol,
+                        start_date,
+                        underlying_close,
+                        self.cfg,
+                        underlying_conid=underlying_conid,
+                        force_refresh=force_refresh,
+                    )
+                    if not contracts:
+                        logger.warning("No contracts discovered", extra={"symbol": symbol, "date": start_date})
+                        queue.save()
+                        continue
+
+                    snapshots = self.snapshot_fetcher(
+                        ib,
+                        contracts,
+                        self.cfg.cli.default_generic_ticks,
+                    )
+                    if not snapshots:
+                        logger.warning("No market data snapshots", extra={"symbol": symbol, "date": start_date})
+                        queue.save()
+                        continue
+
+                    df = pd.DataFrame(snapshots)
+                    df["trade_date"] = start_date
+                    df["asof_ts"] = pd.Timestamp.utcnow()
+
+                    for exchange, group in df.groupby("exchange"):
+                        partition = partition_for(
+                            self.cfg,
+                            self.cfg.paths.raw,
+                            start_date,
+                            symbol,
+                            exchange or "SMART",
+                        )
+                        self.writer.write_dataframe(group.reset_index(drop=True), partition)
+
+                    processed += 1
+                    queue.save()
+                except Exception as exc:
+                    logger.exception(
+                        "Backfill task failed",
+                        extra={"symbol": symbol, "date": start_date},
+                        exc_info=exc,
+                    )
+                    queue.push(task)
+                    queue.save()
+                    break
+        return processed

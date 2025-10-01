@@ -8,7 +8,7 @@ from typing import Optional
 import typer
 
 from .config import load_config
-from .pipeline.backfill import BackfillPlanner
+from .pipeline.backfill import BackfillPlanner, BackfillRunner
 from .util.calendar import to_et_date
 
 
@@ -20,6 +20,9 @@ def backfill(
     start: str = typer.Option(..., help="Start date YYYY-MM-DD"),
     symbols: Optional[str] = typer.Option(None, help="Comma separated symbols, optional"),
     config: Optional[str] = typer.Option(None, help="Path to config TOML"),
+    execute: bool = typer.Option(False, "--execute/--plan-only", help="Run backfill immediately"),
+    limit: Optional[int] = typer.Option(None, help="Limit number of symbols to process during execution"),
+    force_refresh: bool = typer.Option(False, help="Ignore cached contracts when executing"),
 ) -> None:
     cfg = load_config(Path(config) if config else None)
     try:
@@ -32,9 +35,20 @@ def backfill(
 
     planner = BackfillPlanner(cfg)
     queue = planner.plan(start_date, selected)
+    queue_path = planner.queue_path(start_date)
     typer.echo(
-        f"[backfill] planned {len(queue)} tasks -> {planner.queue_path(start_date)}"
+        f"[backfill] planned {len(queue)} tasks -> {queue_path}"
     )
+
+    if execute:
+        runner = BackfillRunner(cfg)
+        processed = runner.run(
+            start_date,
+            selected,
+            limit=limit,
+            force_refresh=force_refresh,
+        )
+        typer.echo(f"[backfill] executed tasks={processed} output_root={cfg.paths.raw}")
 
 
 @app.command()

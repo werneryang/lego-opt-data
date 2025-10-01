@@ -2,14 +2,15 @@
 
 ## 待办
 - [ ] 完成 IB 基础连接联调（本地 Gateway）
-- [ ] 实现期权合约发现逻辑（±30% 与月度/季度过滤），写入缓存
 - [ ] 清洗流水线与公司行动调整模块占位与实现
-- [ ] 小规模端到端集成测试（AAPL/MSFT 回填一日）
+- [ ] 小规模端到端集成测试（AAPL/MSFT 回填一日，真实 IB 接入）
 - [ ] 根据运行结果更新 `docs/ops-runbook.md` 与 `PLAN.md`
 
 ## 进行中
 - IB 会话连接测试（需要本地 Gateway/权限）
-- 合约发现逻辑实现：已完成过滤与队列计划，待对接 IB 接口及缓存写入
+
+## 阻塞
+- [ ] `make test` 依赖本地虚拟环境（运行 `make install` 后重试）
 
 ## 阻塞
 - （空）
@@ -24,3 +25,6 @@
 - [x] 到期过滤工具与合约筛选（`util/expiry.py`, `ib/discovery.filter_by_scope`）
 - [x] Universe 加载与回填计划队列（`universe.py`, `pipeline/backfill.py`, CLI backfill 集成）
 - [x] 新增单测：到期过滤、Universe 解析、回填队列生成（`tests/test_expiry.py`, `tests/test_universe.py`, `tests/test_backfill_planner.py`）
+- [x] IB 合约发现实现（`ib/discovery.discover_contracts_for_symbol`），含缓存与过滤
+- [x] 回填执行器骨架写入 raw 数据（`pipeline/backfill.BackfillRunner`，CLI `backfill --execute`）
+- [x] 新增单测：合约发现缓存、BackfillRunner 写入 parquet（`tests/test_discovery.py`, `tests/test_backfill_runner.py`）

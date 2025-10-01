@@ -1,0 +1,149 @@
+from datetime import date
+from pathlib import Path
+from typing import Any, List, Dict
+
+import pandas as pd
+
+from opt_data.config import AppConfig, IBConfig, TimezoneConfig, PathsConfig, UniverseConfig, FiltersConfig, RateLimitClassConfig, RateLimitsConfig, StorageConfig, CompactionConfig, LoggingConfig, CLIConfig
+from opt_data.pipeline.backfill import BackfillRunner, BackfillPlanner
+
+
+def _cfg(tmp_path: Path) -> AppConfig:
+    return AppConfig(
+        ib=IBConfig(host="127.0.0.1", port=7497, client_id=1, market_data_type=2),
+        timezone=TimezoneConfig(name="America/New_York", update_time="17:00"),
+        paths=PathsConfig(
+            raw=tmp_path / "raw",
+            clean=tmp_path / "clean",
+            state=tmp_path / "state",
+            contracts_cache=tmp_path / "cache",
+            run_logs=tmp_path / "logs",
+        ),
+        universe=UniverseConfig(file=tmp_path / "universe.csv", refresh_days=30),
+        filters=FiltersConfig(moneyness_pct=0.3, expiry_types=["monthly", "quarterly"]),
+        rate_limits=RateLimitsConfig(
+            discovery=RateLimitClassConfig(per_minute=5, burst=5),
+            snapshot=RateLimitClassConfig(per_minute=20, burst=10, max_concurrent=4),
+            historical=RateLimitClassConfig(per_minute=20, burst=10),
+        ),
+        storage=StorageConfig(hot_days=14, cold_codec="zstd", cold_codec_level=7, hot_codec="snappy"),
+        compaction=CompactionConfig(
+            enabled=True,
+            schedule="weekly",
+            weekday="sunday",
+            start_time="03:00",
+            min_file_size_mb=32,
+            max_file_size_mb=256,
+        ),
+        logging=LoggingConfig(level="INFO", format="json"),
+        cli=CLIConfig(default_generic_ticks="100"),
+    )
+
+
+class FakeSession:
+    def __init__(self) -> None:
+        self.connected = False
+        self.ib = object()
+
+    def __enter__(self) -> "FakeSession":
+        self.connected = True
+        return self
+
+    def __exit__(self, exc_type, exc, tb) -> None:
+        self.connected = False
+
+    def ensure_connected(self) -> object:
+        self.connected = True
+        return self.ib
+
+    def disconnect(self) -> None:  # pragma: no cover - safety net
+        self.connected = False
+
+
+def fake_contract_fetcher(session: Any, symbol: str, trade_date: date, underlying_close: float, cfg: AppConfig, **_: Any) -> List[Dict[str, Any]]:
+    return [
+        {
+            "symbol": symbol,
+            "conid": 1001,
+            "expiry": "2024-10-18",
+            "right": "C",
+            "strike": 150.0,
+            "multiplier": 100.0,
+            "exchange": "SMART",
+            "tradingClass": symbol,
+            "currency": "USD",
+        },
+        {
+            "symbol": symbol,
+            "conid": 1002,
+            "expiry": "2024-10-18",
+            "right": "P",
+            "strike": 150.0,
+            "multiplier": 100.0,
+            "exchange": "SMART",
+            "tradingClass": symbol,
+            "currency": "USD",
+        },
+    ]
+
+
+def fake_snapshot_fetcher(ib: Any, contracts: List[Dict[str, Any]], ticks: str) -> List[Dict[str, Any]]:
+    rows = []
+    for c in contracts:
+        r = dict(c)
+        r.update(
+            {
+                "bid": 1.2,
+                "ask": 1.3,
+                "last": 1.25,
+                "close": 1.22,
+                "volume": 10,
+                "open_interest": 100,
+                "iv": 0.25,
+                "delta": 0.5 if c["right"] == "C" else -0.5,
+                "gamma": 0.1,
+                "theta": -0.05,
+                "vega": 0.2,
+                "market_data_type": 2,
+                "asof": None,
+            }
+        )
+        rows.append(r)
+    return rows
+
+
+def fake_underlying_fetcher(ib: Any, symbol: str, trade_date: date, conid: int | None) -> float:
+    return 150.0
+
+
+def test_backfill_runner_persists_raw_data(tmp_path: Path) -> None:
+    cfg = _cfg(tmp_path)
+    cfg.paths.state.mkdir(parents=True)
+    cfg.paths.raw.mkdir(parents=True)
+    cfg.universe.file.write_text("symbol\nAAPL\n", encoding="utf-8")
+
+    planner = BackfillPlanner(cfg)
+    planner.plan(date(2024, 10, 1), symbols=["AAPL"])
+
+    runner = BackfillRunner(
+        cfg,
+        session_factory=lambda: FakeSession(),
+        contract_fetcher=fake_contract_fetcher,
+        snapshot_fetcher=fake_snapshot_fetcher,
+        underlying_fetcher=fake_underlying_fetcher,
+    )
+
+    processed = runner.run(date(2024, 10, 1), symbols=["AAPL"], limit=1)
+    assert processed == 1
+
+    files = list(cfg.paths.raw.glob("**/*.parquet"))
+    assert files, "expected parquet output"
+
+    df = pd.read_parquet(files[0])
+    assert {"bid", "ask", "trade_date"}.issubset(df.columns)
+    trade_dates = pd.to_datetime(df["trade_date"]).dt.date.unique().tolist()
+    assert trade_dates == [date(2024, 10, 1)]
+
+    queue_file = cfg.paths.state / "backfill_2024-10-01.jsonl"
+    assert queue_file.exists()
+    assert queue_file.read_text(encoding="utf-8") == ""
