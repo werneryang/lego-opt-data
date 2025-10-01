@@ -4,7 +4,7 @@ A lightweight Python toolkit for loading, inspecting, and transforming options m
 
 ## Getting started
 
-1. Create a Python 3.11 virtual environment (Python ≥3.10 required): `python3.11 -m venv .venv`
+1. Create a Python 3.11 virtual environment: `python3.11 -m venv .venv`
 2. Activate it and install dependencies: `source .venv/bin/activate` then `pip install -e .[dev]`
 3. Run the test suite: `pytest`
 4. Plan and execute a smoke backfill: `python -m opt_data.cli backfill --start 2024-10-01 --symbols AAPL,MSFT --execute`

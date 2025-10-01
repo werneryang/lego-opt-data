@@ -2,7 +2,7 @@
 
 ## 运行前准备
 1. 启动 IB Gateway/TWS，确认登录账户具有美股期权实时或延迟行情权限。
-2. 使用 Python ≥3.10（推荐 3.11）：`python3.11 -m venv .venv && .venv/bin/pip install --upgrade pip`，随后执行 `./.venv/bin/pip install -e .[dev]`。若直接运行 `make install`，需保证 `python3` 指向 3.10+。
+2. 使用 Python 3.11：`python3.11 -m venv .venv && .venv/bin/pip install --upgrade pip`，随后执行 `./.venv/bin/pip install -e .[dev]`。若直接运行 `make install`，需保证 `python3` 指向 3.11。
 3. 确保 `.env`（或环境变量）配置以下变量：
    - `IB_HOST`（默认 `127.0.0.1`）
    - `IB_PORT`（默认 `7497` / 纸面账户，真账户为 `7496`）

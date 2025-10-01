@@ -17,7 +17,7 @@
 - 数据输出区分：`data/raw` 保存 IB 原样数据；`data/clean` 保存清洗与公司行动调整后的 Parquet 数据。
 
 - IB 连接默认值：`host=127.0.0.1`、`port=7497`（Paper）、`clientId=101`。
-- 运行环境：Python ≥3.10（推荐 3.11）；开发时执行 `python3.11 -m venv .venv && pip install -e .[dev]`。
+- 运行环境：Python 3.11；开发时执行 `python3.11 -m venv .venv && pip install -e .[dev]`。
 - 采集窗口：S&P 500 成分股（以 `config/universe.csv` 为准），行权价带 ±30%，标准月度/季度合约。
 - 调度基于 `America/New_York` 时区，交易日 17:00 ET 运行每日更新。
 - 存储：Parquet 分区 `date/underlying/exchange`，热数据（默认 14 天）使用 Snappy，冷数据使用 ZSTD；周度合并。
