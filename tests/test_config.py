@@ -21,6 +21,15 @@ def test_load_config_from_custom_file(tmp_path: Path) -> None:
 
         [reference]
         corporate_actions = "config/actions.csv"
+
+        [acquisition]
+        mode = "historical"
+        duration = "2 D"
+        bar_size = "1 hour"
+        what_to_show = "MIDPOINT"
+        use_rth = false
+        max_strikes_per_expiry = 11
+        fill_missing_greeks_with_zero = true
         """
     ).strip()
 
@@ -33,3 +42,7 @@ def test_load_config_from_custom_file(tmp_path: Path) -> None:
     assert cfg.paths.raw.name == "raw"
     assert cfg.paths.state.name == "state"
     assert cfg.reference.corporate_actions.name == "actions.csv"
+    assert cfg.acquisition.mode == "historical"
+    assert cfg.acquisition.duration == "2 D"
+    assert cfg.acquisition.max_strikes_per_expiry == 11
+    assert cfg.acquisition.fill_missing_greeks_with_zero is True

@@ -77,4 +77,11 @@ class CleaningPipeline:
 
         adjusted = self.adjuster.apply(df)
 
+        if self.cfg.acquisition.fill_missing_greeks_with_zero:
+            for column in ["iv", "delta", "gamma", "theta", "vega", "open_interest"]:
+                if column in df.columns:
+                    df[column] = df[column].fillna(0)
+                if column in adjusted.columns:
+                    adjusted[column] = adjusted[column].fillna(0)
+
         return df, adjusted

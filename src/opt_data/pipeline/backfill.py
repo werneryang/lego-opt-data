@@ -189,6 +189,7 @@ class BackfillRunner:
         cleaner: Optional[CleaningPipeline] = None,
     ) -> None:
         self.cfg = cfg
+        self.mode = cfg.acquisition.mode.lower()
         self.session_factory = session_factory or (lambda: _default_session_factory(cfg))
         self.contract_fetcher = contract_fetcher or (
             lambda session,
@@ -203,6 +204,7 @@ class BackfillRunner:
                 price,
                 config,
                 **kwargs,
+                max_strikes_per_expiry=config.acquisition.max_strikes_per_expiry,
             )
         )
         self.snapshot_fetcher = snapshot_fetcher or (
@@ -261,7 +263,8 @@ class BackfillRunner:
                 symbol = task["symbol"]
                 underlying_conid = task.get("underlying_conid")
                 try:
-                    self._acquire("historical")
+                    if self.mode == "historical":
+                        self._acquire("historical")
                     underlying_close = self.underlying_fetcher(
                         ib, symbol, start_date, underlying_conid
                     )
@@ -282,20 +285,28 @@ class BackfillRunner:
                         queue.save()
                         continue
 
-                    snapshots = self.snapshot_fetcher(
-                        ib,
-                        contracts,
-                        self.cfg.cli.default_generic_ticks,
-                        acquire_token=self._make_acquire("snapshot"),
-                    )
-                    if not snapshots:
+                    if self.mode == "historical":
+                        market_rows = self._fetch_historical_rows(
+                            ib,
+                            contracts,
+                            start_date,
+                            acquire_token=self._make_acquire("historical"),
+                        )
+                    else:
+                        market_rows = self.snapshot_fetcher(
+                            ib,
+                            contracts,
+                            self.cfg.cli.default_generic_ticks,
+                            acquire_token=self._make_acquire("snapshot"),
+                        )
+                    if not market_rows:
                         logger.warning(
                             "No market data snapshots", extra={"symbol": symbol, "date": start_date}
                         )
                         queue.save()
                         continue
 
-                    df = pd.DataFrame(snapshots)
+                    df = pd.DataFrame(market_rows)
                     df["trade_date"] = start_date
                     df["underlying_close"] = underlying_close
                     df["symbol"] = symbol
@@ -384,3 +395,101 @@ class BackfillRunner:
 
     def _make_acquire(self, name: str) -> Callable[[], None]:
         return lambda: self._acquire(name)
+
+    def _fetch_historical_rows(
+        self,
+        ib: Any,
+        contracts: List[Dict[str, Any]],
+        trade_date: date,
+        *,
+        acquire_token: Optional[Callable[[], None]] = None,
+    ) -> List[Dict[str, Any]]:
+        from ib_insync import Option  # type: ignore
+
+        rows: List[Dict[str, Any]] = []
+        asof = pd.Timestamp.utcnow().tz_localize(None)
+        duration = self.cfg.acquisition.duration
+        bar_size = self.cfg.acquisition.bar_size
+        what_to_show = self.cfg.acquisition.what_to_show
+        use_rth = self.cfg.acquisition.use_rth
+        end_dt = f"{trade_date.strftime('%Y%m%d')} 23:59:59"
+
+        for info in contracts:
+            try:
+                option = Option(
+                    info.get("symbol"),
+                    info.get("expiry", "").replace("-", ""),
+                    float(info.get("strike", 0.0)),
+                    info.get("right", "C"),
+                    info.get("exchange") or "",
+                    info.get("currency", "USD"),
+                    info.get("tradingClass"),
+                )
+                if info.get("conid"):
+                    option.conId = int(info["conid"])
+
+                if acquire_token:
+                    acquire_token()
+                qualified = ib.qualifyContracts(option)
+                if not qualified:
+                    logger.debug(
+                        "Failed to qualify contract",
+                        extra={"symbol": info.get("symbol"), "expiry": info.get("expiry")},
+                    )
+                    continue
+                contract = qualified[0]
+
+                if acquire_token:
+                    acquire_token()
+
+                bars = ib.reqHistoricalData(
+                    contract,
+                    endDateTime=end_dt,
+                    durationStr=duration,
+                    barSizeSetting=bar_size,
+                    whatToShow=what_to_show,
+                    useRTH=use_rth,
+                    formatDate=1,
+                )
+
+                if not bars:
+                    continue
+
+                for bar in bars:
+                    try:
+                        bar_ts = pd.Timestamp(bar.date)
+                    except Exception:
+                        bar_ts = pd.Timestamp(trade_date)
+
+                    rows.append(
+                        {
+                            **info,
+                            "open": float(getattr(bar, "open", float("nan"))),
+                            "high": float(getattr(bar, "high", float("nan"))),
+                            "low": float(getattr(bar, "low", float("nan"))),
+                            "close": float(getattr(bar, "close", float("nan"))),
+                            "last": float(getattr(bar, "close", float("nan"))),
+                            "volume": int(getattr(bar, "volume", 0) or 0),
+                            "bid": pd.NA,
+                            "ask": pd.NA,
+                            "mid": pd.NA,
+                            "iv": pd.NA,
+                            "delta": pd.NA,
+                            "gamma": pd.NA,
+                            "theta": pd.NA,
+                            "vega": pd.NA,
+                            "open_interest": pd.NA,
+                            "market_data_type": None,
+                            "bar_timestamp": bar_ts,
+                            "asof_ts": asof,
+                        }
+                    )
+            except Exception as exc:  # pragma: no cover - network failure
+                logger.warning(
+                    "Historical data request failed",
+                    extra={"symbol": info.get("symbol"), "expiry": info.get("expiry")},
+                    exc_info=exc,
+                )
+                continue
+
+        return rows

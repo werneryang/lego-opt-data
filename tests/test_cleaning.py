@@ -17,6 +17,7 @@ from opt_data.config import (
     LoggingConfig,
     CLIConfig,
     ReferenceConfig,
+    AcquisitionConfig,
 )
 from opt_data.pipeline.cleaning import CleaningPipeline
 from opt_data.pipeline.actions import CorporateActionsAdjuster
@@ -55,6 +56,15 @@ def _cfg(tmp_path, actions_path=None) -> AppConfig:
         ),
         logging=LoggingConfig(level="INFO", format="json"),
         cli=CLIConfig(default_generic_ticks="100"),
+        acquisition=AcquisitionConfig(
+            mode="snapshot",
+            duration="1 D",
+            bar_size="1 day",
+            what_to_show="TRADES",
+            use_rth=True,
+            max_strikes_per_expiry=21,
+            fill_missing_greeks_with_zero=False,
+        ),
     )
 
 

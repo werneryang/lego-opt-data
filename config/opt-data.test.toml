@@ -1,0 +1,72 @@
+# Test configuration to keep smoke runs isolated from production data
+
+[ib]
+host = "127.0.0.1"
+port = 7497
+client_id = 202
+market_data_type = 2
+
+[timezone]
+name = "America/New_York"
+update_time = "17:00"
+
+[paths]
+raw = "data_test/raw/ib/chain"
+clean = "data_test/clean/ib/chain"
+state = "state_test"
+contracts_cache = "state_test/contracts_cache"
+run_logs = "state_test/run_logs"
+
+[universe]
+file = "config/universe.csv"
+refresh_days = 30
+
+[reference]
+corporate_actions = "config/corporate_actions.csv"
+
+[filters]
+moneyness_pct = 0.30
+expiry_types = ["monthly", "quarterly"]
+
+[rate_limits.discovery]
+per_minute = 5
+burst = 5
+
+[rate_limits.snapshot]
+per_minute = 10
+burst = 5
+max_concurrent = 2
+
+[rate_limits.historical]
+per_minute = 10
+burst = 5
+
+[storage]
+hot_days = 14
+cold_codec = "zstd"
+cold_codec_level = 7
+hot_codec = "snappy"
+
+[compaction]
+enabled = false
+schedule = "weekly"
+weekday = "sunday"
+start_time = "03:00"
+min_file_size_mb = 32
+max_file_size_mb = 256
+
+[logging]
+level = "INFO"
+format = "json"
+
+[acquisition]
+mode = "historical"
+duration = "1 D"
+bar_size = "1 day"
+what_to_show = "TRADES"
+use_rth = true
+max_strikes_per_expiry = 11
+fill_missing_greeks_with_zero = false
+
+[cli]
+default_generic_ticks = "100,101,104,106,258"

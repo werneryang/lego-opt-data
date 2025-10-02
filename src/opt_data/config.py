@@ -102,6 +102,17 @@ class CLIConfig:
 
 
 @dataclass
+class AcquisitionConfig:
+    mode: str
+    duration: str
+    bar_size: str
+    what_to_show: str
+    use_rth: bool
+    max_strikes_per_expiry: int
+    fill_missing_greeks_with_zero: bool
+
+
+@dataclass
 class AppConfig:
     ib: IBConfig
     timezone: TimezoneConfig
@@ -114,6 +125,7 @@ class AppConfig:
     compaction: CompactionConfig
     logging: LoggingConfig
     cli: CLIConfig
+    acquisition: AcquisitionConfig
 
 
 def _as_path(p: str | Path) -> Path:
@@ -153,6 +165,13 @@ def load_config(file: Optional[Path] = None) -> AppConfig:
                     return float(val)
                 except ValueError:
                     return default
+            if isinstance(default, bool):
+                lowered = val.strip().lower()
+                if lowered in {"1", "true", "yes", "on"}:
+                    return True
+                if lowered in {"0", "false", "no", "off"}:
+                    return False
+                return default
             return val
         # fallback to file or default with dotted lookups
         sec: Any = raw
@@ -245,6 +264,18 @@ def load_config(file: Optional[Path] = None) -> AppConfig:
 
     cli = CLIConfig(default_generic_ticks=g("cli", "default_generic_ticks", "100,101,104,106,258"))
 
+    acquisition = AcquisitionConfig(
+        mode=g("acquisition", "mode", "snapshot").lower(),
+        duration=g("acquisition", "duration", "1 D"),
+        bar_size=g("acquisition", "bar_size", "1 day"),
+        what_to_show=g("acquisition", "what_to_show", "TRADES"),
+        use_rth=bool(g("acquisition", "use_rth", True)),
+        max_strikes_per_expiry=int(g("acquisition", "max_strikes_per_expiry", 21)),
+        fill_missing_greeks_with_zero=bool(
+            g("acquisition", "fill_missing_greeks_with_zero", False)
+        ),
+    )
+
     return AppConfig(
         ib=ib,
         timezone=tz,
@@ -257,4 +288,5 @@ def load_config(file: Optional[Path] = None) -> AppConfig:
         compaction=compaction,
         logging=logging,
         cli=cli,
+        acquisition=acquisition,
     )

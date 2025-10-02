@@ -3,6 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Callable, Dict, List, Iterable, Optional, TYPE_CHECKING
+from collections import defaultdict
 import json
 import logging
 from datetime import date
@@ -82,6 +83,26 @@ def filter_by_scope(
     return out
 
 
+def limit_strikes_per_expiry(
+    contracts: List[Dict[str, Any]],
+    underlying_close: float,
+    max_per_expiry: Optional[int],
+) -> List[Dict[str, Any]]:
+    if not max_per_expiry or max_per_expiry <= 0:
+        return contracts
+
+    grouped: Dict[tuple[str, str], List[Dict[str, Any]]] = defaultdict(list)
+    for contract in contracts:
+        key = (contract.get("expiry", ""), contract.get("exchange", ""))
+        grouped[key].append(contract)
+
+    limited: List[Dict[str, Any]] = []
+    for key, items in grouped.items():
+        ordered = sorted(items, key=lambda c: abs(float(c.get("strike", 0.0)) - underlying_close))
+        limited.extend(ordered[:max_per_expiry])
+    return limited
+
+
 def discover_contracts(
     *_: Any, **__: Any
 ) -> List[Dict[str, Any]]:  # pragma: no cover - placeholder
@@ -117,6 +138,7 @@ def discover_contracts_for_symbol(
     underlying_conid: Optional[int] = None,
     force_refresh: bool = False,
     acquire_token: Optional[Callable[[], None]] = None,
+    max_strikes_per_expiry: Optional[int] = None,
 ) -> List[Dict[str, Any]]:
     """Discover option contracts for *symbol* using IB and cache results."""
 
@@ -168,6 +190,12 @@ def discover_contracts_for_symbol(
         underlying_close=underlying_close,
         moneyness_pct=cfg.filters.moneyness_pct,
         allowed_expiry_types=cfg.filters.expiry_types,
+    )
+
+    scoped_candidates = limit_strikes_per_expiry(
+        scoped_candidates,
+        underlying_close=underlying_close,
+        max_per_expiry=max_strikes_per_expiry,
     )
 
     results: Dict[tuple[int, str], Dict[str, Any]] = {}

@@ -10,6 +10,11 @@
    - `IB_MARKET_DATA_TYPE`（`1=实时`, `2=冻结`, `3=延迟`, `4=延迟冻结`）
 4. 根据需要更新 `config/opt-data.toml` 中的限速、并发、路径与调度窗口。
 5. 准备测试环境配置（避免污染正式目录）：复制 `config/opt-data.toml` 为 `config/opt-data.test.toml`，将 `paths.raw/clean/state/contracts_cache/run_logs` 指向 `data_test/` 与 `state_test/` 等独立路径。
+6. 按需调整 `[acquisition]` 设置：
+   - `mode = "historical"` 使用 `reqHistoricalData`（默认），适合没有实时权限的环境；
+   - `mode = "snapshot"` 依赖 `reqMktData`，需要相应行情许可；
+   - `max_strikes_per_expiry` 可限制每个到期的合约数量，用于控制请求规模；
+   - `fill_missing_greeks_with_zero` 为 `true` 时，会在清洗层把 IV/Greeks/OI 缺失值填 0。
 
 ## 常用命令
 - `make install`：创建/更新虚拟环境并安装依赖（默认调用 `python3`）。

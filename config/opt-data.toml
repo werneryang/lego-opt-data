@@ -60,5 +60,14 @@ max_file_size_mb = 256
 level = "INFO"
 format = "json"
 
+[acquisition]
+mode = "historical"
+duration = "1 D"
+bar_size = "1 day"
+what_to_show = "TRADES"
+use_rth = true
+max_strikes_per_expiry = 21
+fill_missing_greeks_with_zero = false
+
 [cli]
 default_generic_ticks = "100,101,104,106,258" # 包含 IV、Greeks、OI 的通用 tick 列表
