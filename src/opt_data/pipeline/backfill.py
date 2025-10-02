@@ -306,6 +306,7 @@ class BackfillRunner:
                             contracts,
                             start_date,
                             acquire_token=self._make_acquire("historical"),
+                            progress=progress,
                         )
                     else:
                         market_rows = self.snapshot_fetcher(
@@ -442,6 +443,7 @@ class BackfillRunner:
         trade_date: date,
         *,
         acquire_token: Optional[Callable[[], None]] = None,
+        progress: Optional[Callable[[date, str, str, Dict[str, Any]], None]] = None,
     ) -> List[Dict[str, Any]]:
         from ib_insync import Option  # type: ignore
 
@@ -449,7 +451,13 @@ class BackfillRunner:
         asof = pd.Timestamp.utcnow().tz_localize(None)
         duration = self.cfg.acquisition.duration
         bar_size = self.cfg.acquisition.bar_size
-        what_to_show = self.cfg.acquisition.what_to_show
+        raw_wts = self.cfg.acquisition.what_to_show or "TRADES"
+        what_to_shows = [w.strip() for w in raw_wts.split(",") if w.strip()] or ["TRADES"]
+        if "TRADES" not in what_to_shows:
+            # ensure TRADES attempted before fallback to keep behaviour predictable
+            what_to_shows = ["TRADES"] + [w for w in what_to_shows if w != "TRADES"]
+        if "MIDPOINT" not in what_to_shows:
+            what_to_shows.append("MIDPOINT")
         use_rth = self.cfg.acquisition.use_rth
         end_dt = f"{trade_date.strftime('%Y%m%d')} 23:59:59"
 
@@ -479,20 +487,89 @@ class BackfillRunner:
                     continue
                 contract = qualified[0]
 
-                if acquire_token:
-                    acquire_token()
-
-                bars = ib.reqHistoricalData(
-                    contract,
-                    endDateTime=end_dt,
-                    durationStr=duration,
-                    barSizeSetting=bar_size,
-                    whatToShow=what_to_show,
-                    useRTH=use_rth,
-                    formatDate=1,
-                )
+                bars = None
+                last_error: Optional[str] = None
+                for what_to_show in what_to_shows:
+                    try:
+                        if acquire_token:
+                            acquire_token()
+                        if progress:
+                            progress(
+                                trade_date,
+                                info.get("symbol", ""),
+                                "historical_try",
+                                {
+                                    "expiry": info.get("expiry"),
+                                    "strike": info.get("strike"),
+                                    "right": info.get("right"),
+                                    "what": what_to_show,
+                                },
+                            )
+                        bars = ib.reqHistoricalData(
+                            contract,
+                            endDateTime=end_dt,
+                            durationStr=duration,
+                            barSizeSetting=bar_size,
+                            whatToShow=what_to_show,
+                            useRTH=use_rth,
+                            formatDate=1,
+                        )
+                        if bars:
+                            if progress:
+                                progress(
+                                    trade_date,
+                                    info.get("symbol", ""),
+                                    "historical_success",
+                                    {
+                                        "expiry": info.get("expiry"),
+                                        "strike": info.get("strike"),
+                                        "right": info.get("right"),
+                                        "what": what_to_show,
+                                        "rows": len(bars),
+                                    },
+                                )
+                            break
+                        else:
+                            last_error = "no_bars"
+                    except Exception as exc:
+                        last_error = str(exc)
+                        logger.warning(
+                            "Historical data request failed",
+                            extra={
+                                "symbol": info.get("symbol"),
+                                "expiry": info.get("expiry"),
+                                "what": what_to_show,
+                            },
+                            exc_info=exc,
+                        )
+                        if progress:
+                            progress(
+                                trade_date,
+                                info.get("symbol", ""),
+                                "historical_error",
+                                {
+                                    "expiry": info.get("expiry"),
+                                    "strike": info.get("strike"),
+                                    "right": info.get("right"),
+                                    "what": what_to_show,
+                                    "error": str(exc),
+                                },
+                            )
+                        continue
 
                 if not bars:
+                    if progress:
+                        progress(
+                            trade_date,
+                            info.get("symbol", ""),
+                            "historical_empty",
+                            {
+                                "expiry": info.get("expiry"),
+                                "strike": info.get("strike"),
+                                "right": info.get("right"),
+                                "last_error": last_error,
+                            },
+                        )
                     continue
 
                 for bar in bars:
