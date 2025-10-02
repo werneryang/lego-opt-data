@@ -211,6 +211,7 @@ def discover_contracts_for_symbol(
                 currency="USD",
                 tradingClass=candidate["tradingClass"],
             )
+            option.includeExpired = True
             try:
                 if acquire_token:
                     acquire_token()

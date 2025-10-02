@@ -290,6 +290,13 @@ class BackfillRunner:
                         logger.warning(
                             "No contracts discovered", extra={"symbol": symbol, "date": start_date}
                         )
+                        if progress:
+                            progress(
+                                start_date,
+                                symbol,
+                                "no_contracts",
+                                {"underlying_close": underlying_close},
+                            )
                         queue.save()
                         continue
 
@@ -459,6 +466,7 @@ class BackfillRunner:
                 )
                 if info.get("conid"):
                     option.conId = int(info["conid"])
+                option.includeExpired = True
 
                 if acquire_token:
                     acquire_token()
