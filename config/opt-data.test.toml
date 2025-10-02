@@ -26,7 +26,7 @@ corporate_actions = "config/corporate_actions.csv"
 
 [filters]
 moneyness_pct = 0.30
-expiry_types = ["monthly", "quarterly"]
+expiry_types = ["monthly"]
 
 [rate_limits.discovery]
 per_minute = 5
@@ -63,9 +63,9 @@ format = "json"
 mode = "historical"
 duration = "1 D"
 bar_size = "1 day"
-what_to_show = "TRADES"
+what_to_show = "TRADES,MIDPOINT"
 use_rth = true
-max_strikes_per_expiry = 11
+max_strikes_per_expiry = 3
 fill_missing_greeks_with_zero = false
 
 [cli]

@@ -276,6 +276,20 @@ class BackfillRunner:
                     underlying_close = self.underlying_fetcher(
                         ib, symbol, start_date, underlying_conid
                     )
+                    if progress:
+                        progress(
+                            start_date,
+                            symbol,
+                            "underlying",
+                            {"price": underlying_close},
+                        )
+                    if progress:
+                        progress(
+                            start_date,
+                            symbol,
+                            "contracts_fetch",
+                            {},
+                        )
                     contracts = self.contract_fetcher(
                         session,
                         symbol,
@@ -299,6 +313,13 @@ class BackfillRunner:
                             )
                         queue.save()
                         continue
+                    if progress:
+                        progress(
+                            start_date,
+                            symbol,
+                            "contracts_ready",
+                            {"count": len(contracts)},
+                        )
 
                     if self.mode == "historical":
                         market_rows = self._fetch_historical_rows(
@@ -315,6 +336,13 @@ class BackfillRunner:
                             self.cfg.cli.default_generic_ticks,
                             acquire_token=self._make_acquire("snapshot"),
                         )
+                        if progress:
+                            progress(
+                                start_date,
+                                symbol,
+                                "snapshot_rows",
+                                {"rows": len(market_rows)},
+                            )
                     if not market_rows:
                         logger.warning(
                             "No market data snapshots", extra={"symbol": symbol, "date": start_date}
