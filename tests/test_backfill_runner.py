@@ -198,7 +198,7 @@ def test_run_range_skips_non_trading(monkeypatch, tmp_path: Path) -> None:
 
     calls: List[date] = []
 
-    def fake_run(self, dt: date, symbols=None, limit=None, force_refresh=False):  # type: ignore[override]
+    def fake_run(self, dt: date, symbols=None, limit=None, force_refresh=False, **kwargs):  # type: ignore[override]
         calls.append(dt)
         return 1
 

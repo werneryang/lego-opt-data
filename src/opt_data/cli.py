@@ -3,7 +3,7 @@ from __future__ import annotations
 import sys
 from datetime import date, datetime, timedelta
 from pathlib import Path
-from typing import Optional
+from typing import Optional, Dict, Any
 
 import typer
 
@@ -84,15 +84,32 @@ def backfill(
     typer.echo(
         f"[backfill] planning complete: {planned_days} trading days, total tasks={total_tasks}"
     )
+    typer.echo(
+        "[backfill] acquisition "
+        f"mode={cfg.acquisition.mode} duration={cfg.acquisition.duration} "
+        f"bar_size={cfg.acquisition.bar_size} what={cfg.acquisition.what_to_show} "
+        f"use_rth={cfg.acquisition.use_rth} max_strikes={cfg.acquisition.max_strikes_per_expiry}"
+    )
 
     if execute:
         runner = BackfillRunner(cfg)
+
+        def report(day: date, symbol: str, status: str, extra: Dict[str, Any]) -> None:
+            parts = [f"[backfill:{status}]", day.isoformat()]
+            if symbol:
+                parts.append(symbol)
+            if extra:
+                details = ", ".join(f"{k}={v}" for k, v in extra.items())
+                parts.append(details)
+            typer.echo(" ".join(parts))
+
         processed = runner.run_range(
             start_date,
             end_date,
             selected,
             force_refresh=force_refresh,
             limit_per_day=limit,
+            progress=report,
         )
         typer.echo(f"[backfill] executed tasks={processed} output_root={cfg.paths.raw}")
 

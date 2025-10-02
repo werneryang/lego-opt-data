@@ -240,6 +240,7 @@ class BackfillRunner:
         *,
         limit: Optional[int] = None,
         force_refresh: bool = False,
+        progress: Optional[Callable[[date, str, str, Dict[str, Any]], None]] = None,
     ) -> int:
         planner = BackfillPlanner(self.cfg)
         queue_path = planner.queue_path(start_date)
@@ -263,6 +264,13 @@ class BackfillRunner:
                 symbol = task["symbol"]
                 underlying_conid = task.get("underlying_conid")
                 try:
+                    if progress:
+                        progress(
+                            start_date,
+                            symbol,
+                            "start",
+                            {"remaining": len(queue)},
+                        )
                     if self.mode == "historical":
                         self._acquire("historical")
                     underlying_close = self.underlying_fetcher(
@@ -352,6 +360,13 @@ class BackfillRunner:
 
                     processed += 1
                     queue.save()
+                    if progress:
+                        progress(
+                            start_date,
+                            symbol,
+                            "success",
+                            {"rows": len(df)},
+                        )
                 except Exception as exc:
                     logger.exception(
                         "Backfill task failed",
@@ -360,6 +375,13 @@ class BackfillRunner:
                     )
                     queue.push(task)
                     queue.save()
+                    if progress:
+                        progress(
+                            start_date,
+                            symbol,
+                            "error",
+                            {"error": str(exc)},
+                        )
                     break
         return processed
 
@@ -371,6 +393,7 @@ class BackfillRunner:
         *,
         force_refresh: bool = False,
         limit_per_day: Optional[int] = None,
+        progress: Optional[Callable[[date, str, str, Dict[str, Any]], None]] = None,
     ) -> int:
         if end_date < start_date:
             raise ValueError("end date must be on or after start date")
@@ -379,12 +402,21 @@ class BackfillRunner:
         current = start_date
         while current <= end_date:
             if is_trading_day(current):
-                total_processed += self.run(
+                if progress:
+                    progress(current, "", "day_start", {})
+                processed_today = self.run(
                     current,
                     symbols,
                     limit=limit_per_day,
                     force_refresh=force_refresh,
+                    progress=progress,
                 )
+                total_processed += processed_today
+                if progress:
+                    progress(current, "", "day_end", {"processed": processed_today})
+            else:
+                if progress:
+                    progress(current, "", "non_trading", {})
             current += timedelta(days=1)
         return total_processed
 
