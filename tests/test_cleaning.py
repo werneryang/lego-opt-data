@@ -64,6 +64,7 @@ def _cfg(tmp_path, actions_path=None) -> AppConfig:
             use_rth=True,
             max_strikes_per_expiry=21,
             fill_missing_greeks_with_zero=False,
+            historical_timeout=30.0,
         ),
     )
 

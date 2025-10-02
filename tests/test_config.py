@@ -30,6 +30,7 @@ def test_load_config_from_custom_file(tmp_path: Path) -> None:
         use_rth = false
         max_strikes_per_expiry = 11
         fill_missing_greeks_with_zero = true
+        historical_timeout = 45
         """
     ).strip()
 
@@ -46,3 +47,4 @@ def test_load_config_from_custom_file(tmp_path: Path) -> None:
     assert cfg.acquisition.duration == "2 D"
     assert cfg.acquisition.max_strikes_per_expiry == 11
     assert cfg.acquisition.fill_missing_greeks_with_zero is True
+    assert cfg.acquisition.historical_timeout == 45.0

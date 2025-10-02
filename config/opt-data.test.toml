@@ -67,6 +67,7 @@ what_to_show = "TRADES,MIDPOINT"
 use_rth = true
 max_strikes_per_expiry = 3
 fill_missing_greeks_with_zero = false
+historical_timeout = 30
 
 [cli]
 default_generic_ticks = "100,101,104,106,258"

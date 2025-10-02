@@ -68,6 +68,7 @@ what_to_show = "TRADES"
 use_rth = true
 max_strikes_per_expiry = 21
 fill_missing_greeks_with_zero = false
+historical_timeout = 30
 
 [cli]
 default_generic_ticks = "100,101,104,106,258" # 包含 IV、Greeks、OI 的通用 tick 列表

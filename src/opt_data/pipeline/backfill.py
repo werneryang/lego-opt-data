@@ -5,6 +5,7 @@ from datetime import date, timedelta
 from pathlib import Path
 from typing import Callable, List, Sequence, Optional, Dict, Any
 
+import asyncio
 import logging
 import math
 import time
@@ -562,24 +563,47 @@ class BackfillRunner:
                                     "what": what_to_show,
                                 },
                             )
-                        if stop_requested and stop_requested():
+                        timeout_s = max(self.cfg.acquisition.historical_timeout, 1.0)
+                        try:
+                            bars = ib.run(
+                                asyncio.wait_for(
+                                    ib.reqHistoricalDataAsync(
+                                        contract,
+                                        endDateTime=end_dt,
+                                        durationStr=duration,
+                                        barSizeSetting=bar_size,
+                                        whatToShow=what_to_show,
+                                        useRTH=use_rth,
+                                        formatDate=1,
+                                    ),
+                                    timeout=timeout_s,
+                                )
+                            )
+                        except asyncio.TimeoutError as exc_timeout:
+                            last_error = f"timeout({timeout_s}s)"
                             if progress:
                                 progress(
                                     trade_date,
                                     info.get("symbol", ""),
-                                    "timeout",
-                                    {"stage": "before_request"},
+                                    "historical_error",
+                                    {
+                                        "expiry": info.get("expiry"),
+                                        "strike": info.get("strike"),
+                                        "right": info.get("right"),
+                                        "what": what_to_show,
+                                        "error": last_error,
+                                    },
                                 )
-                            raise TimeoutError("historical request timeout")
-                        bars = ib.reqHistoricalData(
-                            contract,
-                            endDateTime=end_dt,
-                            durationStr=duration,
-                            barSizeSetting=bar_size,
-                            whatToShow=what_to_show,
-                            useRTH=use_rth,
-                            formatDate=1,
-                        )
+                            logger.warning(
+                                "Historical data request timeout",
+                                extra={
+                                    "symbol": info.get("symbol"),
+                                    "expiry": info.get("expiry"),
+                                    "what": what_to_show,
+                                    "timeout": timeout_s,
+                                },
+                            )
+                            continue
                         if bars:
                             if progress:
                                 progress(
