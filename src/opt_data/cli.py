@@ -92,6 +92,21 @@ def backfill(
     )
 
     if execute:
+        log_dir = cfg.paths.run_logs
+        log_dir.mkdir(parents=True, exist_ok=True)
+        timestamp = datetime.utcnow().strftime("%Y%m%dT%H%M%SZ")
+        log_file = log_dir / (
+            f"backfill_{start_date.isoformat()}_{end_date.isoformat()}_{timestamp}.log"
+        )
+        with log_file.open("a", encoding="utf-8") as fh:
+            fh.write(
+                "# Backfill execution\n"
+                f"mode={cfg.acquisition.mode} duration={cfg.acquisition.duration} "
+                f"bar_size={cfg.acquisition.bar_size} what={cfg.acquisition.what_to_show} "
+                f"use_rth={cfg.acquisition.use_rth} max_strikes={cfg.acquisition.max_strikes_per_expiry}\n"
+                f"symbols={selected or 'ALL'} start={start_date} end={end_date} limit={limit or 'ALL'}\n"
+            )
+
         runner = BackfillRunner(cfg)
 
         def report(day: date, symbol: str, status: str, extra: Dict[str, Any]) -> None:
@@ -102,16 +117,31 @@ def backfill(
                 details = ", ".join(f"{k}={v}" for k, v in extra.items())
                 parts.append(details)
             typer.echo(" ".join(parts))
+            with log_file.open("a", encoding="utf-8") as fh:
+                fh.write(" ".join(parts) + "\n")
 
-        processed = runner.run_range(
-            start_date,
-            end_date,
-            selected,
-            force_refresh=force_refresh,
-            limit_per_day=limit,
-            progress=report,
-        )
-        typer.echo(f"[backfill] executed tasks={processed} output_root={cfg.paths.raw}")
+        with log_file.open("a", encoding="utf-8") as fh:
+            fh.write("[backfill] execution started\n")
+
+        try:
+            processed = runner.run_range(
+                start_date,
+                end_date,
+                selected,
+                force_refresh=force_refresh,
+                limit_per_day=limit,
+                progress=report,
+            )
+            summary = f"[backfill] executed tasks={processed} output_root={cfg.paths.raw}"
+            typer.echo(summary)
+            with log_file.open("a", encoding="utf-8") as fh:
+                fh.write(summary + "\n")
+        except Exception as exc:
+            error_line = f"[backfill:error] exception={exc}"
+            typer.echo(error_line, err=True)
+            with log_file.open("a", encoding="utf-8") as fh:
+                fh.write(error_line + "\n")
+            raise
 
 
 @app.command()
