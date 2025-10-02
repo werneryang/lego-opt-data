@@ -241,6 +241,7 @@ class BackfillRunner:
         limit: Optional[int] = None,
         force_refresh: bool = False,
         progress: Optional[Callable[[date, str, str, Dict[str, Any]], None]] = None,
+        stop_requested: Optional[Callable[[], bool]] = None,
     ) -> int:
         planner = BackfillPlanner(self.cfg)
         queue_path = planner.queue_path(start_date)
@@ -264,6 +265,17 @@ class BackfillRunner:
                 symbol = task["symbol"]
                 underlying_conid = task.get("underlying_conid")
                 try:
+                    if stop_requested and stop_requested():
+                        if progress:
+                            progress(
+                                start_date,
+                                symbol,
+                                "timeout",
+                                {"stage": "before_start"},
+                            )
+                        queue.push(task)
+                        queue.save()
+                        break
                     if progress:
                         progress(
                             start_date,
@@ -328,6 +340,7 @@ class BackfillRunner:
                             start_date,
                             acquire_token=self._make_acquire("historical"),
                             progress=progress,
+                            stop_requested=stop_requested,
                         )
                     else:
                         market_rows = self.snapshot_fetcher(
@@ -430,6 +443,7 @@ class BackfillRunner:
         force_refresh: bool = False,
         limit_per_day: Optional[int] = None,
         progress: Optional[Callable[[date, str, str, Dict[str, Any]], None]] = None,
+        stop_requested: Optional[Callable[[], bool]] = None,
     ) -> int:
         if end_date < start_date:
             raise ValueError("end date must be on or after start date")
@@ -437,6 +451,10 @@ class BackfillRunner:
         total_processed = 0
         current = start_date
         while current <= end_date:
+            if stop_requested and stop_requested():
+                if progress:
+                    progress(current, "", "timeout", {"stage": "range"})
+                break
             if is_trading_day(current):
                 if progress:
                     progress(current, "", "day_start", {})
@@ -446,6 +464,7 @@ class BackfillRunner:
                     limit=limit_per_day,
                     force_refresh=force_refresh,
                     progress=progress,
+                    stop_requested=stop_requested,
                 )
                 total_processed += processed_today
                 if progress:
@@ -472,6 +491,7 @@ class BackfillRunner:
         *,
         acquire_token: Optional[Callable[[], None]] = None,
         progress: Optional[Callable[[date, str, str, Dict[str, Any]], None]] = None,
+        stop_requested: Optional[Callable[[], bool]] = None,
     ) -> List[Dict[str, Any]]:
         from ib_insync import Option  # type: ignore
 
@@ -491,6 +511,15 @@ class BackfillRunner:
 
         for info in contracts:
             try:
+                if stop_requested and stop_requested():
+                    if progress:
+                        progress(
+                            trade_date,
+                            info.get("symbol", ""),
+                            "timeout",
+                            {"stage": "historical_loop"},
+                        )
+                    break
                 option = Option(
                     info.get("symbol"),
                     info.get("expiry", "").replace("-", ""),
@@ -533,6 +562,15 @@ class BackfillRunner:
                                     "what": what_to_show,
                                 },
                             )
+                        if stop_requested and stop_requested():
+                            if progress:
+                                progress(
+                                    trade_date,
+                                    info.get("symbol", ""),
+                                    "timeout",
+                                    {"stage": "before_request"},
+                                )
+                            raise TimeoutError("historical request timeout")
                         bars = ib.reqHistoricalData(
                             contract,
                             endDateTime=end_dt,

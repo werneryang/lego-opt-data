@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import sys
+import time
 from datetime import date, datetime, timedelta
 from pathlib import Path
 from typing import Optional, Dict, Any
@@ -31,6 +32,10 @@ def backfill(
         None, help="Limit number of symbols to process per day during execution"
     ),
     force_refresh: bool = typer.Option(False, help="Ignore cached contracts when executing"),
+    timeout: int = typer.Option(
+        60,
+        help="Timeout in seconds without progress before aborting execution (<=0 disables)",
+    ),
 ) -> None:
     cfg = load_config(Path(config) if config else None)
 
@@ -107,9 +112,22 @@ def backfill(
                 f"symbols={selected or 'ALL'} start={start_date} end={end_date} limit={limit or 'ALL'}\n"
             )
 
+        timeout = max(timeout, 0)
+        if timeout == 0:
+            typer.echo("[backfill] timeout disabled")
+
+        last_event = time.monotonic()
+
+        def stop_requested() -> bool:
+            if timeout <= 0:
+                return False
+            return time.monotonic() - last_event > timeout
+
         runner = BackfillRunner(cfg)
 
         def report(day: date, symbol: str, status: str, extra: Dict[str, Any]) -> None:
+            nonlocal last_event
+            last_event = time.monotonic()
             parts = [f"[backfill:{status}]", day.isoformat()]
             if symbol:
                 parts.append(symbol)
@@ -131,6 +149,7 @@ def backfill(
                 force_refresh=force_refresh,
                 limit_per_day=limit,
                 progress=report,
+                stop_requested=stop_requested,
             )
             summary = f"[backfill] executed tasks={processed} output_root={cfg.paths.raw}"
             typer.echo(summary)
