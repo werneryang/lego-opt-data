@@ -1,40 +1,42 @@
-# 数据契约：清洗与调整层 Schema
+# 数据契约：日内快照与日终视图
 
 ## 总览
-- **数据视图**：`data/raw/ib/chain`（原始）、`data/clean/ib/chain/view=clean`（标准化）、`view=adjusted`（公司行动调整）。
-- **分区键**：`date`（交易日）、`underlying`（标的符号）、`exchange`（主要交易所）。
-- **主键**：`trade_date + conid`。
-- **文件格式**：Parquet（Snappy for hot partitions, ZSTD for cold partitions）。
-- **时间戳**：`asof_ts` 统一转为 UTC 并去除时区信息。
+- **数据视图**：
+  - `data/raw/ib/chain/view=intraday`：IB 快照原始字段。
+  - `data/clean/ib/chain/view=intraday`：清洗后日内视图（含槽位、降级标记）。
+  - `data/clean/ib/chain/view=daily_clean`：按 17:00 ET rollup 的日级快照。
+  - `data/clean/ib/chain/view=daily_adjusted`：公司行动调整后的日级视图。
+  - `data/clean/ib/chain/view=enrichment`（可选）：T+1 `open_interest` 等慢字段增补记录。
+- **分区键**：`date`（交易日，ET）、`underlying`（标的符号）、`exchange`（主要交易所）、`view`。
+- **主键**：
+  - Intraday：`trade_date(ET) + sample_time(UTC) + conid`。
+  - Daily/Adjusted/Enrichment：`trade_date(ET) + conid`。
+- **文件格式**：Parquet；热分区 Snappy，冷分区 ZSTD。
+- **时间戳**：
+  - `asof_ts`：UTC（去时区）；
+  - `sample_time`：UTC（槽位中心时间）；可选 `sample_time_et` 记录 ET 文本。
 
 ## 字段定义
+
+### 共享字段（intraday & daily）
 | 字段名 | 类型 | 描述 | 允许为空 | 备注 |
 | --- | --- | --- | --- | --- |
-| `trade_date` | `timestamp[ns]` | 交易日（ET，00:00） | 否 | 与分区字段 `date` 一致 |
-| `asof_ts` | `timestamp[ns]` | 数据采集时间（UTC，去时区） | 否 | 精度微秒 |
+| `trade_date` | `date` | 交易日（ET，去时区） | 否 | 与分区字段 `date` 一致 |
 | `underlying` | `string` | 标的符号 | 否 | 大写字母 |
-| `underlying_close` | `double` | 标的当日收盘价 | 否 | 来自 IB 或外部行情 |
-| `underlying_close_adj` | `double` | 公司行动调整后的收盘价 | 是 | 无调整时等于 `underlying_close` |
-| `conid` | `int64` | IB 合约 ID | 否 | 主键之一 |
-| `symbol` | `string` | IB 返回的期权代码 | 否 | e.g. `AAPL  240621C00180000` |
+| `conid` | `int64` | IB 合约 ID | 否 | 主键组成部分 |
+| `symbol` | `string` | IB 期权代码 | 否 | e.g. `AAPL  240621C00180000` |
 | `expiry` | `date` | 合约到期日 | 否 | ISO-8601 |
-| `right` | `string` | `C` 或 `P` | 否 | |
-| `strike` | `double` | 原始行权价 | 否 | |
-| `strike_adj` | `double` | 调整后行权价 | 是 | 参考乘数/拆分 |
-| `strike_per_100` | `double` | 行权价换算到每 100 股 | 是 | `strike * (100/multiplier)` |
+| `right` | `string` | 权利类型 `C` / `P` | 否 | |
+| `strike` | `double` | 行权价 | 否 | |
 | `multiplier` | `double` | 合约乘数 | 否 | 通常 100 |
-| `exchange` | `string` | 交易所 | 否 | 与分区字段一致 |
+| `exchange` | `string` | IB 交易所/路由 | 否 | 默认 `SMART` |
 | `tradingClass` | `string` | IB 交易类别 | 否 | |
 | `bid` | `double` | 买价 | 否 | |
 | `ask` | `double` | 卖价 | 否 | |
 | `mid` | `double` | 中间价 | 是 | `(bid + ask)/2` |
 | `last` | `double` | 最新成交价 | 是 | |
-| `open` | `double` | 开盘价 | 是 | 若缺失保持空值 |
-| `high` | `double` | 最高价 | 是 | |
-| `low` | `double` | 最低价 | 是 | |
-| `volume` | `int64` | 成交量 | 否 | |
-| `open_interest` | `int64` | 持仓量 | 否 | 若缺失需在 QA 中标记 |
-| `iv` | `double` | 隐含波动率 | 否 | 0-10 之间应在 QA 校验 |
+| `volume` | `int64` | 当日成交量 | 否 | 若减小则截断为 0 |
+| `iv` | `double` | 隐含波动率 | 否 | 校验范围 [0,10] |
 | `delta` | `double` | Delta | 否 | |
 | `gamma` | `double` | Gamma | 否 | |
 | `theta` | `double` | Theta | 否 | |
@@ -42,24 +44,64 @@
 | `rho` | `double` | Rho | 是 | IB 返回则保留 |
 | `bid_size` | `int64` | 买量 | 是 | |
 | `ask_size` | `int64` | 卖量 | 是 | |
-| `hist_volatility` | `double` | 历史波动率 | 是 | 依赖权限 |
-| `market_data_type` | `int32` | IB 行情类型 | 否 | 参考 IB API 文档 |
+| `hist_volatility` | `double` | 历史波动率 | 是 | 权限依赖 |
+| `market_data_type` | `int32` | IB 行情类型 | 否 | 默认 `1`（实时）；降级为 `3/4` 时需标记 |
+| `source` | `string` | 数据来源 | 否 | 固定 `IBKR` |
+| `asof_ts` | `timestamp[ns]` | 数据采集时间（UTC） | 否 | 精度微秒 |
+| `ingest_id` | `string` | 本次采集批次 ID | 否 | UUID |
+| `ingest_run_type` | `string` | 运行类型 | 否 | `intraday` / `eod_rollup` / `enrichment` |
+| `data_quality_flag` | `list<string>` | 数据质量标签 | 是 | 允许多个，如 `delayed_fallback` |
+
+### Intraday 专属字段（view=intraday）
+| 字段名 | 类型 | 描述 | 允许为空 | 备注 |
+| --- | --- | --- | --- | --- |
+| `sample_time` | `timestamp[ns]` | 槽位时间（UTC） | 否 | 30 分钟对齐 |
+| `sample_time_et` | `string` | 槽位时间（ET 文本） | 是 | 便于审计 |
+| `slot_30m` | `int32` | 槽位索引（09:30=0...16:00=13） | 否 | |
+| `first_seen_slot` | `int32` | 合约当日首次出现槽 | 是 | 启用增量刷新时返回 |
+| `open_interest` | `int64` | 持仓量 | 是 | 日内默认空，若返回则记录 |
+| `delayed_quote_age_sec` | `double` | 延迟行情滞后（秒） | 是 | 仅在降级时填充 |
+
+### 日终字段（view=daily_clean / daily_adjusted）
+| 字段名 | 类型 | 描述 | 允许为空 | 备注 |
+| --- | --- | --- | --- | --- |
+| `rollup_source_time` | `timestamp[ns]` | 使用的快照时间（UTC） | 否 | 优先 16:00 槽 |
+| `rollup_source_slot` | `int32` | 来源槽位 | 否 | |
+| `rollup_strategy` | `string` | 选取策略 | 否 | `close` / `last_good` / `slot_1530` |
+| `underlying_close` | `double` | 标的当日收盘价 | 否 | 可来自 IB 或外部行情 |
+| `underlying_close_adj` | `double` | 公司行动调整后收盘价 | 是 | |
+| `strike_adj` | `double` | 调整后行权价 | 是 | |
+| `strike_per_100` | `double` | 行权价折算（每 100 股） | 是 | `strike * (100/multiplier)` |
 | `moneyness_pct` | `double` | `(underlying_close/strike - 1)` | 否 | |
 | `moneyness_pct_adj` | `double` | 调整后 moneyness | 是 | |
-| `data_quality_flag` | `string` | 数据质量标签 | 是 | e.g. `missing_oi`, `delayed` |
-| `source` | `string` | 数据来源 | 否 | 固定 `IBKR` |
-| `ingest_id` | `string` | 本次采集批次 ID | 否 | UUID |
-| `ingest_run_type` | `string` | `backfill` 或 `daily` | 否 | |
+| `open_interest` | `int64` | 持仓量（EOD/T+1） | 是 | enrichment 后补齐 |
+| `oi_asof_date` | `date` | OI 对应日期 | 是 | enrichment 时写入 |
+| `derived_mid_high` | `double` | 采样 mid 最高值 | 是 | 默认不生成，启用时附 `derived_from_intraday_samples` 标记 |
+| `derived_mid_low` | `double` | 采样 mid 最低值 | 是 | 同上 |
+| `derived_mid_vwap` | `double` | 采样 mid 近似 VWAP | 是 | 启用后需槽位覆盖 ≥80% |
+
+### Enrichment 视图（可选）
+| 字段名 | 类型 | 描述 | 允许为空 | 备注 |
+| --- | --- | --- | --- | --- |
+| `update_ts` | `timestamp[ns]` | 回补执行时间（UTC） | 否 | |
+| `fields_updated` | `list<string>` | 本次回补字段 | 否 | 例如 `["open_interest"]` |
 
 ## 质量校验
-- 主键冲突：同一 `(trade_date, conid)` 只允许一行；冲突时保留最新 `asof_ts` 数据。
-- 数值范围：
-  - `iv` 在 0–10 之间，超界需记录 `data_quality_flag`。
-  - `delta` ∈ [-1, 1]；`gamma`、`vega`、`theta` 等按金融常识校验。
-- 空值策略：
-  - 必填字段空值时，视为采集失败；在 `state/run_logs/` 中记录并标记。
-  - 可选字段保留空值，避免误填默认值。
+- **主键唯一**：Intraday `(trade_date, sample_time, conid)`；Daily `(trade_date, conid)`；冲突时以最新 `asof_ts` 覆盖旧值。
+- **槽位覆盖**：每标的每日成功槽位数 ≥ 90%；不足时记录 `slot_coverage_breach` 并在 QA 报告中说明。
+- **行情质量**：
+  - 实时降级：`market_data_type` 非 1 时必须存在 `delayed_fallback` 标记。
+  - `open_interest` 缺失：日内默认 `missing_oi`，日终在 enrichment 完成前维持标记。
+- **数值范围**：
+  - `iv` ∈ [0,10]；超界写入 `iv_out_of_range`。
+  - `delta` ∈ [-1,1]；`gamma`、`theta`、`vega` 按业务规则校验。
+- **派生指标**：`derived_*` 字段默认不写；启用时需 `derived_from_intraday_samples` 标记并校验槽位覆盖率 ≥ 80%，否则置空并记录 `derived_incomplete`。
 
-## 兼容性要求
-- 添加新字段需在此处更新并保证向后兼容；清洗流程需默认为缺失字段赋空值而非报错。
-- 任何分区规则调整需同步更新 `docs/ADR-0001-storage.md`、`SCOPE.md`、`config/opt-data.toml`。
+## 兼容性与演进
+- 新增字段需在此处登记，并在 `SCOPE.md`、`config/opt-data.toml`（或模板）保持同步；默认对缺失字段赋空值，不中断流程。
+- 调整分区或视图命名需同步更新 `docs/ADR-0001-storage.md`、`SCOPE.md`、`PLAN.md`。
+- `ingest_run_type` 取值规范：
+  - `intraday`：30 分钟快照；
+  - `eod_rollup`：17:00 日终归档；
+  - `enrichment`：次日慢字段回补；
+  - 后续新增任务需扩展列表并更新契约。

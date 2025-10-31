@@ -1,28 +1,32 @@
 # 本周任务（滚动更新）
 
 ## 待办
-- （空）
+- [ ] Snapshot 管道重构：实现 `slot_30m` 计算、实时行情采集（`market_data_type=1`）与延迟降级标记；输出 `view=intraday` 并确保 `(trade_date, sample_time, conid)` 去重。
+  - 验收：AAPL 在 `data_test` 环境录得 ≥12 个槽位，文件包含 `sample_time`（UTC）与 `slot_30m` 索引。
+- [ ] Rollup 原型：实现 17:00 ET `rollup` CLI，优先使用 16:00 槽，写入 `rollup_source_time/slot/strategy`，并生成 `view=daily_clean`。
+  - 验收：AAPL 样本中 `rollup_strategy` 正常为 `close`，缺槽时回退为 `last_good` 并记录日志。
+- [ ] OI enrichment 设计：实现次日 07:30 ET 回补流程，按 `(trade_date, conid)` 幂等更新 `open_interest`、`oi_asof_date`。
+  - 验收：构造缺失样本后补齐并移除 `missing_oi` 标记。
+- [ ] CLI/配置更新：新增 `snapshot`/`rollup`/`enrichment` 参数（槽位范围、宽限、降级开关）；同步 `config/opt-data.toml` 模板。
+- [ ] 调度原型：在 macOS 使用 APScheduler 跑通 09:30–16:00 每 30 分钟采集 + 17:00 rollup + 次日 07:30 enrichment。
+- [ ] QA 报告与监控：实现槽位覆盖率、延迟行情占比、rollup 回退率统计，并输出至 `state/run_logs/metrics.json`.
+- [ ] 关键自检脚本：编写自动化自检（槽位覆盖率 ≥90%、`rollup_strategy` 回退率 ≤5%、`missing_oi` 补齐率 ≥95%、`delayed_fallback` 占比 <10%）。
+  - 验收：自检脚本在 `data_test` 环境跑通并输出 PASS/FAIL；失败项在 `TODO.now.md` 列出补救动作。
+- [ ] 错误日志落地：统一将 CLI 与调度任务异常写入 `state/run_logs/errors/errors_YYYYMMDD.log`，并提供关键字扫描脚本。
+  - 验收：触发模拟异常后日志文件存在且包含上下文；扫描脚本输出可读摘要并支持告警钩子。
+- [ ] 扩容策略确认：整理 AAPL → AAPL,MSFT → Top10 → 全量的上线门槛与限速调优流程，写入 `PLAN.md` 与 Runbook。
 
 ## 进行中
-- （空）
+- 无
 
 ## 阻塞
-- [ ] IB 会话连接测试需本地 IB Gateway/TWS 实机环境，待线下联调
-- [ ] 小规模端到端测试（真实 IB 数据）取决于权限与速率配额
+- 实时行情权限需本地 IB Gateway/TWS 账号开通；若仅有延迟权限需验证降级路径。
+- APScheduler/systemd 模块需访问交易日历（含早收盘），当前依赖手工维护，需补充数据源或校验流程。
 
 ## Done 2025-09-26
-- [x] 依赖入库（pyproject：pandas/pyarrow/typer/ib-insync/APScheduler/dotenv/pmc）
-- [x] 配置与 CLI 雏形（`src/opt_data/config.py`, `src/opt_data/cli.py`）
-- [x] IB 会话与合约发现缓存接口（`ib/session.py`, `ib/discovery.py` 占位）
-- [x] 工具模块：限速器/日历/队列（`util/ratelimit.py`, `util/calendar.py`, `util/queue.py`）
-- [x] 存储：分区与写入（`storage/layout.py`, `storage/writer.py`），冷热压缩策略
-- [x] 单元测试：配置加载、分区路径与编解码策略、限速器（`tests/*`）
-- [x] 到期过滤工具与合约筛选（`util/expiry.py`, `ib/discovery.filter_by_scope`）
-- [x] Universe 加载与回填计划队列（`universe.py`, `pipeline/backfill.py`, CLI backfill 集成）
-- [x] 新增单测：到期过滤、Universe 解析、回填队列生成（`tests/test_expiry.py`, `tests/test_universe.py`, `tests/test_backfill_planner.py`）
-- [x] IB 合约发现实现（`ib/discovery.discover_contracts_for_symbol`），含缓存与过滤
-- [x] 回填执行器骨架写入 raw 数据（`pipeline/backfill.BackfillRunner`，CLI `backfill --execute`）
-- [x] 新增单测：合约发现缓存、BackfillRunner 写入 parquet（`tests/test_discovery.py`, `tests/test_backfill_runner.py`）
-- [x] 清洗流水线与公司行动调整（`pipeline/cleaning.py`, `pipeline/actions.py`）及测试
-- [x] 文档更新（数据契约、Runbook、PLAN、README、AGENTS）与 Python 版本说明
-- [x] 本地 `make install`（Python 3.11）并通过 `make test`
+- [x] 环境准备与依赖安装：创建 Python 3.11 venv，`make install && make test && make lint`
+  - 验收：pytest 全绿；ruff 无阻断；venv 可用
+- [x] 测试配置检查：使用 `config/opt-data.test.toml` 验证路径与参数
+  - 验收：`python -m opt_data.cli inspect paths --config config/opt-data.test.toml` 显示 `data_test/` 与 `state_test/`
+- [x] 合约发现冒烟：AAPL/MSFT 缓存写入成功，覆盖标准月/季与 ±30% 行权价范围
+- [x] 文档同步：根据新的 snapshot + rollup 方案更新 `PLAN.md`、`SCOPE.md`、`docs/data-contract.md`、`docs/ADR-0001-storage.md`、`docs/ops-runbook.md`

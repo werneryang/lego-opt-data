@@ -1,49 +1,54 @@
 # 数据采集范围与约定
 
 ## 标的范围
-- S&P 500 成分股，标的列表由 `config/universe.csv` 提供，带有 `symbol` 与可选 `conid`。
-- 若成分发生调整，以回填批次开始时的名单为准；后续变更需更新此文件并记录于 `PLAN.md`。
+- 默认宇宙：S&P 500 成分股（可通过 `config/universe.csv` 缩减或扩展），包含 `symbol` 与可选 `conid`。
+- 成分调整或扩容需更新 `config/universe.csv` 并在 `PLAN.md`、`TODO.now.md` 留痕；上线前建议按 AAPL → AAPL,MSFT → Top 10 → 全量的节奏逐步放量。
 
-## 时间范围
-- 回填：自 2024-10-01 起至当前。
-- 日常更新：每个美国交易日 17:00 ET（`America/New_York`）触发，补齐当日数据。
+## 时间范围与采样频率
+- 日内采集：美国交易日 09:30–16:00（America/New_York），每 30 分钟一个槽位，共 14 槽，包含 16:00 收盘槽；早收盘按交易日历截断。
+- 槽位时间按 ET 定义，存储时 `sample_time` 使用 UTC，另存 `slot_30m`（0–13）；单槽允许 ±120 秒宽限并重试。
+- 日终归档：当日 17:00 ET 运行 rollup，优先使用 16:00 槽快照（回退规则详见下文）；不再执行历史回填。
+- T+1 补全：次日 07:30 ET（可配置）执行 `open_interest` enrichment。
 
-## 合约过滤规则
-- 到期：标准月度合约（第三个星期五，遇假日顺延）与季度合约（3/6/9/12 月第三个星期五）。
-- 行权价：以标的当日收盘价为基准，保留 ±30% 行权价范围内的合约。
-- 交易所：保留主要可交易所（CBOE、NASDAQOM、NYSE、BATS 等），默认按数据接口返回。
+## 合约发现与过滤规则
+- 会话冻结：每日 09:25 ET 基于上一交易日收盘价的 ±30% 行权价范围及标准月度/季度到期合约生成目标集合，默认整日固定；可选单次中午（12:00 ET）增量刷新，仅新增不删除。
+- 行权价过滤：以会话基准价（默认前收）计算；可通过配置启用“动态跟随标的价格”策略。
+- 交易所：默认使用 IB `SMART` 路由；若返回具体交易所名称则保留该值。
+- 其他筛选：`max_strikes_per_expiry`、`exclude_weekly=true` 等可在配置中调整。
 
 ## 字段要求
-- 必须字段：
-  - 合约元信息：`conid`, `symbol`, `expiry`, `right`, `strike`, `multiplier`, `exchange`, `tradingClass`。
-  - 价格与行情：`bid`, `ask`, `mid`, `last`, `open`, `high`, `low`, `volume`, `open_interest`, `market_data_type`。
-  - 波动率与希腊值：`iv`, `delta`, `gamma`, `theta`, `vega`（如可得，保持双精度浮点）。
-  - 元数据：`asof_ts`, `source`, `data_quality_flag`（如有缺失或延迟时标记）。
-- 可选字段（有则保留）：`rho`, `bid_size`, `ask_size`, `historical_volatility`, `option_implied_volatility` 等。
+- 必填字段（intraday/daily 通用）：`conid`, `symbol`, `expiry`, `right`, `strike`, `multiplier`, `exchange`, `tradingClass`, `bid`, `ask`, `mid`, `last`, `volume`, `iv`, `delta`, `gamma`, `theta`, `vega`, `market_data_type`, `asof_ts`, `sample_time`, `slot_30m`, `source`, `ingest_id`, `ingest_run_type`, `data_quality_flag`（可为空列表）。
+- 日终额外字段：`rollup_source_time`, `rollup_source_slot`, `rollup_strategy`, `underlying_close`, `underlying_close_adj`, `strike_adj`, `moneyness_pct`, `moneyness_pct_adj`。
+- 可选字段（有则保留）：`rho`, `bid_size`, `ask_size`, `hist_volatility`, `sample_time_et`, `first_seen_slot`, 以及公司行动维度。
+- `open_interest`：视为 EOD/T+1 字段；intraday 默认空值并加 `missing_oi` 标记；日终在 enrichment 完成后补齐。
+- 若实时行情降级为延迟（`market_data_type=3/4`），需在 `data_quality_flag` 中记录 `delayed_fallback`。
 
 ## 数据层级
-- 原始层（Raw）：保持 IB 返回字段命名与类型，不做调整，按请求批次写入。
-- 清洗层（Clean）：字段标准化、类型校验、缺失处理、去重；按 `date/underlying/exchange` 分区。
-- 调整层（Adjusted）：在 Clean 基础上应用公司行动调整（拆分、特别分红、乘数变化等），额外字段 `underlying_close_adj`, `strike_adj`, `moneyness_pct_adj`。
+- 原始层（Raw）：记录 IB 快照原样字段及槽位信息，按 `date/underlying/exchange/view=intraday` 分区；保留 `market_data_type` 与任何错误码。
+- 清洗层（Clean）：标准化字段类型、落槽去重、填充缺失标记；包含 `view=intraday` 与 `view=daily_clean`。
+- 调整层（Adjusted）：在 daily_clean 基础上应用公司行动调整（拆分、特别分红、乘数变化等），输出 `view=daily_adjusted`。
+- 附加层：`view=enrichment` 可选记录 T+1 OI 回填及其他慢字段。
 
 ## 公司行动与参考数据
-- 公司行动来源：本地维护表（CSV/Parquet），字段包含 `symbol`, `event_date`, `event_type`, `ratio`, `notes`。
-- 调整规则：
-  - 拆分：按乘数调整行权价与标的参考价。
-  - 现金分红：按配置决定是否对 moneyness 做调整；保持原始价格。
-  - 复杂交割（并购、特别交割）需人工确认，无法自动调整时在 `data_quality_flag` 中标记。
+- 来源：本地维护的公司行动表（CSV/Parquet），字段包含 `symbol`, `event_date`, `event_type`, `ratio`, `notes`。
+- 生效策略：
+  - 日内视图保持原始价格与行权价，不做调整。
+  - 日终 rollup 与 adjusted 层按公司行动表应用调整（拆分/乘数变更/特别分红），未匹配到规则时保留原值并记录说明。
+- 参考数据（如标的收盘价）优先使用 IB 数据，必要时引入外部源并在文档中记录。
 
 ## 限速与调度
-- 默认限速：按请求类别设定；初始值谨慎（例如历史/快照 20 req/min，发现 5 req/min），可以通过配置调整。
-- 调度：macOS 开发期使用 APScheduler 或 `launchd`，正式迁移后使用 Linux `systemd` 定时器。
+- 限速默认值：snapshot 30 req/min，合约发现 5 req/min，可通过配置调节；并发 `max_concurrent_snapshots=10` 起步，逐步调优。
+- 调度：开发机使用 APScheduler/launchd，生产使用 systemd timer；统一设置时区 `America/New_York`，维护交易日历及早收盘表。
+- 失败重试：槽位请求失败即时重试（指数退避），超过阈值记录 `slot_retry_exceeded` 并进入人工处理队列。
 
 ## 数据质量校验
-- Schema 校验：参考 `docs/data-contract.md`。
-- 主键唯一：`trade_date + conid`。
-- 必填字段：`bid`, `ask`, `last`, `iv`, `open_interest` 至少满足 70% 非空率；不足时记录缺失原因。
-- QA 抽样：每批次随机抽 1% 合约核对 greeks/价格合理性。
+- Intraday 主键：`(trade_date(ET), sample_time(UTC), conid)`；Daily 主键：`(trade_date(ET), conid)`。
+- 槽位覆盖：每标的每日≥90% 槽成功；不足时标记并在 QA 报告中说明。
+- 数值范围：IV ∈ [0,10]；Greeks 按金融常识校验；异常写入 `data_quality_flag`。
+- 延迟标识：`delayed_fallback`、`missing_greeks`、`eod_rollup_fallback`、`eod_rollup_stale` 等需在清洗层记录。
+- QA 抽样：每日随机抽 1% 合约检查快照一致性与 rollup 策略正确性。
 
 ## 不在范围内
-- 非美股期权、指数期权或期货型合约。
-- 高频实时推送（逐笔/毫秒级）数据。
-- 自动化交易或仓位管理逻辑。
+- 非美股股票期权、指数期权、期货期权等其他衍生品。
+- 实时逐笔/毫秒级行情、自动交易信号与仓位管理。
+- 历史大规模回填或外部数据源混合（除非在 PLAN/ADR 中重新批准）。

@@ -1,84 +1,108 @@
-# 运维手册：调度、限速与故障恢复
+# 运维手册：30 分钟快照与日终归档
 
 ## 运行前准备
-1. 启动 IB Gateway/TWS，确认登录账户具有美股期权实时或延迟行情权限。
-2. 使用 Python 3.11：`python3.11 -m venv .venv && .venv/bin/pip install --upgrade pip`，随后执行 `./.venv/bin/pip install -e .[dev]`。若直接运行 `make install`，需保证 `python3` 指向 3.11。
-3. 确保 `.env`（或环境变量）配置以下变量：
+1. 启动 IB Gateway/TWS（Paper：`127.0.0.1:7497`），确认登录账号具备美股期权**实时行情**权限；若仅有延迟权限，允许自动降级。
+2. 准备 Python 3.11 环境：`python3.11 -m venv .venv && .venv/bin/pip install --upgrade pip && .venv/bin/pip install -e '.[dev]'`，或运行 `make install`（确保 `python3` 指向 3.11）。
+3. 配置 `.env` / 环境变量：
    - `IB_HOST`（默认 `127.0.0.1`）
-   - `IB_PORT`（默认 `7497` / 纸面账户，真账户为 `7496`）
+   - `IB_PORT`（默认 `7497`）
    - `IB_CLIENT_ID`（默认 `101`）
-   - `IB_MARKET_DATA_TYPE`（`1=实时`, `2=冻结`, `3=延迟`, `4=延迟冻结`）
-4. 根据需要更新 `config/opt-data.toml` 中的限速、并发、路径与调度窗口。
-5. 准备测试环境配置（避免污染正式目录）：复制 `config/opt-data.toml` 为 `config/opt-data.test.toml`，将 `paths.raw/clean/state/contracts_cache/run_logs` 指向 `data_test/` 与 `state_test/` 等独立路径。
-6. 按需调整 `[acquisition]` 设置：
-   - `mode = "historical"` 使用 `reqHistoricalData`（默认），适合没有实时权限的环境；
-   - `mode = "snapshot"` 依赖 `reqMktData`，需要相应行情许可；
-   - `max_strikes_per_expiry` 可限制每个到期的合约数量，用于控制请求规模；
-   - `fill_missing_greeks_with_zero` 为 `true` 时，会在清洗层把 IV/Greeks/OI 缺失值填 0。
+   - `IB_MARKET_DATA_TYPE=1`（实时；若需强制延迟则设为 `3/4`）
+   - `TZ=America/New_York`（统一调度时区）
+4. 复制正式配置至测试版：`cp config/opt-data.toml config/opt-data.test.toml`，并将 `paths.raw/clean/state/contracts_cache/run_logs` 指向 `data_test/`、`state_test/`。
+5. 核对核心配置：
+   - `[acquisition] mode="snapshot"`、`market_data_type=1`、`allow_fallback_to_delayed=true`
+   - `slot_grace_seconds=120`、`rate_limits.snapshot.per_minute=30`、`max_concurrent_snapshots=10`
+   - `[discovery] policy="session_freeze"`、`pre_open_time="09:25"`；若启用增量刷新，设 `midday_refresh_enabled=true` 且仅新增合约
+   - `intraday_retain_days=60`、`weekly_compaction_enabled=true`、`same_day_compaction_enabled=false`
+6. 确认交易日历（含早收盘）可用；调度器/cron 中必须显式设置 `America/New_York`。
 
 ## 常用命令
-- `make install`：创建/更新虚拟环境并安装依赖（默认调用 `python3`）。
-- `make fmt lint test`：代码风格、静态检查、测试。
-- `make backfill START=2024-10-01 SYMBOLS=AAPL,MSFT`：初始化回填任务队列。
-- `python -m opt_data.cli backfill --start 2024-10-01 --symbols AAPL,MSFT --execute`：即时执行回填并写入原始/清洗数据。
-- `make update`：执行当天 17:00 ET 日更任务（需保证交易日时间）。
-- `make compact DAYS=14`：对超过指定天数的分区执行合并与压缩转换。
+- 基础：`make install`、`make fmt lint test`
+- Snapshot（单槽或按计划）：
+  - `python -m opt_data.cli snapshot --date 2025-09-29 --slot 09:30 --symbols AAPL --config config/opt-data.test.toml`
+  - `python -m opt_data.cli snapshot --run-day --config config/opt-data.toml`（执行当日剩余槽位）
+- 日终归档：`python -m opt_data.cli rollup --date 2025-09-29 --config config/opt-data.test.toml`
+- OI 回补：`python -m opt_data.cli enrichment --date 2025-09-29 --fields open_interest --config config/opt-data.test.toml`
+- 存储维护：`make compact`（周度合并）、`python -m opt_data.cli retention --view intraday --older-than 60`
+
+> 若 CLI 尚未提供对应子命令，可调用等价脚本；命令命名需与实现同步。
 
 ## 冒烟验证（测试目录）
-1. 确认 `config/opt-data.test.toml` 指向测试目录（如 `data_test/`、`state_test/`），并包含要测试的标的（例如 `AAPL, MSFT`）。
-2. 生成队列但不执行：`python -m opt_data.cli backfill --start 2024-10-01 --symbols AAPL,MSFT --config config/opt-data.test.toml`。
-3. 执行冒烟：`python -m opt_data.cli backfill --start 2024-10-01 --symbols AAPL,MSFT --execute --config config/opt-data.test.toml`（可选 `--limit 1`）。
-4. 验证生成的分区：
-   - 原始：`data_test/raw/ib/chain/date=YYYY-MM-DD/underlying=AAPL|MSFT/...`
-   - 清洗：`data_test/clean/ib/chain/view=clean/...`
-   - 调整：`data_test/clean/ib/chain/view=adjusted/...`
-5. 抽查字段（bid/ask/mid/iv/greeks/open_interest、`trade_date`、`asof_ts`、`underlying_close`），确认 `(trade_date, conid)` 唯一；队列文件 `state_test/backfill_*.jsonl` 应为空或仅剩未处理任务。
-6. 冒烟通过后方可在正式目录执行区间回填。
+1. 测试配置仅保留 AAPL，`max_strikes_per_expiry=2`，`slot_range=["09:30","11:00"]`。
+2. 启动 Gateway，执行 `python -m opt_data.cli snapshot --date today --slot now --symbols AAPL --config config/opt-data.test.toml`，采集 ≥2 个槽位。
+3. 检查输出目录：
+   - `data_test/raw/ib/chain/view=intraday/date=YYYY-MM-DD/underlying=AAPL/...`
+   - `data_test/clean/ib/chain/view=intraday/...`
+   - 字段包含 `sample_time`（UTC）、`slot_30m`、`market_data_type=1`；`data_quality_flag` 为空或包含 `[]`。
+4. 模拟无实时权限：临时设置 `market_data_type=3` 再采集一槽，确认输出标记 `delayed_fallback`。
+5. 收盘后运行 `python -m opt_data.cli rollup --date today --config ...`，验证 `rollup_source_slot=13`（或 fallback）与 `rollup_strategy` 字段。
+6. 查看 `state_test/run_logs/` 的 snapshot/rollup 日志，确保记录槽位、回退、延迟等信息。
 
 ## 调度配置
-### macOS（开发环境）
-1. 生成 `plist` 文件（模板参考 `docs/templates/launchd-opt-data.plist` 若后续添加）。
-2. 调整执行路径、环境变量。
-3. 使用 `launchctl load -w <plist>` 注册。
+### APScheduler（开发环境）
+- `BackgroundScheduler(timezone="America/New_York")`。
+- 注册任务：
+  - `discover_contracts`：09:25 ET。
+  - `snapshot_job`：cron `minute=0,30`、`hour=9-15`；根据早收盘表动态裁剪。
+  - `rollup_job`：17:00 ET。
+  - `oi_enrichment_job`：次日 07:30 ET（周二至周五；周一处理上周五）。
+- 在 scheduler 启动时预计算当日槽列表（考虑早收盘），并写入 `state/run_logs/apscheduler/*.jsonl`。
 
-### Linux（生产环境）
-1. 创建 `systemd` 服务与定时器（模板将在开发完成后添加至 `docs/`）。
-2. 单元示例：
-   - `opt-data.service` 调用 `make update`。
-   - `opt-data.timer` 设定 `OnCalendar=Mon-Fri 22:00`（UTC）。
-3. 使用 `systemctl daemon-reload && systemctl enable --now opt-data.timer`。
+### launchd（macOS）
+- `com.optdata.snapshot.plist`：`StartCalendarInterval` 覆盖 09:30–16:00 每 30 分钟，调用 `python -m opt_data.cli snapshot --run-once --config ...`。
+- `com.optdata.rollup.plist`：17:00 执行 rollup。
+- `com.optdata.oi-enrichment.plist`（可选）：次日 07:30 执行 enrichment。
+- 在 plist `EnvironmentVariables` 中设置 `TZ`, `IB_*`, `PATH`（包含虚拟环境）。
+- 日志输出重定向到 `state/run_logs/launchd/*.log`。
+
+### systemd（Linux）
+- 使用 systemd ≥249，支持 `Timezone=`。三个 timer：
+  - `opt-data-snapshot.timer`: `OnCalendar=Mon-Fri 09:30:00..16:00:00/00:30`, `Timezone=America/New_York`。
+  - `opt-data-rollup.timer`: `OnCalendar=Mon-Fri 17:00`, `Timezone=America/New_York`。
+  - `opt-data-enrichment.timer`: `OnCalendar=Tue-Fri 07:30`, `Timezone=America/New_York`。
+- 对应 service 调用虚拟环境脚本，并将 stdout/stderr 写入 `state/run_logs/systemd/`。
+- 早收盘：timer 触发脚本需检查日历并自行跳过闭市后的槽位。
 
 ## 限速与重试
-- 速率控制采用令牌桶机制，配置项包括：
-  - `rate_limits.discovery.per_minute`
-  - `rate_limits.snapshot.per_minute`
-  - `rate_limits.historical.per_minute`
-  - `max_concurrent_snapshots`
-- 触发 IB pacing violation：
-  - 首次等待 30 秒，随后指数退避（60s、120s...），记录在 `state/run_logs/`。
-  - 若连续 3 次失败，任务进入“待人工处理”队列。
+- 令牌桶配置：`rate_limits.discovery.per_minute=5`、`rate_limits.snapshot.per_minute=30`、`max_concurrent_snapshots=10`（放量后调优）。
+- Pacing violation 处理：
+  - 首次等待 30s，随后指数退避 `60s → 120s → 240s`；
+  - 超过阈值后将槽位加入补采队列，标记 `slot_retry_exceeded`。
+- 实时权限缺失：IB 返回 `No market data permissions` 时自动切换至延迟行情（若允许），写入 `market_data_type=3` 与 `delayed_fallback`；同时在告警渠道提示。
+- 合约发现失败：重试前确认 Gateway 状态；若在交易时间内仍失败，临时复用上一日缓存并标记 `discovery_stale`。
+
+## 日志与错误收集
+- 日志目录：所有运行日志写入 `state/run_logs/<task>/`；错误日志统一追加到 `state/run_logs/errors/errors_YYYYMMDD.log`。
+- CLI/调度脚本需捕获未处理异常并写入错误日志，内容包含时间戳、任务、`ingest_id`、堆栈。
+- 每日 17:30 ET 运行 `python -m opt_data.cli logscan --date today --keywords ERROR,CRITICAL,PACING`（暂定）生成摘要，并同步到 QA/运维通报。
+- 保留策略：错误日志默认保留 30 天，可通过 `python -m opt_data.cli retention --view errors --older-than 30` 清理。
+- 告警钩子：当 `logscan` 检测到关键字或回退率超阈值时，触发通知（邮件/Slack）并在 `TODO.now.md` 建立跟踪条目。
 
 ## 故障处理
 | 情况 | 诊断步骤 | 解决方案 |
 | --- | --- | --- |
-| IB 连接失败 | 检查 Gateway/TWS 状态；确认端口、Client ID 是否冲突 | 重启 IB Gateway，释放旧 session；调整 Client ID |
-| 数据缺失（OI/Greeks） | 查看运行日志 `state/run_logs/`，确认是否为权限或延迟行情 | 重跑当日补采任务；若权限不足需联络 IBKR |
-| 分区写入失败 | 查阅 `state/backfill_progress.parquet`，确认断点 | 清理部分临时文件后重跑对应 symbol/date |
-| 周度合并失败 | 查看合并日志；确定是否文件锁冲突 | 手动调用 `make compact` 重试；必要时拆分分区运行 |
-| 调度未执行 | 查看调度器日志（launchd/systemd） | 修正时区或 Holiday 过滤；手动补跑一次 |
+| Gateway 连接失败 | 查看 API 日志、`netstat`、是否有旧 session | 重启 Gateway，调整 `clientId`，确保端口未占用 |
+| 槽位缺失 | 查 `state/run_logs/snapshot_*`，确认错误码 | 通过 `snapshot --slot HH:MM --retry-missed` 补采；补采后验证去重 |
+| 收盘槽未采集 | 检查 16:00 槽日志，确认超时或降级原因 | 扩大宽限、提前 15:55 触发额外采集或降低并发 |
+| Rollup 回退过多 | 查看 `rollup_strategy` 字段；确认是否因槽位缺失 | 补齐缺失槽，再重跑 rollup；必要时优化宽限或补采逻辑 |
+| OI 回补失败 | `state/run_logs/enrichment_*` 中查看错误 | 次日重试；连续 3 次失败标记 `oi_enrichment_failed` 并通知运营 |
+| compaction 失败 | 检查 `state/run_logs/compaction_*.jsonl` | 确认无进程占用；必要时拆分分区或调整 `target_file_size_mb` |
 
 ## 恢复流程
-1. 根据日志定位失败的 symbol/date。
-2. 调用 `python -m opt_data.cli backfill --start <date> --symbols <list> --execute` 或 `python -m opt_data.cli update --date <date>` 进行补跑。
-3. 重跑后检查数据目录分区是否新增，校验 QA 指标（记录缺失率、行数）。
-4. 更新 `TODO.now.md` 与 `PLAN.md`，说明故障原因与处理方式。
+1. 通过日志定位受影响的 `trade_date`、`slot_30m`、`underlying`。
+2. 使用 `snapshot --slot` 或 `snapshot --replay-missed` 补采；重跑后确认 `(trade_date, sample_time, conid)` 无重复。
+3. 重新执行 `rollup --date <trade_date>`；如需补全 OI，待 enrichment 成功后检查 `open_interest` 与 `data_quality_flag`。
+4. 更新 QA 报告、`TODO.now.md`、`PLAN.md`，记录故障原因、处理步骤与残留风险。
 
 ## 例行维护
-- 每周检查 `data/raw` 与 `data/clean` 的分区数量、文件大小，确保合并生效。
-- 月度验证 `config/universe.csv` 是否与最新 S&P 500 成分一致。
-- 定期备份 `config/`、`docs/`、`state/` 目录，防止操作失误导致模板/日志丢失。
+- **每日**：监控槽位覆盖率、延迟行情比例、rollup 回退率；超阈值即告警。
+- **每周**：运行 `make compact`，审阅 compaction 日志；确认 intraday 分区文件数下降、冷分区采用 ZSTD。
+- **每月**：复核 `config/universe.csv` 与实际宇宙；评估是否扩容并调整限速。
+- **持续**：监控磁盘占用与保留策略执行结果；定期备份 `config/`、`docs/`、`state/`。
 
 ## 其他注意事项
-- 所有运行命令默认在虚拟环境激活后执行。
-- 若切换到真实账户，需评估 IBKR 成本与权限文件，并在 `SCOPE.md` 留存记录。
-- 敏感配置必须通过环境变量或本地未提交文件管理。
+- 调度命令需指定虚拟环境路径或使用 wrapper，避免系统 Python 与项目依赖冲突。
+- 实时数据仅用于内部研究；若涉及再分发需提前评估许可限制。
+- 任何配置调整必须在测试目录先跑完整闭环（snapshot + rollup + enrichment），再推广至正式环境。
+- 敏感凭据禁止写入仓库，务必通过环境变量或受控文件管理。
