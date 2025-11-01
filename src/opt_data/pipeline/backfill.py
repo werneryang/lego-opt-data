@@ -579,7 +579,7 @@ class BackfillRunner:
                                     timeout=timeout_s,
                                 )
                             )
-                        except asyncio.TimeoutError as exc_timeout:
+                        except asyncio.TimeoutError:
                             last_error = f"timeout({timeout_s}s)"
                             if progress:
                                 progress(

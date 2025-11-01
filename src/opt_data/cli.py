@@ -5,14 +5,26 @@ import time
 import json
 from collections import Counter
 from datetime import date, datetime, timedelta
+from zoneinfo import ZoneInfo
 from pathlib import Path
 from typing import Optional, Dict, Any, List
 
 import typer
 
+try:
+    from apscheduler.schedulers.background import BackgroundScheduler
+except Exception:  # pragma: no cover - optional dependency guard
+    BackgroundScheduler = None  # type: ignore[assignment]
+
 from .config import load_config
 from .pipeline.backfill import BackfillPlanner, BackfillRunner
+from .pipeline.snapshot import SnapshotRunner
+from .pipeline.rollup import RollupRunner
+from .pipeline.enrichment import EnrichmentRunner
+from .pipeline.scheduler import ScheduleRunner
+from .pipeline.qa import QAMetricsCalculator
 from .util.calendar import to_et_date, is_trading_day
+from .util.logscanner import scan_logs
 from .ib import (
     IBSession,
     sec_def_params,
@@ -548,6 +560,425 @@ def inspect(
 
 
 @app.command()
+def snapshot(
+    date_str: str = typer.Option("today", "--date", help="Trade date in ET or 'today'"),
+    slot: str = typer.Option(
+        "now",
+        "--slot",
+        help="Slot label HH:MM (ET) or 'now'/'next' to pick the upcoming slot",
+    ),
+    symbols: Optional[str] = typer.Option(
+        None, "--symbols", help="Comma separated symbols (defaults to full universe)"
+    ),
+    config: Optional[str] = typer.Option(None, help="Path to config TOML"),
+    force_refresh: bool = typer.Option(False, help="Force refresh contract discovery cache"),
+) -> None:
+    cfg = load_config(Path(config) if config else None)
+    trade_date = (
+        to_et_date(datetime.utcnow()) if date_str == "today" else date.fromisoformat(date_str)
+    )
+    symbol_list = [s.strip().upper() for s in symbols.split(",") if s.strip()] if symbols else None
+
+    runner = SnapshotRunner(cfg, snapshot_grace_seconds=cfg.cli.snapshot_grace_seconds)
+    try:
+        slot_obj = runner.resolve_slot(trade_date, slot)
+    except ValueError as exc:
+        typer.echo(f"[snapshot] {exc}", err=True)
+        raise typer.Exit(code=2)
+
+    typer.echo(
+        f"[snapshot] date={trade_date} slot={slot_obj.label} symbols={symbol_list or 'ALL'} "
+        f"force_refresh={force_refresh}"
+    )
+
+    def progress_cb(symbol: str, status: str, extra: Dict[str, Any]) -> None:
+        parts = [f"[snapshot:{status}]", f"slot={slot_obj.label}"]
+        if symbol:
+            parts.append(symbol)
+        if extra:
+            parts.append(", ".join(f"{k}={v}" for k, v in extra.items()))
+        typer.echo(" ".join(parts))
+
+    try:
+        result = runner.run(
+            trade_date,
+            slot_obj,
+            symbol_list,
+            force_refresh=force_refresh,
+            progress=progress_cb,
+        )
+    except Exception as exc:  # pragma: no cover - network/runtime specific
+        typer.echo(f"[snapshot:error] {exc}", err=True)
+        raise typer.Exit(code=1)
+
+    typer.echo(
+        "[snapshot] "
+        f"ingest_id={result.ingest_id} rows={result.rows_written} "
+        f"raw_files={len(result.raw_paths)} clean_files={len(result.clean_paths)} "
+        f"errors={len(result.errors)}"
+    )
+    if result.errors:
+        for err in result.errors[:5]:
+            typer.echo(
+                "[snapshot:error] "
+                f"symbol={err.get('symbol')} stage={err.get('stage')} error={err.get('error')}"
+            )
+        if len(result.errors) > 5:
+            typer.echo(f"[snapshot] ... {len(result.errors) - 5} more errors logged")
+
+
+@app.command()
+def rollup(
+    date_str: str = typer.Option("today", "--date", help="Trade date in ET or 'today'"),
+    symbols: Optional[str] = typer.Option(
+        None, "--symbols", help="Comma separated symbols (defaults to full universe)"
+    ),
+    config: Optional[str] = typer.Option(None, help="Path to config TOML"),
+    close_slot: Optional[int] = typer.Option(
+        None, help="Slot index treated as market close (default from config)"
+    ),
+    fallback_slot: Optional[int] = typer.Option(
+        None, help="Fallback slot index before using last_good (default from config)"
+    ),
+) -> None:
+    cfg = load_config(Path(config) if config else None)
+    trade_date = (
+        to_et_date(datetime.utcnow()) if date_str == "today" else date.fromisoformat(date_str)
+    )
+    symbol_list = [s.strip().upper() for s in symbols.split(",") if s.strip()] if symbols else None
+
+    effective_close = close_slot if close_slot is not None else cfg.cli.rollup_close_slot
+    effective_fallback = (
+        fallback_slot if fallback_slot is not None else cfg.cli.rollup_fallback_slot
+    )
+
+    typer.echo(
+        f"[rollup] date={trade_date} close_slot={effective_close} "
+        f"fallback_slot={effective_fallback} symbols={symbol_list or 'ALL'}"
+    )
+
+    runner = RollupRunner(cfg, close_slot=effective_close, fallback_slot=effective_fallback)
+
+    def progress_cb(symbol: str, status: str, extra: Dict[str, Any]) -> None:
+        parts = [f"[rollup:{status}]", symbol]
+        if extra:
+            parts.append(", ".join(f"{k}={v}" for k, v in extra.items()))
+        typer.echo(" ".join(parts))
+
+    try:
+        result = runner.run(trade_date, symbol_list, progress=progress_cb)
+    except Exception as exc:  # pragma: no cover - runtime specific
+        typer.echo(f"[rollup:error] {exc}", err=True)
+        raise typer.Exit(code=1)
+
+    typer.echo(
+        "[rollup] "
+        f"ingest_id={result.ingest_id} rows={result.rows_written} "
+        f"symbols={result.symbols_processed} strategies={result.strategy_counts} "
+        f"daily_clean_files={len(result.daily_clean_paths)} "
+        f"daily_adjusted_files={len(result.daily_adjusted_paths)}"
+    )
+    if result.errors:
+        for err in result.errors[:5]:
+            typer.echo(
+                "[rollup:error] "
+                f"symbol={err.get('symbol')} stage={err.get('stage')} error={err.get('error')}"
+            )
+        if len(result.errors) > 5:
+            typer.echo(f"[rollup] ... {len(result.errors) - 5} more errors logged")
+
+
+@app.command()
+def enrichment(
+    date_str: str = typer.Option("today", "--date", help="Trade date in ET or 'today'"),
+    symbols: Optional[str] = typer.Option(
+        None, "--symbols", help="Comma separated symbols (defaults to full universe)"
+    ),
+    fields: Optional[str] = typer.Option(
+        None, "--fields", help="Comma separated fields to enrich (default from config)"
+    ),
+    config: Optional[str] = typer.Option(None, help="Path to config TOML"),
+    oi_duration: Optional[str] = typer.Option(
+        None, help="Duration window for open interest requests (overrides config)"
+    ),
+    oi_use_rth: Optional[bool] = typer.Option(
+        None, help="Whether to request open interest with useRTH (overrides config)"
+    ),
+) -> None:
+    cfg = load_config(Path(config) if config else None)
+    trade_date = (
+        to_et_date(datetime.utcnow()) if date_str == "today" else date.fromisoformat(date_str)
+    )
+    symbol_list = [s.strip().upper() for s in symbols.split(",") if s.strip()] if symbols else None
+
+    field_list = None
+    if fields:
+        tokens = [token.strip() for token in fields.split(",") if token.strip()]
+        if not tokens:
+            typer.echo("[enrichment] --fields provided but empty", err=True)
+            raise typer.Exit(code=2)
+        field_list = tokens
+
+    effective_fields = field_list or cfg.enrichment.fields
+    effective_duration = oi_duration or cfg.enrichment.oi_duration
+    effective_use_rth = oi_use_rth if oi_use_rth is not None else cfg.enrichment.oi_use_rth
+
+    typer.echo(
+        f"[enrichment] date={trade_date} fields={effective_fields} "
+        f"oi_duration='{effective_duration}' use_rth={effective_use_rth} "
+        f"symbols={symbol_list or 'ALL'}"
+    )
+
+    runner = EnrichmentRunner(
+        cfg,
+        oi_duration=effective_duration,
+        oi_use_rth=effective_use_rth,
+    )
+
+    def progress_cb(symbol: str, status: str, extra: Dict[str, Any]) -> None:
+        parts = [f"[enrichment:{status}]"]
+        if symbol:
+            parts.append(symbol)
+        if extra:
+            parts.append(", ".join(f"{k}={v}" for k, v in extra.items()))
+        typer.echo(" ".join(parts))
+
+    try:
+        result = runner.run(
+            trade_date,
+            symbol_list,
+            fields=effective_fields,
+            progress=progress_cb,
+        )
+    except ValueError as exc:
+        typer.echo(f"[enrichment] {exc}", err=True)
+        raise typer.Exit(code=2)
+    except Exception as exc:  # pragma: no cover - runtime specific
+        typer.echo(f"[enrichment:error] {exc}", err=True)
+        raise typer.Exit(code=1)
+
+    typer.echo(
+        "[enrichment] "
+        f"ingest_id={result.ingest_id} rows_considered={result.rows_considered} "
+        f"rows_updated={result.rows_updated} symbols={result.symbols_processed} "
+        f"daily_clean_files={len(result.daily_clean_paths)} "
+        f"daily_adjusted_files={len(result.daily_adjusted_paths)} "
+        f"enrichment_files={len(result.enrichment_paths)}"
+    )
+    if result.errors:
+        for err in result.errors[:5]:
+            typer.echo(
+                "[enrichment:error] "
+                f"symbol={err.get('symbol')} stage={err.get('stage')} error={err.get('error')}"
+            )
+        if len(result.errors) > 5:
+            typer.echo(f"[enrichment] ... {len(result.errors) - 5} more errors logged")
+
+
+@app.command()
+def schedule(
+    date_str: str = typer.Option("today", "--date", help="Trade date in ET or 'today'"),
+    symbols: Optional[str] = typer.Option(
+        None, "--symbols", help="Comma separated symbols (defaults to full universe)"
+    ),
+    config: Optional[str] = typer.Option(None, help="Path to config TOML"),
+    enrichment_fields: Optional[str] = typer.Option(
+        None, "--enrichment-fields", help="Comma separated enrichment fields"
+    ),
+    simulate: bool = typer.Option(True, "--simulate/--live", help="Run jobs immediately for the day"),
+    snapshots: bool = typer.Option(True, "--snapshots/--skip-snapshots", help="Include snapshot jobs"),
+    rollup: bool = typer.Option(True, "--rollup/--skip-rollup", help="Include rollup job"),
+    enrichment: bool = typer.Option(
+        True, "--enrichment/--skip-enrichment", help="Include enrichment job"
+    ),
+    misfire_grace_seconds: int = typer.Option(300, help="Grace window for missed jobs (seconds)"),
+) -> None:
+    cfg = load_config(Path(config) if config else None)
+    trade_date = (
+        to_et_date(datetime.utcnow()) if date_str == "today" else date.fromisoformat(date_str)
+    )
+    symbol_list = [s.strip().upper() for s in symbols.split(",") if s.strip()] if symbols else None
+    fields = [f.strip().lower() for f in enrichment_fields.split(",") if f.strip()] if enrichment_fields else None
+
+    runner = ScheduleRunner(cfg)
+    jobs = runner.plan_day(
+        trade_date,
+        symbols=symbol_list,
+        enrichment_fields=fields,
+        include_snapshots=snapshots,
+        include_rollup=rollup,
+        include_enrichment=enrichment,
+    )
+
+    if not jobs:
+        typer.echo(f"[schedule] no jobs planned for {trade_date} (non-trading day or all tasks skipped)")
+        return
+
+    typer.echo(
+        f"[schedule] trade_date={trade_date} simulate={simulate} "
+        f"snapshots={snapshots} rollup={rollup} enrichment={enrichment} jobs={len(jobs)}"
+    )
+
+    if simulate:
+        summary = runner.run_simulation(
+            trade_date,
+            symbols=symbol_list,
+            enrichment_fields=fields,
+            include_snapshots=snapshots,
+            include_rollup=rollup,
+            include_enrichment=enrichment,
+        )
+        typer.echo(
+            "[schedule] simulation completed "
+            f"snapshots={summary.snapshots} rollups={summary.rollups} "
+            f"enrichments={summary.enrichments} errors={len(summary.errors or [])}"
+        )
+        if summary.errors:
+            for err in summary.errors[:5]:
+                typer.echo(
+                    "[schedule:error] "
+                    f"kind={err.get('kind')} run_time={err.get('run_time')} error={err.get('error')}"
+                )
+            if len(summary.errors) > 5:
+                typer.echo(f"[schedule] ... {len(summary.errors) - 5} more errors recorded")
+        return
+
+    if BackgroundScheduler is None:
+        typer.echo("[schedule] APScheduler is not installed; install apscheduler>=3.10 to use --live", err=True)
+        raise typer.Exit(code=1)
+
+    scheduler = BackgroundScheduler(timezone=ZoneInfo(cfg.timezone.name))
+    job_ids = runner.schedule(
+        scheduler,
+        trade_date,
+        symbols=symbol_list,
+        enrichment_fields=fields,
+        include_snapshots=snapshots,
+        include_rollup=rollup,
+        include_enrichment=enrichment,
+        misfire_grace_seconds=misfire_grace_seconds,
+    )
+
+    typer.echo(f"[schedule] scheduled jobs={len(job_ids)} ids={job_ids}")
+    scheduler.start()
+    typer.echo("[schedule] scheduler started; press Ctrl+C to stop")
+    try:
+        while True:
+            time.sleep(60)
+    except KeyboardInterrupt:
+        typer.echo("[schedule] stopping scheduler")
+    finally:
+        scheduler.shutdown()
+
+
+@app.command()
+def qa(
+    date_str: str = typer.Option("today", "--date", help="Trade date in ET or 'today'"),
+    config: Optional[str] = typer.Option(None, help="Path to config TOML"),
+    write: bool = typer.Option(True, "--write/--no-write", help="Persist metrics JSON"),
+) -> None:
+    cfg = load_config(Path(config) if config else None)
+    trade_date = (
+        to_et_date(datetime.utcnow()) if date_str == "today" else date.fromisoformat(date_str)
+    )
+
+    calculator = QAMetricsCalculator(cfg)
+    result = calculator.evaluate(trade_date)
+
+    typer.echo(
+        "[qa] "
+        f"trade_date={trade_date} status={result.status} breaches={result.breaches or 'NONE'}"
+    )
+    for metric in result.metrics:
+        typer.echo(
+            f"[qa:metric] {metric.name} value={metric.value:.4f} "
+            f"threshold{metric.comparator}{metric.threshold:.4f} passed={metric.passed}"
+        )
+
+    if write:
+        path = calculator.persist(result)
+        typer.echo(f"[qa] metrics_written={path}")
+
+    if result.status != "PASS":
+        raise typer.Exit(code=1)
+
+
+@app.command()
+def selfcheck(
+    date_str: str = typer.Option("today", "--date", help="Trade date in ET or 'today'"),
+    config: Optional[str] = typer.Option(None, help="Path to config TOML"),
+    log_keywords: str = typer.Option(
+        "ERROR,CRITICAL,PACING,slot_retry_exceeded,eod_rollup_stale,eod_rollup_fallback",
+        help="Comma-separated keywords for log scanning",
+    ),
+    log_max_total: int = typer.Option(
+        0, help="Max allowed matches across keywords before failing (<=0 means any hit fails)"
+    ),
+    write: bool = typer.Option(True, "--write/--no-write", help="Persist selfcheck JSON report"),
+) -> None:
+    cfg = load_config(Path(config) if config else None)
+    trade_date = (
+        to_et_date(datetime.utcnow()) if date_str == "today" else date.fromisoformat(date_str)
+    )
+
+    qa_calc = QAMetricsCalculator(cfg)
+    qa_result = qa_calc.evaluate(trade_date)
+
+    key_list = [k.strip() for k in log_keywords.split(",") if k.strip()]
+    counters, matched_files = scan_logs(cfg, trade_date, key_list)
+    total_matches = sum(counters.values())
+
+    status = "PASS"
+    reasons: list[str] = []
+
+    if qa_result.status != "PASS":
+        status = "FAIL"
+        reasons.extend(f"qa:{name}" for name in qa_result.breaches)
+
+    if log_max_total >= 0 and total_matches > log_max_total:
+        status = "FAIL"
+        reasons.append(f"logs:total>{log_max_total}")
+
+    typer.echo(
+        f"[selfcheck] date={trade_date} status={status} total_log_matches={total_matches} "
+        f"qa_status={qa_result.status} reasons={reasons or 'NONE'}"
+    )
+
+    for metric in qa_result.metrics:
+        typer.echo(
+            f"[selfcheck:qa] {metric.name} value={metric.value:.4f} "
+            f"threshold{metric.comparator}{metric.threshold:.4f} passed={metric.passed}"
+        )
+
+    if counters:
+        for k, v in sorted(counters.items(), key=lambda kv: kv[0]):
+            typer.echo(f"[selfcheck:logs] keyword={k} count={v}")
+
+    report = {
+        "trade_date": trade_date.isoformat(),
+        "status": status,
+        "reasons": reasons,
+        "qa": qa_result.as_dict(),
+        "logs": {
+            "keywords": key_list,
+            "total_matches": total_matches,
+            "counts": counters,
+            "files_scanned": matched_files,
+        },
+    }
+
+    if write:
+        report_dir = Path(cfg.paths.state) / "run_logs" / "selfcheck"
+        report_dir.mkdir(parents=True, exist_ok=True)
+        report_path = report_dir / f"selfcheck_{trade_date.strftime('%Y%m%d')}.json"
+        report_path.write_text(json.dumps(report, ensure_ascii=False, indent=2), encoding="utf-8")
+        typer.echo(f"[selfcheck] report_written={report_path}")
+
+    if status != "PASS":
+        raise typer.Exit(code=1)
+
+
+@app.command()
 def logscan(
     date_str: str = typer.Option("today", "--date", help="Target ET date YYYY-MM-DD or 'today'"),
     keywords: str = typer.Option(
@@ -556,6 +987,7 @@ def logscan(
     ),
     config: Optional[str] = typer.Option(None, help="Path to config TOML"),
     write_summary: bool = typer.Option(True, help="Write JSON summary under run_logs/errors"),
+    max_total: int = typer.Option(0, help="Max allowed total matches before exiting with failure"),
 ) -> None:
     """Aggregate errors and important markers from run logs for the given day."""
     cfg = load_config(Path(config) if config else None)
@@ -575,51 +1007,18 @@ def logscan(
     errors_dir = run_logs / "errors"
     errors_dir.mkdir(parents=True, exist_ok=True)
 
-    # Prefer consolidated daily error log if present; otherwise scan all logs.
-    consolidated = errors_dir / f"errors_{ymd_compact}.log"
-    counters: Counter[str] = Counter()
-    matched_files: list[str] = []
-
-    def scan_file(path: Path, keys: list[str]) -> None:
-        try:
-            text = path.read_text(encoding="utf-8", errors="ignore")
-        except Exception:  # pragma: no cover - file permissions
-            return
-        low = text.lower()
-        for k in keys:
-            cnt = low.count(k.lower())
-            if cnt:
-                counters[k] += cnt
-
     key_list = [k.strip() for k in keywords.split(",") if k.strip()]
-
-    if consolidated.exists():
-        matched_files.append(str(consolidated))
-        scan_file(consolidated, key_list)
-    else:
-        # Scan all log-like files under run_logs for lines containing the target day.
-        for p in run_logs.rglob("*"):
-            if not p.is_file():
-                continue
-            if p.suffix.lower() not in {".log", ".jsonl", ".txt"}:
-                continue
-            # Heuristic: only consider files touched today to limit scope
-            try:
-                mtime = datetime.fromtimestamp(p.stat().st_mtime)
-            except Exception:
-                mtime = None
-            if mtime and to_et_date(mtime) != target_day:
-                continue
-            matched_files.append(str(p))
-            scan_file(p, key_list)
+    counters, matched_files = scan_logs(cfg, target_day, key_list)
 
     summary = {
         "date": ymd,
         "keywords": key_list,
         "files_scanned": matched_files,
-        "counts": dict(counters),
+        "counts": counters,
     }
 
+    total_matches = sum(counters.values())
+    summary["total_matches"] = total_matches
     typer.echo(json.dumps(summary, ensure_ascii=False, indent=2))
 
     if write_summary:
@@ -628,6 +1027,12 @@ def logscan(
             out_path.write_text(json.dumps(summary, ensure_ascii=False, indent=2), encoding="utf-8")
         except Exception as exc:  # pragma: no cover - fs issues
             typer.echo(f"[logscan] failed to write summary: {exc}", err=True)
+
+    if max_total >= 0 and total_matches > max_total:
+        typer.echo(
+            f"[logscan] total_matches {total_matches} exceeds max_total {max_total}", err=True
+        )
+        raise typer.Exit(code=1)
 
 
 def main(argv: list[str] | None = None) -> int:

@@ -57,6 +57,8 @@ def filter_by_scope(
     underlying_close: float,
     moneyness_pct: float,
     allowed_expiry_types: Iterable[str],
+    *,
+    trade_date: date,
 ) -> List[Dict[str, Any]]:
     low = underlying_close * (1.0 - moneyness_pct)
     high = underlying_close * (1.0 + moneyness_pct)
@@ -74,6 +76,9 @@ def filter_by_scope(
                 d = date(int(exp_str[0:4]), int(exp_str[4:6]), int(exp_str[6:8]))
             else:
                 continue
+
+        if d < trade_date:
+            continue
 
         is_monthly = is_standard_monthly_expiry(d)
         is_quarter = is_quarterly_expiry(d)
@@ -190,6 +195,7 @@ def discover_contracts_for_symbol(
         underlying_close=underlying_close,
         moneyness_pct=cfg.filters.moneyness_pct,
         allowed_expiry_types=cfg.filters.expiry_types,
+        trade_date=trade_date,
     )
 
     scoped_candidates = limit_strikes_per_expiry(

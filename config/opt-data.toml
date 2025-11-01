@@ -72,3 +72,17 @@ historical_timeout = 30
 
 [cli]
 default_generic_ticks = "100,101,104,106,258" # 包含 IV、Greeks、OI 的通用 tick 列表
+snapshot_grace_seconds = 120                  # 允许在槽位开始后宽限秒数内归入当前槽
+rollup_close_slot = 13                        # 16:00 槽（09:30=0，16:00=13）
+rollup_fallback_slot = 12                     # 默认回退到 15:30 槽
+
+[enrichment]
+fields = ["open_interest"]
+oi_duration = "7 D"           # IB 历史接口窗口
+oi_use_rth = false             # OI 默认包含盘前/盘后
+
+[qa]
+slot_coverage_threshold = 0.90
+delayed_ratio_threshold = 0.10
+rollup_fallback_threshold = 0.05
+oi_enrichment_threshold = 0.95

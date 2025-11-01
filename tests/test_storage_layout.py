@@ -14,6 +14,8 @@ from opt_data.config import (
     CompactionConfig,
     LoggingConfig,
     CLIConfig,
+    EnrichmentConfig,
+    QAConfig,
     ReferenceConfig,
     AcquisitionConfig,
 )
@@ -51,7 +53,23 @@ def _cfg(tmp_path: Path) -> AppConfig:
             max_file_size_mb=256,
         ),
         logging=LoggingConfig(level="INFO", format="json"),
-        cli=CLIConfig(default_generic_ticks="100"),
+        cli=CLIConfig(
+            default_generic_ticks="100",
+            snapshot_grace_seconds=120,
+            rollup_close_slot=13,
+            rollup_fallback_slot=12,
+        ),
+        enrichment=EnrichmentConfig(
+            fields=["open_interest"],
+            oi_duration="7 D",
+            oi_use_rth=False,
+        ),
+        qa=QAConfig(
+            slot_coverage_threshold=0.9,
+            delayed_ratio_threshold=0.1,
+            rollup_fallback_threshold=0.05,
+            oi_enrichment_threshold=0.95,
+        ),
         acquisition=AcquisitionConfig(
             mode="snapshot",
             duration="1 D",

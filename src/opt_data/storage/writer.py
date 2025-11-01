@@ -2,8 +2,6 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Iterable, Mapping, Any
-
 import pandas as pd
 
 from .layout import Partition, codec_for_date

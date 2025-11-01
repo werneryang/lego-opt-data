@@ -31,6 +31,12 @@ def test_load_config_from_custom_file(tmp_path: Path) -> None:
         max_strikes_per_expiry = 11
         fill_missing_greeks_with_zero = true
         historical_timeout = 45
+
+        [qa]
+        slot_coverage_threshold = 0.9
+        delayed_ratio_threshold = 0.2
+        rollup_fallback_threshold = 0.1
+        oi_enrichment_threshold = 0.8
         """
     ).strip()
 
@@ -48,3 +54,13 @@ def test_load_config_from_custom_file(tmp_path: Path) -> None:
     assert cfg.acquisition.max_strikes_per_expiry == 11
     assert cfg.acquisition.fill_missing_greeks_with_zero is True
     assert cfg.acquisition.historical_timeout == 45.0
+    assert cfg.cli.snapshot_grace_seconds == 120
+    assert cfg.cli.rollup_close_slot == 13
+    assert cfg.cli.rollup_fallback_slot == 12
+    assert cfg.qa.slot_coverage_threshold == 0.9
+    assert cfg.qa.delayed_ratio_threshold == 0.2
+    assert cfg.qa.rollup_fallback_threshold == 0.1
+    assert cfg.qa.oi_enrichment_threshold == 0.8
+    assert cfg.enrichment.fields == ["open_interest"]
+    assert cfg.enrichment.oi_duration == "7 D"
+    assert cfg.enrichment.oi_use_rth is False

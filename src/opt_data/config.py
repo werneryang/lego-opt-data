@@ -99,6 +99,9 @@ class LoggingConfig:
 @dataclass
 class CLIConfig:
     default_generic_ticks: str
+    snapshot_grace_seconds: int
+    rollup_close_slot: int
+    rollup_fallback_slot: int
 
 
 @dataclass
@@ -114,6 +117,21 @@ class AcquisitionConfig:
 
 
 @dataclass
+class EnrichmentConfig:
+    fields: list[str]
+    oi_duration: str
+    oi_use_rth: bool
+
+
+@dataclass
+class QAConfig:
+    slot_coverage_threshold: float
+    delayed_ratio_threshold: float
+    rollup_fallback_threshold: float
+    oi_enrichment_threshold: float
+
+
+@dataclass
 class AppConfig:
     ib: IBConfig
     timezone: TimezoneConfig
@@ -126,6 +144,8 @@ class AppConfig:
     compaction: CompactionConfig
     logging: LoggingConfig
     cli: CLIConfig
+    enrichment: EnrichmentConfig
+    qa: QAConfig
     acquisition: AcquisitionConfig
 
 
@@ -263,7 +283,35 @@ def load_config(file: Optional[Path] = None) -> AppConfig:
         format=g("logging", "format", "json"),
     )
 
-    cli = CLIConfig(default_generic_ticks=g("cli", "default_generic_ticks", "100,101,104,106,258"))
+    cli = CLIConfig(
+        default_generic_ticks=g("cli", "default_generic_ticks", "100,101,104,106,258"),
+        snapshot_grace_seconds=int(g("cli", "snapshot_grace_seconds", 120)),
+        rollup_close_slot=int(g("cli", "rollup_close_slot", 13)),
+        rollup_fallback_slot=int(g("cli", "rollup_fallback_slot", 12)),
+    )
+
+    enrichment_fields_raw = g("enrichment", "fields", ["open_interest"])
+    if isinstance(enrichment_fields_raw, str):
+        enrichment_fields = [
+            token.strip().lower()
+            for token in enrichment_fields_raw.split(",")
+            if token.strip()
+        ]
+    else:
+        enrichment_fields = [str(token).lower() for token in enrichment_fields_raw]
+
+    enrichment = EnrichmentConfig(
+        fields=enrichment_fields,
+        oi_duration=g("enrichment", "oi_duration", "7 D"),
+        oi_use_rth=bool(g("enrichment", "oi_use_rth", False)),
+    )
+
+    qa = QAConfig(
+        slot_coverage_threshold=float(g("qa", "slot_coverage_threshold", 0.90)),
+        delayed_ratio_threshold=float(g("qa", "delayed_ratio_threshold", 0.10)),
+        rollup_fallback_threshold=float(g("qa", "rollup_fallback_threshold", 0.05)),
+        oi_enrichment_threshold=float(g("qa", "oi_enrichment_threshold", 0.95)),
+    )
 
     acquisition = AcquisitionConfig(
         mode=g("acquisition", "mode", "snapshot").lower(),
@@ -290,5 +338,7 @@ def load_config(file: Optional[Path] = None) -> AppConfig:
         compaction=compaction,
         logging=logging,
         cli=cli,
+        enrichment=enrichment,
+        qa=qa,
         acquisition=acquisition,
     )
