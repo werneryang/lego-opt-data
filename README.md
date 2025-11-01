@@ -11,6 +11,14 @@ A lightweight Python toolkit for loading, inspecting, and transforming options m
 
 If you prefer `uv` or another package manager, adapt the commands accordingly; the project is configured via `pyproject.toml` and uses Hatch for builds.
 
+### Environment notes (recommended)
+
+- Use a dedicated virtualenv for this project. Installing into a global/base Conda environment may cause dependency solver upgrades (e.g., NumPy 2.x) that conflict with other scientific packages (scipy/numba/astropy). The safest path is a local venv:
+  - `python3.11 -m venv .venv && source .venv/bin/activate && pip install -U pip && pip install -e .[dev]`
+- If you prefer Conda, create an isolated env first, then use pip inside it for this project’s extras:
+  - `conda create -n opt-data python=3.11 && conda activate opt-data && pip install -e .[dev]`
+- CLI dependencies (Typer/APScheduler) are included via the `[dev]` extra. If they’re missing, some CLI tests may be skipped; installing with `-e .[dev]` ensures they’re present.
+
 ## Project layout
 
 - `pyproject.toml` – project metadata, dependencies, and tool configuration

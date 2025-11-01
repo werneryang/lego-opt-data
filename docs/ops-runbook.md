@@ -2,7 +2,10 @@
 
 ## 运行前准备
 1. 启动 IB Gateway/TWS（Paper：`127.0.0.1:7497`），确认登录账号具备美股期权**实时行情**权限；若仅有延迟权限，允许自动降级。
-2. 准备 Python 3.11 环境：`python3.11 -m venv .venv && .venv/bin/pip install --upgrade pip && .venv/bin/pip install -e '.[dev]'`，或运行 `make install`（确保 `python3` 指向 3.11）。
+2. 推荐使用项目专用虚拟环境（避免污染 base Conda 并触发 NumPy 升级冲突）：
+   - venv 路径：`python3.11 -m venv .venv && .venv/bin/pip install --upgrade pip && .venv/bin/pip install -e '.[dev]'`
+   - 或 Conda 隔离：`conda create -n opt-data python=3.11 && conda activate opt-data && pip install -e '.[dev]'`
+   - 也可运行 `make install`（确保 `python3` 指向 3.11）。
 3. 配置 `.env` / 环境变量：
    - `IB_HOST`（默认 `127.0.0.1`）
    - `IB_PORT`（默认 `7497`）
