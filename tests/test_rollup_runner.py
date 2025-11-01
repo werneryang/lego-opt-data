@@ -3,7 +3,6 @@ from __future__ import annotations
 from datetime import date, datetime
 
 import pandas as pd
-import pyarrow.parquet as pq
 
 from opt_data.pipeline.rollup import RollupRunner
 from opt_data.storage.writer import ParquetWriter
@@ -161,7 +160,7 @@ def test_rollup_runner_generates_daily_views(tmp_path):
 
     daily_clean_file = result.daily_clean_paths[0]
     assert daily_clean_file.exists()
-    daily_df = pq.read_table(daily_clean_file).to_pandas()
+    daily_df = pd.read_parquet(daily_clean_file)
 
     assert "slot_30m" not in daily_df.columns
     assert "rollup_source_time" in daily_df.columns
@@ -176,6 +175,6 @@ def test_rollup_runner_generates_daily_views(tmp_path):
     assert list(flags_value) == ["delayed_fallback"]
 
     daily_adj_file = result.daily_adjusted_paths[0]
-    adjusted_df = pq.read_table(daily_adj_file).to_pandas()
+    adjusted_df = pd.read_parquet(daily_adj_file)
     assert "underlying_close_adj" in adjusted_df.columns
     assert (adjusted_df["underlying_close_adj"] == adjusted_df["underlying_close"]).all()

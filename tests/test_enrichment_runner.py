@@ -3,7 +3,6 @@ from __future__ import annotations
 from datetime import date, datetime
 
 import pandas as pd
-import pyarrow.parquet as pq
 
 from opt_data.pipeline.rollup import RollupRunner
 from opt_data.pipeline.enrichment import EnrichmentRunner
@@ -159,7 +158,7 @@ def test_enrichment_updates_missing_open_interest(tmp_path):
     assert len(result.enrichment_paths) == 1
 
     daily_file = result.daily_clean_paths[0]
-    daily_df = pq.read_table(daily_file).to_pandas()
+    daily_df = pd.read_parquet(daily_file)
 
     row_1001 = daily_df.loc[daily_df["conid"] == 1001].iloc[0]
     assert row_1001["open_interest"] == 555
@@ -172,7 +171,7 @@ def test_enrichment_updates_missing_open_interest(tmp_path):
     assert "missing_oi" in list(row_1003["data_quality_flag"])
 
     enrichment_file = result.enrichment_paths[0]
-    enrichment_df = pq.read_table(enrichment_file).to_pandas()
+    enrichment_df = pd.read_parquet(enrichment_file)
     assert len(enrichment_df) == 1
     record = enrichment_df.iloc[0]
     assert record["conid"] == 1001

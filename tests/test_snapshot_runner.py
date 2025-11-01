@@ -4,7 +4,6 @@ from datetime import date, datetime
 from typing import Any, Dict, List
 
 import pandas as pd
-import pyarrow.parquet as pq
 from zoneinfo import ZoneInfo
 
 from opt_data.pipeline.snapshot import SnapshotRunner
@@ -113,8 +112,7 @@ def test_snapshot_runner_writes_intraday_partition(tmp_path):
     raw_file = result.raw_paths[0]
     assert raw_file.exists()
 
-    table = pq.read_table(raw_file)
-    df = table.to_pandas()
+    df = pd.read_parquet(raw_file)
     assert set(df["conid"].tolist()) == {1001, 1002}
     assert (df["slot_30m"] == 0).all()
     assert (df["underlying"].str.upper() == "AAPL").all()

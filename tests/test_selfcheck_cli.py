@@ -3,10 +3,7 @@ from __future__ import annotations
 from datetime import date, datetime
 
 import pandas as pd
-import pytest
-from click.testing import CliRunner
-
-pytest.importorskip("typer")
+from typer.testing import CliRunner
 
 from opt_data.cli import app
 
