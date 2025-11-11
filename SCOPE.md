@@ -52,3 +52,19 @@
 - 非美股股票期权、指数期权、期货期权等其他衍生品。
 - 实时逐笔/毫秒级行情、自动交易信号与仓位管理。
 - 历史大规模回填或外部数据源混合（除非在 PLAN/ADR 中重新批准）。
+
+## 期权链拉取简要清单（优先实践）
+- 行情类型：优先 `marketDataType=1`（实时）；无实时权限时允许回退 3/4。
+- Generic ticks（必选）：`100,101,104,105,106,165,221,225,233,293,294,295`，其中 `100` 提供模型 IV/Greeks，`233` 为实时成交量。
+- 交易所：默认 `SMART`；若长时间无报价，尝试 `CBOE`/`CBOEOPT` 并重新资格化。
+- 到期与行权价：选最近到期 `near_exp`；围绕现价选择最近 N 个行权价（建议 2–5）。
+- 订阅策略：逐合约 `reqMktData(snapshot=False)` 并传入上面的 ticks；单个合约就绪后立刻 `cancelMktData`，降低 pacing 压力。
+- 就绪判定：需同时满足“至少一个价格字段非 NaN”与“模型 IV/Greeks 非 NaN”（优先从 `ticker.modelGreeks` 读取）。
+- 字段采集：`bid/ask/mid`、解析 `rtVolume`、`modelGreeks.{impliedVol,delta,gamma,theta,vega,optPrice,undPrice}`、`marketDataType`、`time`。
+- 并发与限速：顺序最稳；如并发，使用信号量限 20–40，批间休眠 ≥1s，并对异常/超时降级。
+- 常见问题：
+  - `MarketDataType=1` 即实时被自动提升（即使设置 3/4）。
+  - 无 bid/ask 多为权限或时段问题；可仅依赖模型 Greeks 或切换交易所。
+  - DataFrame 为空：检查 entitlement、generic ticks 是否传入、交易所与 tradingClass 是否正确。
+
+参考：详见 docs/ops-runbook.md 中“IBKR 期权链拉取最佳实践（AAPL/SPX）”。

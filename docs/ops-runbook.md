@@ -18,7 +18,7 @@
    - `slot_grace_seconds=120`、`rate_limits.snapshot.per_minute=30`、`max_concurrent_snapshots=10`
    - `[discovery] policy="session_freeze"`、`pre_open_time="09:25"`；若启用增量刷新，设 `midday_refresh_enabled=true` 且仅新增合约
    - `intraday_retain_days=60`、`weekly_compaction_enabled=true`、`same_day_compaction_enabled=false`
-6. 确认交易日历（含早收盘）可用；调度器/cron 中必须显式设置 `America/New_York`。
+6. 确认交易日历（含早收盘）可用；调度器/cron 中必须显式设置 `America/New_York`。项目使用 `pandas-market-calendars` 获取 XNYS 会话时间：若运行环境缺少该依赖或无法访问历年日历，将自动回退到固定 09:30–16:00 槽位，并在日志标记 `early_close=False`。
 
 ## 常用命令
 - 基础：`make install`、`make fmt lint test`
@@ -98,6 +98,27 @@
 3. 重新执行 `rollup --date <trade_date>`；如需补全 OI，待 enrichment 成功后检查 `open_interest` 与 `data_quality_flag`。
 4. 更新 QA 报告、`TODO.now.md`、`PLAN.md`，记录故障原因、处理步骤与残留风险。
 
+## 扩容执行流程
+1. **扩容申请与记录**
+   - 扩容前在 `TODO.now.md` 添加任务，并在 `PLAN.md` 更新当前阶段与目标阶段。
+   - 收集最近 5 个交易日的 `metrics_YYYYMMDD.json`、`selfcheck` 报告，确保槽位覆盖率 ≥90%、rollup 回退率 ≤5%、延迟行情占比 <10%、`missing_oi` 补齐率 ≥95%。
+   - 核对 `state/run_logs/errors/errors_YYYYMMDD.log` 是否存在未关闭告警，若有需先完成补救。
+2. **阶段推进指引**
+   - **阶段 0 → 阶段 1（AAPL → AAPL,MSFT）**  
+     更新 `config/universe.csv` 增加 MSFT，维持默认 `slot_range`；在 `config/opt-data.toml` 将 `rate_limits.snapshot.per_minute` 调整至 45，如 Gateway 负载允许将 `max_concurrent_snapshots` 提升至 12。运行 1 日全量模拟（snapshot + rollup + enrichment），确认 pacing 告警 ≤1 次。
+   - **阶段 1 → 阶段 2（双标的 → Top10）**  
+     追加前 10 权重标的并启用 `discovery.midday_refresh_enabled=true`（仅新增合约）；`rate_limits.snapshot.per_minute=60`、`max_concurrent_snapshots=16`，必要时开启 `snapshot.batch_size=3-4` 以分批执行。同样先在测试配置中跑通 1 日闭环后再切换正式配置。
+   - **阶段 2 → 阶段 3（Top10 → 全量 S&P 500）**  
+     将 universe 扩展至全量 S&P 500，启用调度分组（在配置文件内定义每批标的列表），并在 CLI 调用中传入批次参数。初始限速设 `rate_limits.snapshot.per_minute=90`、`max_concurrent_snapshots=20`，并监控 pacing 告警；若告警超过 3 次/周，及时调低限速或增加批次数。
+3. **扩容上线步骤**
+   - 在正式配置切换前，运行 `python -m opt_data.cli schedule --simulate --config <target>` 确认调度顺序及批次设置。
+   - 扩容当日 09:00 ET 前执行一次 `snapshot --dry-run`（仅生成计划、不写数据）检查合约列表与槽位。
+   - 当日采集期间密切关注 `state/run_logs/snapshot_*.jsonl` 的 pacing 字段与错误日志；17:30 ET 前运行 `logscan` 确认无新增严重告警。
+   - 扩容后首周每日记录 QA 指标与异常，输出至 `state/run_logs/metrics/expansion_diary_YYYYMMDD.json` 并在周例会上复盘。
+4. **扩容回退**
+   - 若槽位覆盖率跌破阈值或 pacing 告警连续两日超限，立即将 universe 回滚至上一阶段配置，并在 `TODO.now.md` 创建专项条目。
+   - 回退完成后重新执行自检，确认数据质量恢复，再评估重新扩容的时间窗口。
+
 ## 例行维护
 - **每日**：rollup 后执行 `python -m opt_data.cli qa --date <trade_date>`，校验槽位覆盖率、延迟行情、rollup 回退率与 OI 补齐率并写入 `metrics_YYYYMMDD.json`；如 FAIL 立即补救。监控指标与 `logscan` 摘要一并纳入告警。
 - **每周**：运行 `make compact`，审阅 compaction 日志；确认 intraday 分区文件数下降、冷分区采用 ZSTD。
@@ -109,3 +130,56 @@
 - 实时数据仅用于内部研究；若涉及再分发需提前评估许可限制。
 - 任何配置调整必须在测试目录先跑完整闭环（snapshot + rollup + enrichment），再推广至正式环境。
 - 敏感凭据禁止写入仓库，务必通过环境变量或受控文件管理。
+
+## IBKR 期权链拉取最佳实践（AAPL/SPX）
+
+以下经验来自 AAPL/SMART 成功拿到期权链报价与 Greeks 的实测，供采集器与回填脚本优先参考。
+
+**核心配置**
+- 端口与会话
+  - TWS：`7497=Paper`，`7496=Live`（IB Gateway 常见为 `4002=Paper`，`4001=Live`）。以 TWS 配置为准。
+  - 连接后以账户号快速自检：`DU*` 多为纸盘，`U*` 多为实盘。
+- 行情类型优先级
+  - `marketDataType=1`（实时）优先；若无实时权限，IB 会自动回退到延迟（3/4）。即使显式设置 3/4，只要有实时权限仍可能返回 `1`。
+- 必要订阅勾子（generic ticks）
+  - 对期权必须带上：`100,101,104,105,106,165,221,225,233,293,294,295`。
+  - 其中 `100`（OptionComputation）是模型 IV/Greeks 的关键；`233` 提供 `rtVolume`。
+- 交易所选择
+  - 默认 `SMART`，若长时间无报价可尝试 `CBOE` 或 `CBOEOPT`。同一账户在不同 venue 的可见性可能不同。
+
+**订约与订阅流程**
+- 标的资格化
+  - `stock = Stock('AAPL','SMART','USD')`；`ib.qualifyContracts(stock)`。
+- 期权链发现
+  - `reqSecDefOptParams` 选择 `exchange=SMART`（或 CLI 指定）；取最近到期 `near_exp`。
+  - 行权价：围绕现价挑最近 N 个（推荐 2–5 个），或按窗口过滤（如 ±$15）。
+  - 现价获取：优先 `reqHistoricalData(1 day, useRTH=True)` 的最近收盘；备选：对标的 `reqMktData` 后读 `marketPrice()`。
+- 逐合约订阅（推荐）
+  - 对每个 `Option`：`reqMktData(option, genericTickList=上文, snapshot=False)`；等待单个合约“就绪”后立刻 `cancelMktData`，降低 IB pacing 压力。
+  - “就绪”条件：
+    - 有任一价格字段（bid/ask/last/close）且非 NaN，且
+    - Greeks/IV 字段存在且非 NaN（优先从 `ticker.modelGreeks` 读取）。
+  - 采集字段：bid/ask/mid、`rtVolume` 解析、`modelGreeks.{impliedVol,delta,gamma,theta,vega,optPrice,undPrice}`，以及 `marketDataType`、`time`。
+
+**就绪判定与容错**
+- 过滤无效 IV：将 `None/-1/0/NaN` 视为未就绪；无 `ticker.impliedVolatility` 时回退到 `ticker.modelGreeks.impliedVol`。
+- mid 价仅在 bid/ask 均有效时计算；否则留空。
+- 对批量模式，应允许部分合约失败，不应以“就绪率门槛”阻断全部输出。
+
+**并发与限速**
+- 遵守 IBKR pacing（消息/秒、订阅总量）。实测更稳的策略为“逐合约顺序订阅 + 采样即取消”。
+- 若必须并发，使用信号量限制（如并发 20–40），批间休眠 ≥1s，并对异常/超时的任务做降级处理。
+
+**常见问题排查**
+- MarketDataType 显示 1 而脚本设置为 3/4：账户有实时权限，被自动提升，属正常。
+- 始终无 bid/ask：账号缺少期权顶级行情，或非交易时段；尝试切换到 `CBOE/CBOEOPT`，或仅依赖模型 Greeks。
+- DataFrame 为空：检查 entitlement、交易时段、generic ticks 是否传入、是否取消过早，以及是否订阅了正确的 tradingClass（如 SPX vs SPXW）。
+- 端口不通：确认 TWS/Gateway API 设置、Socket Port、`Read Only API` 是否关闭，以及客户端 `clientId` 不冲突。
+
+**快速命令（实测通过）**
+- AAPL 单次快照（SMART，近 3 个行权价）：
+  - `python data_test/aapl_delayed_chain_async.py --exchange SMART --strikes 3`
+- 诊断脚本（逐合约抓取 + 详细字段，保存至 CSV）：
+  - `python data_test/test_from_ib_insync_grok.py`
+
+以上流程已在 `data_test/aapl_delayed_chain_async.py` 与 `data_test/test_from_ib_insync_grok.py` 体现；如需扩展到 SPX/0DTE，请注意 `tradingClass`（SPX/SPXW）与交易所选择差异，并调整行权价选择策略与限速参数。
