@@ -7,7 +7,6 @@ from typing import Callable, List, Sequence, Optional, Dict, Any
 
 import asyncio
 import logging
-import math
 import time
 import pandas as pd
 
@@ -16,6 +15,12 @@ from ..universe import load_universe
 from ..util.queue import PersistentQueue
 from ..ib.session import IBSession
 from ..ib.discovery import discover_contracts_for_symbol
+from ..ib.snapshot import (
+    collect_option_snapshots,
+    DEFAULT_GENERIC_TICKS,
+    DEFAULT_TIMEOUT,
+    DEFAULT_POLL_INTERVAL,
+)
 from ..storage.writer import ParquetWriter
 from ..storage.layout import partition_for
 from ..util.calendar import is_trading_day
@@ -101,20 +106,6 @@ def fetch_underlying_close(
     return float(bars[-1].close)
 
 
-def _has_market_data(ticker: Any) -> bool:
-    fields = [ticker.last, ticker.close, ticker.bid, ticker.ask]
-    for val in fields:
-        if val is None:
-            continue
-        try:
-            if not math.isnan(val):
-                return True
-        except TypeError:
-            return True
-    greeks = getattr(ticker, "modelGreeks", None)
-    return greeks is not None
-
-
 def fetch_option_snapshots(
     ib: Any,
     contracts: List[Dict[str, Any]],
@@ -124,57 +115,15 @@ def fetch_option_snapshots(
     poll_interval: float = 0.5,
     acquire_token: Optional[Callable[[], None]] = None,
 ) -> List[Dict[str, Any]]:
-    from ib_insync import Option  # type: ignore
-
-    rows: List[Dict[str, Any]] = []
-    for info in contracts:
-        expiry_yyyymmdd = info["expiry"].replace("-", "")
-        option = Option(
-            symbol=info["symbol"],
-            lastTradeDateOrContractMonth=expiry_yyyymmdd,
-            strike=info["strike"],
-            right=info["right"],
-            exchange=info["exchange"],
-            currency=info.get("currency", "USD"),
-            tradingClass=info.get("tradingClass"),
-        )
-
-        if acquire_token:
-            acquire_token()
-        ticker = ib.reqMktData(option, genericTickList=generic_ticks, snapshot=True)
-        elapsed = 0.0
-        while elapsed < timeout and not _has_market_data(ticker):
-            ib.sleep(poll_interval)
-            elapsed += poll_interval
-
-        greeks = getattr(ticker, "modelGreeks", None)
-        timestamp = getattr(ticker, "time", None)
-
-        rows.append(
-            {
-                **info,
-                "bid": float(ticker.bid) if ticker.bid is not None else math.nan,
-                "ask": float(ticker.ask) if ticker.ask is not None else math.nan,
-                "last": float(ticker.last) if ticker.last is not None else math.nan,
-                "close": float(ticker.close) if ticker.close is not None else math.nan,
-                "volume": getattr(ticker, "volume", None),
-                "open_interest": getattr(ticker, "openInterest", None),
-                "iv": getattr(greeks, "impliedVol", math.nan) if greeks else math.nan,
-                "delta": getattr(greeks, "delta", math.nan) if greeks else math.nan,
-                "gamma": getattr(greeks, "gamma", math.nan) if greeks else math.nan,
-                "theta": getattr(greeks, "theta", math.nan) if greeks else math.nan,
-                "vega": getattr(greeks, "vega", math.nan) if greeks else math.nan,
-                "market_data_type": getattr(ticker, "marketDataType", None),
-                "asof": timestamp.isoformat() if timestamp else None,
-            }
-        )
-
-        try:
-            ib.cancelMktData(option)
-        except Exception:  # pragma: no cover - cleanup best effort
-            pass
-
-    return rows
+    ticks = generic_ticks or DEFAULT_GENERIC_TICKS
+    return collect_option_snapshots(
+        ib,
+        contracts,
+        generic_ticks=ticks,
+        timeout=timeout,
+        poll_interval=poll_interval,
+        acquire_token=acquire_token,
+    )
 
 
 class BackfillRunner:
@@ -344,10 +293,28 @@ class BackfillRunner:
                             stop_requested=stop_requested,
                         )
                     else:
+                        snapshot_cfg = getattr(self.cfg, "snapshot", None)
+                        tick_list = (
+                            snapshot_cfg.generic_ticks
+                            if snapshot_cfg and snapshot_cfg.generic_ticks
+                            else self.cfg.cli.default_generic_ticks
+                        )
+                        timeout_val = (
+                            snapshot_cfg.subscription_timeout
+                            if snapshot_cfg
+                            else DEFAULT_TIMEOUT
+                        )
+                        poll_val = (
+                            snapshot_cfg.subscription_poll_interval
+                            if snapshot_cfg
+                            else DEFAULT_POLL_INTERVAL
+                        )
                         market_rows = self.snapshot_fetcher(
                             ib,
                             contracts,
-                            self.cfg.cli.default_generic_ticks,
+                            tick_list,
+                            timeout=timeout_val,
+                            poll_interval=poll_val,
                             acquire_token=self._make_acquire("snapshot"),
                         )
                         if progress:

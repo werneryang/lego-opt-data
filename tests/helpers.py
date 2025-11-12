@@ -6,6 +6,7 @@ from opt_data.config import (
     AcquisitionConfig,
     AppConfig,
     CLIConfig,
+    SnapshotConfig,
     EnrichmentConfig,
     QAConfig,
     CompactionConfig,
@@ -49,7 +50,9 @@ def build_config(tmp_path: Path) -> AppConfig:
             snapshot=RateLimitClassConfig(per_minute=1000, burst=1000, max_concurrent=10),
             historical=RateLimitClassConfig(per_minute=1000, burst=1000),
         ),
-        storage=StorageConfig(hot_days=14, cold_codec="zstd", cold_codec_level=7, hot_codec="snappy"),
+        storage=StorageConfig(
+            hot_days=14, cold_codec="zstd", cold_codec_level=7, hot_codec="snappy"
+        ),
         compaction=CompactionConfig(
             enabled=True,
             schedule="weekly",
@@ -60,10 +63,19 @@ def build_config(tmp_path: Path) -> AppConfig:
         ),
         logging=LoggingConfig(level="INFO", format="json"),
         cli=CLIConfig(
-            default_generic_ticks="100,101,104,106,258",
+            default_generic_ticks="100,101,104,105,106,165,221,225,233,293,294,295",
             snapshot_grace_seconds=120,
             rollup_close_slot=13,
             rollup_fallback_slot=12,
+        ),
+        snapshot=SnapshotConfig(
+            exchange="SMART",
+            fallback_exchanges=["CBOE", "CBOEOPT"],
+            generic_ticks="100,101,104,105,106,165,221,225,233,293,294,295",
+            strikes_per_side=3,
+            subscription_timeout=12.0,
+            subscription_poll_interval=0.25,
+            require_greeks=True,
         ),
         enrichment=EnrichmentConfig(
             fields=["open_interest"],

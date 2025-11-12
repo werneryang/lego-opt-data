@@ -7,6 +7,7 @@ import pandas as pd
 from zoneinfo import ZoneInfo
 
 from opt_data.pipeline.snapshot import SnapshotRunner
+from opt_data.util.calendar import TradingSession
 
 from helpers import build_config
 
@@ -119,10 +120,9 @@ def test_snapshot_runner_writes_intraday_partition(tmp_path):
     assert "sample_time" in df.columns
     assert pd.api.types.is_datetime64_any_dtype(df["sample_time"])
     # market_data_type propagated and delayed fallback flagged
-    row_flags = {
-        row.conid: row.data_quality_flag for row in df.itertuples()
-    }
-    assert row_flags[1002] == ["delayed_fallback"]
+    row_flags = {row.conid: set(row.data_quality_flag) for row in df.itertuples()}
+    assert "missing_oi" in row_flags[1001]
+    assert "delayed_fallback" in row_flags[1002]
 
 
 def test_resolve_slot_defaults_to_next(tmp_path):
@@ -138,3 +138,30 @@ def test_resolve_slot_defaults_to_next(tmp_path):
 
     slot = runner.resolve_slot(date(2025, 10, 6), None)
     assert slot.label == "10:00"
+
+
+def test_available_slots_respects_early_close(tmp_path, monkeypatch):
+    cfg = build_config(tmp_path)
+
+    runner = SnapshotRunner(
+        cfg,
+        session_factory=lambda: DummySession(DummyIB()),
+        contract_fetcher=lambda *_, **__: [],
+        snapshot_fetcher=lambda *_, **__: [],
+        underlying_fetcher=lambda *_, **__: 100.0,
+        now_fn=lambda: datetime(2025, 7, 3, 12, 15, tzinfo=ZoneInfo(cfg.timezone.name)),
+    )
+
+    session = TradingSession(
+        market_open=datetime(2025, 7, 3, 9, 30, tzinfo=ZoneInfo("America/New_York")),
+        market_close=datetime(2025, 7, 3, 13, 0, tzinfo=ZoneInfo("America/New_York")),
+        early_close=True,
+    )
+    monkeypatch.setattr("opt_data.pipeline.snapshot.get_trading_session", lambda _date: session)
+
+    slots = runner.available_slots(date(2025, 7, 3))
+    labels = [slot.label for slot in slots]
+
+    assert labels[0] == "09:30"
+    assert labels[-1] == "13:00"
+    assert len(labels) == 8

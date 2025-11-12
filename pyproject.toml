@@ -40,3 +40,5 @@ line-length = 100
 minversion = "7.0"
 pythonpath = ["src"]
 addopts = "-ra"
+testpaths = ["tests"]
+norecursedirs = ["data_test", "state_test"]

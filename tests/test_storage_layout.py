@@ -14,6 +14,7 @@ from opt_data.config import (
     CompactionConfig,
     LoggingConfig,
     CLIConfig,
+    SnapshotConfig,
     EnrichmentConfig,
     QAConfig,
     ReferenceConfig,
@@ -58,6 +59,15 @@ def _cfg(tmp_path: Path) -> AppConfig:
             snapshot_grace_seconds=120,
             rollup_close_slot=13,
             rollup_fallback_slot=12,
+        ),
+        snapshot=SnapshotConfig(
+            exchange="SMART",
+            fallback_exchanges=["CBOE", "CBOEOPT"],
+            generic_ticks="100,101,104,105,106,165,221,225,233,293,294,295",
+            strikes_per_side=3,
+            subscription_timeout=12.0,
+            subscription_poll_interval=0.25,
+            require_greeks=True,
         ),
         enrichment=EnrichmentConfig(
             fields=["open_interest"],

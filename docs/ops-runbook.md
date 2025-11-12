@@ -6,19 +6,29 @@
    - venv 路径：`python3.11 -m venv .venv && .venv/bin/pip install --upgrade pip && .venv/bin/pip install -e '.[dev]'`
    - 或 Conda 隔离：`conda create -n opt-data python=3.11 && conda activate opt-data && pip install -e '.[dev]'`
    - 也可运行 `make install`（确保 `python3` 指向 3.11）。
-3. 配置 `.env` / 环境变量：
+3. 依赖与 SDK 规范：
+   - 统一使用 `ib_insync` 作为 IBKR Python 接入层；项目不直接使用 `ibapi` 原生包。
+   - 安装：`pip install -e .[dev]` 已包含 `ib-insync`；无需额外安装 `ibapi`。
+4. Snapshot 配置（`[snapshot]` 节）：
+   - `exchange` / `fallback_exchanges`：首选与备用路由（默认 `SMART`，回退 `CBOE`,`CBOEOPT`）。
+   - `generic_ticks`：默认 `100,101,104,105,106,165,221,225,233,293,294,295`，务必覆盖 IV、Greeks、rtVolume。
+   - `strikes_per_side`：围绕现价采样的行权价数（每侧 N 个）。
+   - `subscription_timeout_sec` / `subscription_poll_interval`：单合约订阅超时与轮询间隔。
+   - `require_greeks`：是否强制等待模型 Greeks；延迟/无权限时可设为 `false`。
+   - CLI 可临时覆盖：`python -m opt_data.cli snapshot --exchange CBOE --fallback-exchanges CBOEOPT --strikes 2 --ticks 100,233 --timeout 15 --poll-interval 0.5`。
+5. 配置 `.env` / 环境变量：
    - `IB_HOST`（默认 `127.0.0.1`）
    - `IB_PORT`（默认 `7497`）
    - `IB_CLIENT_ID`（默认 `101`）
    - `IB_MARKET_DATA_TYPE=1`（实时；若需强制延迟则设为 `3/4`）
    - `TZ=America/New_York`（统一调度时区）
-4. 复制正式配置至测试版：`cp config/opt-data.toml config/opt-data.test.toml`，并将 `paths.raw/clean/state/contracts_cache/run_logs` 指向 `data_test/`、`state_test/`。
-5. 核对核心配置：
+6. 复制正式配置至测试版：`cp config/opt-data.toml config/opt-data.test.toml`，并将 `paths.raw/clean/state/contracts_cache/run_logs` 指向 `data_test/`、`state_test/`。
+7. 核对核心配置：
    - `[acquisition] mode="snapshot"`、`market_data_type=1`、`allow_fallback_to_delayed=true`
    - `slot_grace_seconds=120`、`rate_limits.snapshot.per_minute=30`、`max_concurrent_snapshots=10`
    - `[discovery] policy="session_freeze"`、`pre_open_time="09:25"`；若启用增量刷新，设 `midday_refresh_enabled=true` 且仅新增合约
    - `intraday_retain_days=60`、`weekly_compaction_enabled=true`、`same_day_compaction_enabled=false`
-6. 确认交易日历（含早收盘）可用；调度器/cron 中必须显式设置 `America/New_York`。项目使用 `pandas-market-calendars` 获取 XNYS 会话时间：若运行环境缺少该依赖或无法访问历年日历，将自动回退到固定 09:30–16:00 槽位，并在日志标记 `early_close=False`。
+8. 确认交易日历（含早收盘）可用；调度器/cron 中必须显式设置 `America/New_York`。项目使用 `pandas-market-calendars` 获取 XNYS 会话时间：若运行环境缺少该依赖或无法访问历年日历，将自动回退到固定 09:30–16:00 槽位，并在日志标记 `early_close=False`。
 
 ## 常用命令
 - 基础：`make install`、`make fmt lint test`
@@ -180,6 +190,8 @@
 - AAPL 单次快照（SMART，近 3 个行权价）：
   - `python data_test/aapl_delayed_chain_async.py --exchange SMART --strikes 3`
 - 诊断脚本（逐合约抓取 + 详细字段，保存至 CSV）：
+  - `python data_test/aapl_delayed_chain_async.py --exchange SMART`
+  - `python data_test/aapl_delayed_chain_async.py --exchange CBOE`
   - `python data_test/test_from_ib_insync_grok.py`
 
 以上流程已在 `data_test/aapl_delayed_chain_async.py` 与 `data_test/test_from_ib_insync_grok.py` 体现；如需扩展到 SPX/0DTE，请注意 `tradingClass`（SPX/SPXW）与交易所选择差异，并调整行权价选择策略与限速参数。

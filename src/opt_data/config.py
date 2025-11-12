@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Optional, Any, Dict
+from typing import Optional, Any, Dict, List
 import os
 
 try:  # Python 3.11+
@@ -105,6 +105,17 @@ class CLIConfig:
 
 
 @dataclass
+class SnapshotConfig:
+    exchange: str
+    fallback_exchanges: List[str]
+    generic_ticks: str
+    strikes_per_side: int
+    subscription_timeout: float
+    subscription_poll_interval: float
+    require_greeks: bool
+
+
+@dataclass
 class AcquisitionConfig:
     mode: str
     duration: str
@@ -144,6 +155,7 @@ class AppConfig:
     compaction: CompactionConfig
     logging: LoggingConfig
     cli: CLIConfig
+    snapshot: SnapshotConfig
     enrichment: EnrichmentConfig
     qa: QAConfig
     acquisition: AcquisitionConfig
@@ -284,18 +296,42 @@ def load_config(file: Optional[Path] = None) -> AppConfig:
     )
 
     cli = CLIConfig(
-        default_generic_ticks=g("cli", "default_generic_ticks", "100,101,104,106,258"),
+        default_generic_ticks=g(
+            "cli", "default_generic_ticks", "100,101,104,105,106,165,221,225,233,293,294,295"
+        ),
         snapshot_grace_seconds=int(g("cli", "snapshot_grace_seconds", 120)),
         rollup_close_slot=int(g("cli", "rollup_close_slot", 13)),
         rollup_fallback_slot=int(g("cli", "rollup_fallback_slot", 12)),
     )
 
+    fallback_raw = g("snapshot", "fallback_exchanges", ["CBOE", "CBOEOPT"])
+    if isinstance(fallback_raw, str):
+        fallback_exchanges = [
+            token.strip().upper() for token in fallback_raw.split(",") if token.strip()
+        ]
+    else:
+        fallback_exchanges = [str(token).strip().upper() for token in fallback_raw if str(token).strip()]
+
+    snapshot_generic_ticks = g(
+        "snapshot",
+        "generic_ticks",
+        cli.default_generic_ticks or "100,101,104,105,106,165,221,225,233,293,294,295",
+    )
+
+    snapshot_cfg = SnapshotConfig(
+        exchange=g("snapshot", "exchange", "SMART"),
+        fallback_exchanges=fallback_exchanges,
+        generic_ticks=snapshot_generic_ticks,
+        strikes_per_side=int(g("snapshot", "strikes_per_side", 3)),
+        subscription_timeout=float(g("snapshot", "subscription_timeout_sec", 12.0)),
+        subscription_poll_interval=float(g("snapshot", "subscription_poll_interval", 0.25)),
+        require_greeks=bool(g("snapshot", "require_greeks", True)),
+    )
+
     enrichment_fields_raw = g("enrichment", "fields", ["open_interest"])
     if isinstance(enrichment_fields_raw, str):
         enrichment_fields = [
-            token.strip().lower()
-            for token in enrichment_fields_raw.split(",")
-            if token.strip()
+            token.strip().lower() for token in enrichment_fields_raw.split(",") if token.strip()
         ]
     else:
         enrichment_fields = [str(token).lower() for token in enrichment_fields_raw]
@@ -338,6 +374,7 @@ def load_config(file: Optional[Path] = None) -> AppConfig:
         compaction=compaction,
         logging=logging,
         cli=cli,
+        snapshot=snapshot_cfg,
         enrichment=enrichment,
         qa=qa,
         acquisition=acquisition,

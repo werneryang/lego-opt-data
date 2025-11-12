@@ -3,7 +3,6 @@ from __future__ import annotations
 import sys
 import time
 import json
-from collections import Counter
 from datetime import date, datetime, timedelta
 from zoneinfo import ZoneInfo
 from pathlib import Path
@@ -572,8 +571,48 @@ def snapshot(
     ),
     config: Optional[str] = typer.Option(None, help="Path to config TOML"),
     force_refresh: bool = typer.Option(False, help="Force refresh contract discovery cache"),
+    exchange: Optional[str] = typer.Option(
+        None, "--exchange", help="Override default option exchange (e.g., SMART)"
+    ),
+    fallback_exchanges: Optional[str] = typer.Option(
+        None,
+        "--fallback-exchanges",
+        help="Comma separated fallback exchanges (e.g., 'CBOE,CBOEOPT')",
+    ),
+    strikes: Optional[int] = typer.Option(
+        None, "--strikes", help="Nearest strikes per side (overrides config)"
+    ),
+    ticks: Optional[str] = typer.Option(
+        None, "--ticks", help="Override generic tick list for option snapshots"
+    ),
+    timeout: Optional[float] = typer.Option(
+        None, "--timeout", help="Per-option subscription timeout seconds"
+    ),
+    poll_interval: Optional[float] = typer.Option(
+        None, "--poll-interval", help="Per-option subscription poll interval seconds"
+    ),
 ) -> None:
     cfg = load_config(Path(config) if config else None)
+    snapshot_cfg = getattr(cfg, "snapshot", None)
+    if snapshot_cfg is not None:
+        if exchange:
+            snapshot_cfg.exchange = exchange.strip().upper()
+        if fallback_exchanges:
+            snapshot_cfg.fallback_exchanges = [
+                token.strip().upper()
+                for token in fallback_exchanges.split(",")
+                if token.strip()
+            ]
+        if strikes and strikes > 0:
+            snapshot_cfg.strikes_per_side = strikes
+        if ticks:
+            snapshot_cfg.generic_ticks = ticks
+        if timeout and timeout > 0:
+            snapshot_cfg.subscription_timeout = float(timeout)
+        if poll_interval and poll_interval > 0:
+            snapshot_cfg.subscription_poll_interval = float(poll_interval)
+    elif ticks:
+        cfg.cli.default_generic_ticks = ticks
     trade_date = (
         to_et_date(datetime.utcnow()) if date_str == "today" else date.fromisoformat(date_str)
     )
@@ -785,8 +824,12 @@ def schedule(
     enrichment_fields: Optional[str] = typer.Option(
         None, "--enrichment-fields", help="Comma separated enrichment fields"
     ),
-    simulate: bool = typer.Option(True, "--simulate/--live", help="Run jobs immediately for the day"),
-    snapshots: bool = typer.Option(True, "--snapshots/--skip-snapshots", help="Include snapshot jobs"),
+    simulate: bool = typer.Option(
+        True, "--simulate/--live", help="Run jobs immediately for the day"
+    ),
+    snapshots: bool = typer.Option(
+        True, "--snapshots/--skip-snapshots", help="Include snapshot jobs"
+    ),
     rollup: bool = typer.Option(True, "--rollup/--skip-rollup", help="Include rollup job"),
     enrichment: bool = typer.Option(
         True, "--enrichment/--skip-enrichment", help="Include enrichment job"
@@ -798,7 +841,11 @@ def schedule(
         to_et_date(datetime.utcnow()) if date_str == "today" else date.fromisoformat(date_str)
     )
     symbol_list = [s.strip().upper() for s in symbols.split(",") if s.strip()] if symbols else None
-    fields = [f.strip().lower() for f in enrichment_fields.split(",") if f.strip()] if enrichment_fields else None
+    fields = (
+        [f.strip().lower() for f in enrichment_fields.split(",") if f.strip()]
+        if enrichment_fields
+        else None
+    )
 
     runner = ScheduleRunner(cfg)
     jobs = runner.plan_day(
@@ -811,7 +858,9 @@ def schedule(
     )
 
     if not jobs:
-        typer.echo(f"[schedule] no jobs planned for {trade_date} (non-trading day or all tasks skipped)")
+        typer.echo(
+            f"[schedule] no jobs planned for {trade_date} (non-trading day or all tasks skipped)"
+        )
         return
 
     typer.echo(
@@ -844,7 +893,10 @@ def schedule(
         return
 
     if BackgroundScheduler is None:
-        typer.echo("[schedule] APScheduler is not installed; install apscheduler>=3.10 to use --live", err=True)
+        typer.echo(
+            "[schedule] APScheduler is not installed; install apscheduler>=3.10 to use --live",
+            err=True,
+        )
         raise typer.Exit(code=1)
 
     scheduler = BackgroundScheduler(timezone=ZoneInfo(cfg.timezone.name))
@@ -886,8 +938,7 @@ def qa(
     result = calculator.evaluate(trade_date)
 
     typer.echo(
-        "[qa] "
-        f"trade_date={trade_date} status={result.status} breaches={result.breaches or 'NONE'}"
+        f"[qa] trade_date={trade_date} status={result.status} breaches={result.breaches or 'NONE'}"
     )
     for metric in result.metrics:
         typer.echo(

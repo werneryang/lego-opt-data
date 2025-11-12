@@ -20,14 +20,44 @@ from ..storage.layout import partition_for
 from ..storage.writer import ParquetWriter
 from ..universe import load_universe
 from ..util.ratelimit import TokenBucket
-from .backfill import fetch_option_snapshots, fetch_underlying_close
+from ..util.calendar import get_trading_session
+from ..ib.snapshot import collect_option_snapshots
+from .backfill import fetch_underlying_close
 from .cleaning import CleaningPipeline
 
 logger = logging.getLogger(__name__)
 
 
 DEFAULT_SNAPSHOT_GRACE_SECONDS = 120
-DEFAULT_GENERIC_TICKS = "100,101,104,106,258"
+
+SCOPE_REQUIRED_FIELDS = {
+    "conid": None,
+    "symbol": None,
+    "expiry": None,
+    "right": None,
+    "strike": None,
+    "multiplier": None,
+    "exchange": None,
+    "tradingClass": None,
+    "bid": None,
+    "ask": None,
+    "mid": None,
+    "last": None,
+    "volume": None,
+    "iv": None,
+    "delta": None,
+    "gamma": None,
+    "theta": None,
+    "vega": None,
+    "market_data_type": None,
+    "asof_ts": None,
+    "sample_time": None,
+    "slot_30m": None,
+    "source": "IBKR",
+    "ingest_id": None,
+    "ingest_run_type": "intraday",
+    "data_quality_flag": [],
+}
 
 
 @dataclass(frozen=True)
@@ -63,12 +93,19 @@ class SnapshotResult:
 
 def _slot_schedule(trade_date: date, tz_name: str) -> list[SnapshotSlot]:
     tz = ZoneInfo(tz_name)
-    start = datetime.combine(trade_date, dtime(hour=9, minute=30), tzinfo=tz)
-    end_dt = datetime.combine(trade_date, dtime(hour=16, minute=0), tzinfo=tz)
+
+    session = get_trading_session(trade_date)
+    start = session.market_open.astimezone(tz)
+    end_dt = session.market_close.astimezone(tz)
+
+    if end_dt <= start:
+        end_dt = datetime.combine(trade_date, dtime(hour=16, minute=0), tzinfo=tz)
+        start = datetime.combine(trade_date, dtime(hour=9, minute=30), tzinfo=tz)
+
     slots: list[SnapshotSlot] = []
     current = start
     index = 0
-    while current <= end_dt:
+    while current < end_dt:
         slots.append(
             SnapshotSlot(
                 index=index,
@@ -78,6 +115,14 @@ def _slot_schedule(trade_date: date, tz_name: str) -> list[SnapshotSlot]:
         )
         current = current + timedelta(minutes=30)
         index += 1
+    if not slots or slots[-1].et != end_dt:
+        slots.append(
+            SnapshotSlot(
+                index=index,
+                et=end_dt,
+                utc=end_dt.astimezone(ZoneInfo("UTC")),
+            )
+        )
     return slots
 
 
@@ -117,7 +162,12 @@ class SnapshotRunner:
         self.cfg = cfg
         self._session_factory = session_factory or (lambda: _default_session_factory(cfg))
         self._contract_fetcher = contract_fetcher or (
-            lambda session, symbol, trade_date, price, config, **kwargs: discover_contracts_for_symbol(  # type: ignore[return-value]
+            lambda session,
+            symbol,
+            trade_date,
+            price,
+            config,
+            **kwargs: discover_contracts_for_symbol(  # type: ignore[return-value]
                 session,
                 symbol,
                 trade_date,
@@ -127,11 +177,7 @@ class SnapshotRunner:
                 **kwargs,
             )
         )
-        self._snapshot_fetcher = snapshot_fetcher or (
-            lambda ib, contracts, ticks, acquire_token=None: fetch_option_snapshots(
-                ib, contracts, ticks, acquire_token=acquire_token
-            )
-        )
+        self._snapshot_fetcher = snapshot_fetcher or collect_option_snapshots
         self._underlying_fetcher = underlying_fetcher or (
             lambda ib, symbol, dt, conid=None: fetch_underlying_close(ib, symbol, dt, conid)
         )
@@ -139,7 +185,14 @@ class SnapshotRunner:
         self._cleaner = cleaner or CleaningPipeline.create(cfg)
         self._now_fn = now_fn or (lambda: datetime.now(ZoneInfo(cfg.timezone.name)))
         self._tz = ZoneInfo(cfg.timezone.name)
-        self._generic_ticks = cfg.cli.default_generic_ticks or DEFAULT_GENERIC_TICKS
+        snapshot_cfg = getattr(cfg, "snapshot", None)
+        if snapshot_cfg is not None:
+            self._generic_ticks = snapshot_cfg.generic_ticks or cfg.cli.default_generic_ticks
+        else:
+            self._generic_ticks = cfg.cli.default_generic_ticks
+        if not self._generic_ticks:
+            self._generic_ticks = "100,101,104,105,106,165,221,225,233,293,294,295"
+        self._snapshot_cfg = snapshot_cfg
         self._grace_seconds = snapshot_grace_seconds
 
         self._limiters: dict[str, TokenBucket] = {
@@ -208,15 +261,22 @@ class SnapshotRunner:
         log_dir = Path(self.cfg.paths.run_logs) / "snapshot"
         log_dir.mkdir(parents=True, exist_ok=True)
         timestamp = datetime.utcnow().strftime("%Y%m%dT%H%M%SZ")
-        log_file = log_dir / f"snapshot_{trade_date.isoformat()}_{slot.label.replace(':', '')}_{timestamp}.log"
+        log_file = (
+            log_dir
+            / f"snapshot_{trade_date.isoformat()}_{slot.label.replace(':', '')}_{timestamp}.log"
+        )
 
         def log_line(message: str) -> None:
             with log_file.open("a", encoding="utf-8") as fh:
                 fh.write(message + "\n")
 
-        error_file = Path(self.cfg.paths.run_logs) / "errors" / f"errors_{trade_date.strftime('%Y%m%d')}.log"
+        error_file = (
+            Path(self.cfg.paths.run_logs) / "errors" / f"errors_{trade_date.strftime('%Y%m%d')}.log"
+        )
 
-        def record_error(symbol: str, stage: str, exc: Exception | None, extra: dict[str, Any] | None = None) -> None:
+        def record_error(
+            symbol: str, stage: str, exc: Exception | None, extra: dict[str, Any] | None = None
+        ) -> None:
             payload = {
                 "component": "snapshot",
                 "symbol": symbol,
@@ -252,7 +312,9 @@ class SnapshotRunner:
                 symbol = entry.symbol
                 emit(symbol, "start", {})
                 try:
-                    reference_price = self._fetch_reference_price(ib, symbol, trade_date, entry.conid)
+                    reference_price = self._fetch_reference_price(
+                        ib, symbol, trade_date, entry.conid
+                    )
                     emit(symbol, "reference_price", {"price": reference_price})
                 except Exception as exc:
                     record_error(symbol, "reference_price", exc, {})
@@ -282,15 +344,20 @@ class SnapshotRunner:
                 contracts_total += len(contracts)
 
                 try:
-                    rows = self._snapshot_fetcher(
+                    rows = self._capture_snapshot_rows(
                         ib,
                         contracts,
-                        self._generic_ticks,
+                        reference_price=reference_price,
                         acquire_token=self._make_acquire("snapshot"),
                     )
                 except Exception as exc:
                     record_error(symbol, "snapshot", exc, {"contracts": len(contracts)})
                     emit(symbol, "skip", {"reason": "snapshot_failed"})
+                    continue
+
+                if not rows:
+                    record_error(symbol, "snapshot", None, {"reason": "no_rows"})
+                    emit(symbol, "skip", {"reason": "snapshot_empty"})
                     continue
 
                 enriched = self._enrich_rows(
@@ -385,7 +452,7 @@ class SnapshotRunner:
         sample_time_et = slot.et_iso
         sample_time_dt = slot.utc.replace(tzinfo=None)
         for row in rows:
-            asof_value = row.get("asof") or sample_time_utc_str
+            asof_value = row.pop("asof", None) or sample_time_utc_str
             market_data_type = row.get("market_data_type")
             flags: list[str] = []
             if market_data_type not in (None, 1):
@@ -393,21 +460,37 @@ class SnapshotRunner:
             if row.get("open_interest") in (None, ""):
                 flags.append("missing_oi")
 
+            price_ready = row.pop("price_ready", True)
+            greeks_ready = row.pop("greeks_ready", True)
+            if not price_ready:
+                flags.append("missing_price")
+            if not greeks_ready:
+                flags.append("missing_greeks")
+
+            if row.pop("snapshot_timed_out", False):
+                flags.append("snapshot_timeout")
+
+            exchange_rank = row.pop("_exchange_rank", 0)
+            if exchange_rank:
+                flags.append("exchange_fallback")
+
             enriched.append(
-                {
-                    **row,
-                    "trade_date": datetime.combine(trade_date, dtime.min),
-                    "sample_time": sample_time_dt,
-                    "sample_time_et": sample_time_et,
-                    "slot_30m": slot.index,
-                    "asof_ts": asof_value,
-                    "underlying": symbol,
-                    "underlying_close": reference_price,
-                    "ingest_id": ingest_id,
-                    "ingest_run_type": "intraday",
-                    "source": "IBKR",
-                    "data_quality_flag": flags,
-                }
+                self._apply_scope_defaults(
+                    {
+                        **row,
+                        "trade_date": datetime.combine(trade_date, dtime.min),
+                        "sample_time": sample_time_dt,
+                        "sample_time_et": sample_time_et,
+                        "slot_30m": slot.index,
+                        "asof_ts": asof_value,
+                        "underlying": symbol,
+                        "underlying_close": reference_price,
+                        "ingest_id": ingest_id,
+                        "ingest_run_type": "intraday",
+                        "source": "IBKR",
+                        "data_quality_flag": flags,
+                    }
+                )
             )
         return enriched
 
@@ -415,11 +498,11 @@ class SnapshotRunner:
         if df.empty:
             return df
         df = df.copy()
-        df["trade_date"] = pd.to_datetime(df["trade_date"], utc=False, errors="coerce").dt.normalize()
+        df["trade_date"] = pd.to_datetime(
+            df["trade_date"], utc=False, errors="coerce"
+        ).dt.normalize()
         df["sample_time"] = pd.to_datetime(df["sample_time"], utc=False, errors="coerce")
-        df["asof_ts"] = pd.to_datetime(df["asof_ts"], utc=True, errors="coerce").dt.tz_convert(
-            None
-        )
+        df["asof_ts"] = pd.to_datetime(df["asof_ts"], utc=True, errors="coerce").dt.tz_convert(None)
         if "exchange" in df.columns:
             df["exchange"] = df["exchange"].astype(str).str.upper()
         if "symbol" in df.columns:
@@ -433,6 +516,125 @@ class SnapshotRunner:
             )
         return deduped
 
+    def _capture_snapshot_rows(
+        self,
+        ib: Any,
+        contracts: Sequence[Dict[str, Any]],
+        *,
+        reference_price: float,
+        acquire_token: Callable[[], None],
+    ) -> list[dict[str, Any]]:
+        preferences = self._preferred_exchanges()
+        timeout = (
+            self._snapshot_cfg.subscription_timeout
+            if self._snapshot_cfg
+            else 12.0
+        )
+        poll_interval = (
+            self._snapshot_cfg.subscription_poll_interval
+            if self._snapshot_cfg
+            else 0.25
+        )
+        require_greeks = self._snapshot_cfg.require_greeks if self._snapshot_cfg else True
+
+        for rank, exchange in enumerate(preferences):
+            subset = self._filter_by_exchange(contracts, exchange)
+            if not subset:
+                continue
+            limited = self._limit_contracts(subset, reference_price)
+            if not limited:
+                continue
+            prepared = [dict(contract, _exchange_rank=rank) for contract in limited]
+            rows = self._snapshot_fetcher(
+                ib,
+                prepared,
+                generic_ticks=self._generic_ticks,
+                timeout=timeout,
+                poll_interval=poll_interval,
+                acquire_token=acquire_token,
+                require_greeks=require_greeks,
+            )
+            if rows:
+                return rows
+        return []
+
+    def _preferred_exchanges(self) -> list[str]:
+        cfg = self._snapshot_cfg
+        seen: set[str] = set()
+        order: list[str] = []
+        if cfg:
+            primary = (cfg.exchange or "").strip().upper()
+            if primary and primary not in seen:
+                order.append(primary)
+                seen.add(primary)
+            for fallback in cfg.fallback_exchanges:
+                ex = str(fallback).strip().upper()
+                if ex and ex not in seen:
+                    order.append(ex)
+                    seen.add(ex)
+        else:
+            order.append("SMART")
+        order.append("ANY")
+        return order
+
+    def _filter_by_exchange(
+        self, contracts: Sequence[Dict[str, Any]], exchange: str
+    ) -> list[Dict[str, Any]]:
+        if exchange in {"ANY", "*"}:
+            return list(contracts)
+        exchange_upper = exchange.strip().upper()
+        return [
+            contract
+            for contract in contracts
+            if str(contract.get("exchange", "")).upper() == exchange_upper
+        ]
+
+    def _limit_contracts(
+        self, contracts: Sequence[Dict[str, Any]], reference_price: float
+    ) -> list[Dict[str, Any]]:
+        cfg = self._snapshot_cfg
+        if not cfg or cfg.strikes_per_side <= 0:
+            return list(contracts)
+        strikes = []
+        for contract in contracts:
+            try:
+                strike_val = float(contract.get("strike", 0.0))
+            except (TypeError, ValueError):
+                continue
+            strikes.append(strike_val)
+        if not strikes:
+            return list(contracts)
+        unique_strikes = sorted(set(strikes), key=lambda s: abs(s - reference_price))
+        selected = unique_strikes[: cfg.strikes_per_side]
+        if not selected:
+            return list(contracts)
+        selected_set = set(selected)
+        return [
+            contract
+            for contract in contracts
+            if _float_or_none(contract.get("strike")) in selected_set
+        ]
+
+    def _apply_scope_defaults(self, row: dict[str, Any]) -> dict[str, Any]:
+        normalized = dict(row)
+        for key, default in SCOPE_REQUIRED_FIELDS.items():
+            if key not in normalized or normalized[key] is None:
+                normalized[key] = [] if isinstance(default, list) else default
+        # ensure data_quality_flag list
+        dq = normalized.get("data_quality_flag", [])
+        if not isinstance(dq, list):
+            dq = [dq]
+        else:
+            dq = [str(flag) for flag in dq if flag]
+        seen: set[str] = set()
+        ordered: list[str] = []
+        for flag in dq:
+            if flag not in seen:
+                seen.add(flag)
+                ordered.append(flag)
+        normalized["data_quality_flag"] = ordered
+        return normalized
+
     def _make_acquire(self, kind: str) -> Callable[[], None]:
         bucket = self._limiters[kind]
 
@@ -441,3 +643,10 @@ class SnapshotRunner:
                 time.sleep(0.1)
 
         return acquire
+
+
+def _float_or_none(value: Any) -> float | None:
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return None

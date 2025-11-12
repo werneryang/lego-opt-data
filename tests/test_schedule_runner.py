@@ -5,6 +5,7 @@ from zoneinfo import ZoneInfo
 
 from opt_data.pipeline.scheduler import ScheduleRunner
 from opt_data.pipeline.snapshot import SnapshotSlot
+from opt_data.util.calendar import TradingSession
 
 from helpers import build_config
 
@@ -26,6 +27,26 @@ def test_plan_day_includes_all_job_types(tmp_path):
     assert jobs[0].kind == "snapshot"
     assert jobs[-1].kind == "enrichment"
     assert jobs[-1].run_time.tzinfo == ZoneInfo(cfg.timezone.name)
+
+
+def test_plan_day_uses_early_close_slot_count(tmp_path, monkeypatch):
+    cfg = build_config(tmp_path)
+
+    session = TradingSession(
+        market_open=datetime(2025, 7, 3, 9, 30, tzinfo=ZoneInfo("America/New_York")),
+        market_close=datetime(2025, 7, 3, 13, 0, tzinfo=ZoneInfo("America/New_York")),
+        early_close=True,
+    )
+    monkeypatch.setattr("opt_data.pipeline.snapshot.get_trading_session", lambda _date: session)
+
+    runner = ScheduleRunner(cfg)
+    trade_date = date(2025, 7, 3)
+
+    jobs = runner.plan_day(trade_date)
+    snapshot_jobs = [job for job in jobs if job.kind == "snapshot"]
+
+    assert len(snapshot_jobs) == 8
+    assert snapshot_jobs[-1].run_time.strftime("%H:%M") == "13:00"
 
 
 def test_plan_day_skips_non_trading_day(tmp_path):

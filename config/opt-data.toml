@@ -71,10 +71,19 @@ fill_missing_greeks_with_zero = false
 historical_timeout = 30
 
 [cli]
-default_generic_ticks = "100,101,104,106,258" # 包含 IV、Greeks、OI 的通用 tick 列表
+default_generic_ticks = "100,101,104,105,106,165,221,225,233,293,294,295" # 包含 IV、Greeks、OI 的通用 tick 列表
 snapshot_grace_seconds = 120                  # 允许在槽位开始后宽限秒数内归入当前槽
 rollup_close_slot = 13                        # 16:00 槽（09:30=0，16:00=13）
 rollup_fallback_slot = 12                     # 默认回退到 15:30 槽
+
+[snapshot]
+exchange = "SMART"
+fallback_exchanges = ["CBOE", "CBOEOPT"]
+generic_ticks = "100,101,104,105,106,165,221,225,233,293,294,295"
+strikes_per_side = 3
+subscription_timeout_sec = 12.0
+subscription_poll_interval = 0.25
+require_greeks = true
 
 [enrichment]
 fields = ["open_interest"]

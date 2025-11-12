@@ -75,7 +75,7 @@ def _make_config(tmp_path, trade_date: date) -> str:
     format = "json"
 
     [cli]
-    default_generic_ticks = "100,101,104,106,258"
+    default_generic_ticks = "100,101,104,105,106,165,221,225,233,293,294,295"
     snapshot_grace_seconds = 120
     rollup_close_slot = 13
     rollup_fallback_slot = 12
