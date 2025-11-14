@@ -173,7 +173,9 @@ class ScheduleRunner:
         misfire_grace_seconds: int = 120,
     ) -> list[str]:
         if BackgroundScheduler is None:
-            raise RuntimeError("APScheduler is required to schedule jobs; install apscheduler >=3.10")
+            raise RuntimeError(
+                "APScheduler is required to schedule jobs; install apscheduler >=3.10"
+            )
 
         jobs = self.plan_day(
             trade_date,

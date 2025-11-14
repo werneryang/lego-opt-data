@@ -11,7 +11,7 @@
 
 ## 关键任务拆解
 - **槽位与调度**：定义 14 个 30 分钟槽（含 16:00），处理夏/冬令时与早收盘，ET 调度、UTC 存储、宽限窗口重试。
-- **合约发现策略**：09:25 ET 冻结一日合约集合（基于前收 ±30%、标准月/季到期），支持单次中午增量刷新（默认关闭）。
+- **合约发现策略（2025 升级）**：09:25 ET 冻结一日合约集合（基于前收 ±30%、标准月/季到期），仅使用 `reqSecDefOptParams( exchange='SMART' )` 生成候选；直接批量 `qualifyContracts/Async` 获取 `conId` 并写入缓存；不再调用 `reqContractDetails`；发现阶段不施加应用层限流（采用批量资格化并遵循 IB pacing）。
 - **实时采集管道**：使用 `ib_insync` `reqMktData` 拉取实时快照，记录 `sample_time`/`slot_30m`，保存 `market_data_type` 与降级标记，按槽幂等写入 `data/raw|clean/ib/chain/view=intraday`。
 - **日终归档**：17:00 rollup 按策略选取快照，补写 `rollup_source_*`、公司行动调整，产出 `view=daily_clean|daily_adjusted` 并处理幂等覆盖。
 - **延迟字段补全**：维护次日 07:30 ET `open_interest` enrichment 任务，按 `(trade_date, conid)` 幂等更新日级数据。
@@ -54,26 +54,46 @@
 - **存储膨胀**：周度 compaction + 60 天 intraday 保留策略，磁盘占用阈值监控。
 - **调度失败**：提供 launchd/systemd runbook、状态文件断点续跑与手动补采指南。
 
+## 扩容策略与门槛
+- **阶段 0：AAPL（基线）**
+  - 连续 5 个交易日通过自检：槽位覆盖率 ≥90%、`rollup_strategy` 回退率 ≤5%、延迟行情占比 <10%、`missing_oi` 补齐率 ≥95%。
+  - 无 pacing violation 或仅出现 1 次且定位明确；`errors_YYYYMMDD.log` 中无未处理异常。
+  - 保持默认限速：`snapshot per_minute=30`、`max_concurrent_snapshots=10`。
+- **阶段 1：AAPL + MSFT（双标的）**
+  - 阶段 0 指标稳定后扩容，并继续运行满 5 个交易日；若槽位覆盖率跌破 88% 或 pacing 告警 >2 次，回退调优。
+  - 令牌桶调整：`snapshot per_minute=45`，视 Gateway 负载将并发提升至 12；宽限与重试策略保持。
+  - Runbook 需补充并发调节、Gateway session 健康检查与故障切换步骤。
+- **阶段 2：Top 10（按 `config/universe.csv` 前十权重）**
+  - 阶段 1 结束后在 Rollup/OI enrichment 上保持 7 个交易日零人工干预，QA 指标全部满足阈值。
+  - 启用 `midday_refresh`（仅新增合约）并跟踪新增请求量；每周 pacing 告警不超过 3 次。
+  - 令牌桶调整：`snapshot per_minute=60`、并发 16；必要时配置槽位分批执行（每批 3-4 个标的）。
+  - 文档要求：Runbook 描述批次执行策略、pacing 告警处置；TODO 建立扩容周报。
+- **阶段 3：全量 S&P 500**
+  - Top 10 阶段连续 2 周稳定运行，`slot_retry_exceeded=0` 且 QA 指标全部达标。
+  - 引入调度分组（至少 2 批），在 `state/run_logs/metrics/` 追踪各批延迟与降级比例。
+  - 令牌桶起始目标：`snapshot per_minute=90`、并发 20；根据 IBKR pacing 限制动态调节，同时准备延迟槽补采策略。
+  - 扩容前在 `PLAN.md`、`TODO.now.md`、Runbook 中记录批准与执行窗口；扩容后首周每日复盘指标与告警。
+
 ## 里程碑验收标准
 - M1：实时 snapshot 冒烟（AAPL）覆盖 ≥12 个槽，`data_test/.../view=intraday` 生成，槽位去重与字段校验通过，日志/状态可追溯。
 - M2：EOD rollup + T+1 OI enrichment 连续 3 日成功运行；daily 视图字段符合契约；回退率低于 5%，QA 报告更新。
 - M3：macOS 与 Linux 调度均可自动运行；限速/告警齐备；周度 compaction 生成目标大小文件；延迟行情降级路径验证。
 - M4：≥50 标的连续运行一周、槽位覆盖率 ≥90%、无 pacing 违规；文档/Runbook 更新完成，Linux 试运行验收通过。
 
-## 进展快照（2025-09-26）
+## 进展快照（2025-11-01）
 - 实现 snapshot 模式设计确认：槽位模型、实时行情默认值、rollup 回退策略、OI enrichment 流程、存储/QA 原则达成共识。
 - 现有回填骨架与清洗管道将在 M1 重构为 snapshot + rollup 流程；配置与 CLI 拟新增 `snapshot`/`rollup`/`enrichment` 子命令。
 - 测试基线（`make install && make test`）已通过；接下来按新方案更新数据契约、Runbook、配置，并完成单标的冒烟。
 
-## 本周目标（2025-09-29 当周）
-- **M1 · snapshot 骨架与冒烟**
-  - 更新配置与 CLI：默认 `mode=snapshot`、`market_data_type=1`，新增 `slot_30m` 计算与 per-slot 幂等写入。
-  - 在 `data_test/`、`state_test/` 环境对 AAPL 执行完整交易日模拟：生成 ≥12 个槽；验证 `sample_time`（UTC）与 `slot_30m` 正确。
-  - 校验延迟行情降级逻辑：无权限时降级到 `market_data_type=3` 并加 `delayed_fallback` 标记。
-  - 在 `docs/` 与 `SCOPE.md` 对齐设计，审阅数据契约与 Runbook 更新。
-- **M2 · EOD rollup 预研**
-  - 原型实现 `rollup` 命令：16:00 槽优先、回退策略、`rollup_source_*` 元数据写入。
-  - 设计次日 07:30 OI enrichment 流程，确认 `(trade_date, conid)` 幂等更新方式。
+## 本周目标（2025-11-03 当周）
+- **M1 · 槽位与调度（早收盘感知）**
+  - 在 `src/opt_data/util/calendar.py` 增加会话开/收盘获取（优先使用 `pandas-market-calendars`，无依赖则 Mon–Fri 回退）。
+  - 更新 `src/opt_data/pipeline/snapshot.py` 的 `_slot_schedule` 以会话收盘裁剪槽位（含 16:00 以外早收盘）。
+  - 在 `tests/` 增加早收盘用例，覆盖 `available_slots` 与 `schedule --simulate` 输出。
+  - 在 `docs/ops-runbook.md` 补充依赖与早收盘说明。
+- **M2 · 调度与验证**
+  - 运行 `make fmt lint test`，并使用 `python -m opt_data.cli schedule --simulate --date <早收盘日>` 验证最后一个槽位为真实收盘时刻。
+  - 执行一次 AAPL 冒烟（测试目录）：`snapshot` → `rollup` → `enrichment` → `qa/selfcheck`，记录指标文件路径。
 - **依赖 & 风险同步**
-  - 实时行情 entitlement 与 pacing 限制需线下确认；若持续受阻，评估降级到延迟行情 + 标记策略。
-  - 逐步扩容计划（AAPL → AAPL,MSFT → Top 10）待槽位稳定后执行；相关限速调参在 Runbook 留痕。
+  - 确认 IB 实时行情权限；若仅延迟权限，验证 `delayed_fallback` 标记链路。
+  - 为后续 AAPL→AAPL+MSFT 扩容准备材料（近 5 个交易日 QA/selfcheck 与 `logscan` 摘要）。

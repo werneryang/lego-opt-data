@@ -330,7 +330,8 @@ class SnapshotRunner:
                         self.cfg,
                         underlying_conid=entry.conid,
                         force_refresh=force_refresh,
-                        acquire_token=self._make_acquire("discovery"),
+                        # discovery phase uses batch qualification; no app-level throttling
+                        acquire_token=None,
                     )
                 except Exception as exc:
                     record_error(symbol, "contracts", exc, {})

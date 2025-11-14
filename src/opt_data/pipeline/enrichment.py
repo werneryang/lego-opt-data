@@ -2,12 +2,13 @@ from __future__ import annotations
 
 import json
 import uuid
-from collections import Counter, defaultdict
+from collections import defaultdict
 from dataclasses import dataclass
 from datetime import date, datetime
 from pathlib import Path
-from typing import Any, Dict, Iterable, List, Sequence
+from typing import Any, Dict, Iterable, Sequence
 
+import math
 import pandas as pd
 
 from ..config import AppConfig
@@ -62,9 +63,7 @@ class EnrichmentRunner:
         self._cleaner = cleaner or CleaningPipeline.create(cfg)
         self._now_fn = now_fn or datetime.utcnow
         self._oi_duration = oi_duration or cfg.enrichment.oi_duration
-        self._oi_use_rth = (
-            oi_use_rth if oi_use_rth is not None else cfg.enrichment.oi_use_rth
-        )
+        self._oi_use_rth = oi_use_rth if oi_use_rth is not None else cfg.enrichment.oi_use_rth
         self._limiter = TokenBucket.create(
             capacity=cfg.rate_limits.historical.burst,
             refill_per_minute=cfg.rate_limits.historical.per_minute,
@@ -177,13 +176,17 @@ class EnrichmentRunner:
                     df.at[idx, "oi_asof_date"] = pd.Timestamp(asof_date)
                     df.at[idx, "ingest_id"] = ingest_id
                     df.at[idx, "ingest_run_type"] = "enrichment"
-                    df.at[idx, "data_quality_flag"] = _flags_after_success(row.get("data_quality_flag"))
+                    df.at[idx, "data_quality_flag"] = _flags_after_success(
+                        row.get("data_quality_flag")
+                    )
                     updated_here += 1
                     total_updated += 1
                     symbols_touched.add(underlying)
                     enrichment_records.append(
                         {
-                            "trade_date": pd.Timestamp(row.get("trade_date", trade_date)).normalize(),
+                            "trade_date": pd.Timestamp(
+                                row.get("trade_date", trade_date)
+                            ).normalize(),
                             "underlying": underlying,
                             "exchange": exchange,
                             "conid": conid,
@@ -206,7 +209,13 @@ class EnrichmentRunner:
                     continue
 
                 try:
-                    part = partition_for(self.cfg, Path(self.cfg.paths.clean) / "view=daily_clean", trade_date, underlying, exchange)
+                    part = partition_for(
+                        self.cfg,
+                        Path(self.cfg.paths.clean) / "view=daily_clean",
+                        trade_date,
+                        underlying,
+                        exchange,
+                    )
                     daily_path = self._writer.write_dataframe(df, part)
                     daily_clean_paths.append(daily_path)
                 except Exception as exc:  # pragma: no cover - IO errors
@@ -255,7 +264,9 @@ class EnrichmentRunner:
                 existing = _read_parquet_optional(part.path() / "part-000.parquet")
                 new_df = pd.DataFrame(records)
                 combined = (
-                    pd.concat([existing, new_df], ignore_index=True) if existing is not None else new_df
+                    pd.concat([existing, new_df], ignore_index=True)
+                    if existing is not None
+                    else new_df
                 )
                 combined["fields_updated"] = combined["fields_updated"].apply(list)
                 combined_path = self._writer.write_dataframe(combined, part)
@@ -313,12 +324,15 @@ class EnrichmentRunner:
         ib: Any,
         row: pd.Series,
         trade_date: date,
-        *,
-        duration: str,
-        use_rth: bool,
     ) -> tuple[int | float, date] | None:
+        """Fetch previous-day OI via real-time tick 101 on T+1.
+
+        This uses reqMktData + genericTickList='101' and reads callOpenInterest/putOpenInterest
+        (or openInterest) from the ticker. It is intended to run on T+1 after the exchange
+        has published end-of-day open interest.
+        """
+
         from ib_insync import Contract  # type: ignore
-        from ..ib.history import fetch_option_open_interest
 
         contract = Contract()
         contract.conId = int(row["conid"])
@@ -326,41 +340,61 @@ class EnrichmentRunner:
         contract.exchange = row.get("exchange") or "SMART"
         contract.symbol = row.get("underlying") or row.get("symbol", "")
         contract.currency = row.get("currency") or "USD"
+
         try:
             ib.qualifyContracts(contract)
         except Exception:  # pragma: no cover - network specific
             return None
 
-        end_dt = f"{trade_date.strftime('%Y%m%d')} 23:59:59"
         try:
-            bars = fetch_option_open_interest(
-                ib,
-                contract,
-                duration=duration,
-                end_date_time=end_dt,
-                use_rth=use_rth,
-            )
+            ticker = ib.reqMktData(contract, genericTickList="101", snapshot=False)
         except Exception:  # pragma: no cover - network specific
             return None
 
-        if not bars:
+        timeout = float(self.cfg.acquisition.historical_timeout)
+        elapsed = 0.0
+        right = str(row.get("right") or "").upper()
+
+        def _extract_oi() -> float | None:
+            # Prefer side-specific OI if available, fall back to openInterest
+            if right == "C":
+                value = getattr(ticker, "callOpenInterest", None)
+            elif right == "P":
+                value = getattr(ticker, "putOpenInterest", None)
+            else:
+                value = None
+            if value is None:
+                value = getattr(ticker, "openInterest", None)
+            if value is None:
+                return None
+            try:
+                num = float(value)
+            except (TypeError, ValueError):
+                return None
+            if math.isnan(num) or num <= 0:
+                return None
+            return num
+
+        oi_value: float | None = None
+        try:
+            while elapsed < timeout:
+                oi_value = _extract_oi()
+                if oi_value is not None:
+                    break
+                ib.sleep(0.5)
+                elapsed += 0.5
+        finally:
+            try:
+                ib.cancelMktData(contract)
+            except Exception:  # pragma: no cover - best effort
+                pass
+
+        if oi_value is None:
             return None
 
-        # Bars may be sorted oldest->newest; pick the most recent on or before trade_date
-        for bar in reversed(bars):
-            bar_date_text = getattr(bar, "date", getattr(bar, "time", None))
-            if not bar_date_text:
-                continue
-            try:
-                bar_date = _parse_bar_date(bar_date_text)
-            except ValueError:
-                continue
-            if bar_date <= trade_date:
-                value = getattr(bar, "openInterest", getattr(bar, "close", None))
-                if value is None:
-                    continue
-                return float(value), bar_date
-        return None
+        # Tick-101 OI reflects the latest published EOD open interest; on T+1 we
+        # treat it as as-of the target trade_date.
+        return oi_value, trade_date
 
 
 def _needs_open_interest(row: pd.Series) -> bool:

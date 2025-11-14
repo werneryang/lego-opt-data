@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, replace
 from datetime import date
-from typing import Any, Iterable, List, Sequence, TYPE_CHECKING
+from typing import Any, Iterable, Sequence, TYPE_CHECKING
 
 from ..util.expiry import is_standard_monthly_expiry, is_quarterly_expiry
 
@@ -38,7 +38,7 @@ class ResolvedOption:
 
 def connect_ib(
     host: str = "127.0.0.1",
-    port: int = 7497,
+    port: int = 7496,
     client_id: int = 101,
     market_data_type: int = 2,
 ) -> "IB":
@@ -91,7 +91,9 @@ def enumerate_options(
             for exp in expiries
             if exp
             and _allow_expiry(
-                exp, only_standard_monthly=only_standard_monthly, include_quarterly=include_quarterly
+                exp,
+                only_standard_monthly=only_standard_monthly,
+                include_quarterly=include_quarterly,
             )
         ]
         if not filtered_expiries:
@@ -152,7 +154,9 @@ def resolve_conids(
         if spec.multiplier:
             multiplier_value = float(spec.multiplier)
             contract.multiplier = (
-                str(int(multiplier_value)) if multiplier_value.is_integer() else str(multiplier_value)
+                str(int(multiplier_value))
+                if multiplier_value.is_integer()
+                else str(multiplier_value)
             )
         contract.includeExpired = include_expired
 
@@ -167,19 +171,26 @@ def resolve_conids(
             updated_spec = replace(
                 spec,
                 symbol=getattr(ib_contract, "symbol", spec.symbol) or spec.symbol,
-                expiry=_normalize_expiry(getattr(ib_contract, "lastTradeDateOrContractMonth", spec.expiry)),
+                expiry=_normalize_expiry(
+                    getattr(ib_contract, "lastTradeDateOrContractMonth", spec.expiry)
+                ),
                 strike=_to_float(getattr(ib_contract, "strike", spec.strike)) or spec.strike,
                 right=getattr(ib_contract, "right", spec.right) or spec.right,
                 exchange=getattr(ib_contract, "exchange", spec.exchange) or spec.exchange,
                 currency=getattr(ib_contract, "currency", spec.currency) or spec.currency,
-                trading_class=getattr(ib_contract, "tradingClass", spec.trading_class or spec.symbol)
+                trading_class=getattr(
+                    ib_contract, "tradingClass", spec.trading_class or spec.symbol
+                )
                 or spec.trading_class
                 or spec.symbol,
-                multiplier=_to_float(getattr(ib_contract, "multiplier", spec.multiplier)) or spec.multiplier,
+                multiplier=_to_float(getattr(ib_contract, "multiplier", spec.multiplier))
+                or spec.multiplier,
             )
             resolved[conid] = ResolvedOption(conid=conid, spec=updated_spec, contract=ib_contract)
 
-    return sorted(resolved.values(), key=lambda r: (r.spec.expiry, r.spec.strike, r.spec.right, r.conid))
+    return sorted(
+        resolved.values(), key=lambda r: (r.spec.expiry, r.spec.strike, r.spec.right, r.conid)
+    )
 
 
 def _allow_expiry(expiry: date, *, only_standard_monthly: bool, include_quarterly: bool) -> bool:

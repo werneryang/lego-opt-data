@@ -15,10 +15,14 @@
   - 验收：`python -m opt_data.cli selfcheck --date <trade_date>` 输出 PASS/FAIL 并写入 `state/run_logs/selfcheck/`；失败时列出 QA breach 与日志匹配统计。
 - [x] 错误日志落地：统一将 CLI 与调度任务异常写入 `state/run_logs/errors/errors_YYYYMMDD.log`，并提供关键字扫描脚本。
   - 验收：`python -m opt_data.cli logscan` 输出汇总 JSON，超阈值时退出码非零，并写入 `summary_YYYYMMDD.json`。
-- [ ] 扩容策略确认：整理 AAPL → AAPL,MSFT → Top10 → 全量的上线门槛与限速调优流程，写入 `PLAN.md` 与 Runbook。
+- [x] 扩容策略确认：整理 AAPL → AAPL,MSFT → Top10 → 全量的上线门槛与限速调优流程，写入 `PLAN.md` 与 Runbook。
 
 ## 进行中
 - 无
+
+## Done 2025-11-04
+- [x] 早收盘感知槽位实现（含单测与文档）
+  - 验收：`python -m opt_data.cli schedule --simulate --date <早收盘日期> --config config/opt-data.test.toml` 显示最后一个槽位为真实收盘时刻；新增早收盘相关单测通过；`docs/ops-runbook.md` 更新依赖与回退说明。
 
 ## 阻塞
 - 实时行情权限需本地 IB Gateway/TWS 账号开通；若仅有延迟权限需验证降级路径。

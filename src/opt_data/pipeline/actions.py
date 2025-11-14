@@ -18,7 +18,7 @@ class CorporateActionsAdjuster:
         path = Path(cfg.reference.corporate_actions)
         if not path.exists():
             return cls(actions=None)
-        df = pd.read_csv(path)
+        df = pd.read_csv(path, comment="#")
         if df.empty:
             return cls(actions=None)
         if "symbol" not in df.columns or "effective_date" not in df.columns:

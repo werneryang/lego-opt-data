@@ -126,7 +126,9 @@ class QAMetricsCalculator:
         metrics_dir = Path(self.cfg.paths.state) / "run_logs" / "metrics"
         metrics_dir.mkdir(parents=True, exist_ok=True)
         path = metrics_dir / f"metrics_{result.trade_date.strftime('%Y%m%d')}.json"
-        path.write_text(json.dumps(result.as_dict(), ensure_ascii=False, indent=2), encoding="utf-8")
+        path.write_text(
+            json.dumps(result.as_dict(), ensure_ascii=False, indent=2), encoding="utf-8"
+        )
         return path
 
     def _metric_slot_coverage(self, intraday: pd.DataFrame) -> tuple[float, dict[str, Any]]:
@@ -159,7 +161,10 @@ class QAMetricsCalculator:
 
     def _metric_rollup_fallback(self, daily: pd.DataFrame) -> tuple[float, dict[str, Any]]:
         if daily.empty or "rollup_strategy" not in daily:
-            return 1.0 if not daily.empty else 0.0, {"rows": len(daily), "fallback_rows": len(daily)}
+            return 1.0 if not daily.empty else 0.0, {
+                "rows": len(daily),
+                "fallback_rows": len(daily),
+            }
 
         strategies = daily["rollup_strategy"].astype(str).str.lower()
         fallback_rows = int((strategies != "close").sum())

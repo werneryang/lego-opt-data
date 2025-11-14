@@ -10,17 +10,22 @@
 - 日终归档：当日 17:00 ET 运行 rollup，优先使用 16:00 槽快照（回退规则详见下文）；不再执行历史回填。
 - T+1 补全：次日 07:30 ET（可配置）执行 `open_interest` enrichment。
 
-## 合约发现与过滤规则
+## 合约发现与过滤规则（2025 升级）
 - 会话冻结：每日 09:25 ET 基于上一交易日收盘价的 ±30% 行权价范围及标准月度/季度到期合约生成目标集合，默认整日固定；可选单次中午（12:00 ET）增量刷新，仅新增不删除。
 - 行权价过滤：以会话基准价（默认前收）计算；可通过配置启用“动态跟随标的价格”策略。
-- 交易所：默认使用 IB `SMART` 路由；若返回具体交易所名称则保留该值。
+- 交易所（发现阶段）：只使用 `SMART`。从 `reqSecDefOptParams()` 返回的多 venue 参数中筛选到 `SMART`，其余 venue 不参与“发现”。如需在采集阶段尝试备选 venue（如 `CBOE`/`CBOEOPT`），在快照订阅阶段由降级逻辑处理。
+- 发现实现（IB API v10.26+）：
+  - 使用 `reqSecDefOptParams()` 获取全量 `expirations` 与 `strikes`（SMART 路由）。
+  - 直接构造 `Option(symbol, expiryYYYYMMDD, strike, right, exchange='SMART')` 合约集合。
+  - 采用批量 `qualifyContracts`/`qualifyContractsAsync` 一次性补齐 `conId` 等核心字段。
+  - 不再在发现阶段调用 `reqContractDetails`。
 - 其他筛选：`max_strikes_per_expiry`、`exclude_weekly=true` 等可在配置中调整。
 
 ## 字段要求
 - 必填字段（intraday/daily 通用）：`conid`, `symbol`, `expiry`, `right`, `strike`, `multiplier`, `exchange`, `tradingClass`, `bid`, `ask`, `mid`, `last`, `volume`, `iv`, `delta`, `gamma`, `theta`, `vega`, `market_data_type`, `asof_ts`, `sample_time`, `slot_30m`, `source`, `ingest_id`, `ingest_run_type`, `data_quality_flag`（可为空列表）。
 - 日终额外字段：`rollup_source_time`, `rollup_source_slot`, `rollup_strategy`, `underlying_close`, `underlying_close_adj`, `strike_adj`, `moneyness_pct`, `moneyness_pct_adj`。
 - 可选字段（有则保留）：`rho`, `bid_size`, `ask_size`, `hist_volatility`, `sample_time_et`, `first_seen_slot`, 以及公司行动维度。
-- `open_interest`：视为 EOD/T+1 字段；intraday 默认空值并加 `missing_oi` 标记；日终在 enrichment 完成后补齐。
+- `open_interest`：视为 EOD/T+1 字段；intraday 默认空值并加 `missing_oi` 标记；日终在 enrichment 完成后补齐。T+1 回补优先通过 `reqMktData` + generic tick `101`（读取 `callOpenInterest`/`putOpenInterest` 或 `openInterest`）获取上一交易日收盘 OI；如未来启用 `OPTION_OPEN_INTEREST` 历史权限，可作为备选校验源。
 - 若实时行情降级为延迟（`market_data_type=3/4`），需在 `data_quality_flag` 中记录 `delayed_fallback`。
 
 ## 数据层级
@@ -37,7 +42,7 @@
 - 参考数据（如标的收盘价）优先使用 IB 数据，必要时引入外部源并在文档中记录。
 
 ## 限速与调度
-- 限速默认值：snapshot 30 req/min，合约发现 5 req/min，可通过配置调节；并发 `max_concurrent_snapshots=10` 起步，逐步调优。
+- 限速默认值：snapshot 30 req/min；发现阶段（`qualifyContracts*` 批量）不再额外施加应用层限速，采用批量资格化（建议每批 25–50 个）并遵循 IB pacing（如出现 pacing 告警再行调优）。并发 `max_concurrent_snapshots=10` 起步，逐步调优。
 - 调度：开发机使用 APScheduler/launchd，生产使用 systemd timer；统一设置时区 `America/New_York`，维护交易日历及早收盘表。
 - 失败重试：槽位请求失败即时重试（指数退避），超过阈值记录 `slot_retry_exceeded` 并进入人工处理队列。
 
@@ -54,6 +59,7 @@
 - 历史大规模回填或外部数据源混合（除非在 PLAN/ADR 中重新批准）。
 
 ## 期权链拉取简要清单（优先实践）
+- SDK 选择：全局采用 `ib_insync`；不直接使用 `ibapi` 原生接口。
 - 行情类型：优先 `marketDataType=1`（实时）；无实时权限时允许回退 3/4。
 - Generic ticks（必选）：`100,101,104,105,106,165,221,225,233,293,294,295`，其中 `100` 提供模型 IV/Greeks，`233` 为实时成交量。
 - 交易所：默认 `SMART`；若长时间无报价，尝试 `CBOE`/`CBOEOPT` 并重新资格化。

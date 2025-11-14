@@ -69,7 +69,10 @@ class RollupRunner:
 
         if symbols:
             wanted = {sym.upper() for sym in symbols}
-            have = {sym.upper() for sym in intraday_df.get("underlying", pd.Series(dtype="str")).unique()}
+            have = {
+                sym.upper()
+                for sym in intraday_df.get("underlying", pd.Series(dtype="str")).unique()
+            }
             missing = sorted(wanted - have)
             for sym in missing:
                 payload = {
@@ -117,9 +120,9 @@ class RollupRunner:
 
         selected["data_quality_flag"] = selected["data_quality_flag"].apply(_ensure_flags)
         selected["data_quality_flag"] = selected["data_quality_flag"].apply(list)
-        selected["asof_ts"] = pd.to_datetime(selected["asof_ts"], utc=True, errors="coerce").dt.tz_convert(
-            None
-        )
+        selected["asof_ts"] = pd.to_datetime(
+            selected["asof_ts"], utc=True, errors="coerce"
+        ).dt.tz_convert(None)
 
         cols_to_drop = ["sample_time", "sample_time_et", "slot_30m", "first_seen_slot"]
         cleaned = selected.drop(columns=[c for c in cols_to_drop if c in selected.columns])
@@ -138,7 +141,9 @@ class RollupRunner:
                 progress(underlying, "write_daily_clean", {"rows": len(group)})
 
             adjusted = self._cleaner.adjuster.apply(group)
-            part_adj = partition_for(self.cfg, daily_adjusted_root, trade_date, underlying, exchange)
+            part_adj = partition_for(
+                self.cfg, daily_adjusted_root, trade_date, underlying, exchange
+            )
             path_adj = self._writer.write_dataframe(adjusted, part_adj)
             daily_adjusted_paths.append(path_adj)
             if progress:
@@ -183,7 +188,9 @@ class RollupRunner:
         work = df.copy()
         work["slot_30m"] = pd.to_numeric(work["slot_30m"], errors="coerce").astype("Int64")
         work["sample_time"] = pd.to_datetime(work["sample_time"], utc=False, errors="coerce")
-        work["asof_ts"] = pd.to_datetime(work["asof_ts"], utc=True, errors="coerce").dt.tz_convert(None)
+        work["asof_ts"] = pd.to_datetime(work["asof_ts"], utc=True, errors="coerce").dt.tz_convert(
+            None
+        )
 
         work = work.dropna(subset=["slot_30m", "sample_time"])
 

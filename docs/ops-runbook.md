@@ -1,7 +1,7 @@
 # 运维手册：30 分钟快照与日终归档
 
 ## 运行前准备
-1. 启动 IB Gateway/TWS（Paper：`127.0.0.1:7497`），确认登录账号具备美股期权**实时行情**权限；若仅有延迟权限，允许自动降级。
+1. 启动 IB Gateway/TWS（默认：`127.0.0.1:7496`），确认登录账号具备美股期权**实时行情**权限；若仅有延迟权限，允许自动降级。
 2. 推荐使用项目专用虚拟环境（避免污染 base Conda 并触发 NumPy 升级冲突）：
    - venv 路径：`python3.11 -m venv .venv && .venv/bin/pip install --upgrade pip && .venv/bin/pip install -e '.[dev]'`
    - 或 Conda 隔离：`conda create -n opt-data python=3.11 && conda activate opt-data && pip install -e '.[dev]'`
@@ -9,8 +9,9 @@
 3. 依赖与 SDK 规范：
    - 统一使用 `ib_insync` 作为 IBKR Python 接入层；项目不直接使用 `ibapi` 原生包。
    - 安装：`pip install -e .[dev]` 已包含 `ib-insync`；无需额外安装 `ibapi`。
-4. Snapshot 配置（`[snapshot]` 节）：
-   - `exchange` / `fallback_exchanges`：首选与备用路由（默认 `SMART`，回退 `CBOE`,`CBOEOPT`）。
+4. Snapshot 配置与合约发现（2025 升级）：
+   - 发现阶段（Discovery）：使用 `reqSecDefOptParams()` + 批量 `qualifyContracts/qualifyContractsAsync`（仅 `SMART`）。不再调用 `reqContractDetails`；不对发现阶段施加应用层限流，采用批量（建议每批 25–50 个）资格化并遵循 IB pacing。
+   - 采集阶段（Snapshot）：`exchange` / `fallback_exchanges` 为订阅首选与备用路由（默认 `SMART`，必要时回退 `CBOE`,`CBOEOPT`）。
    - `generic_ticks`：默认 `100,101,104,105,106,165,221,225,233,293,294,295`，务必覆盖 IV、Greeks、rtVolume。
    - `strikes_per_side`：围绕现价采样的行权价数（每侧 N 个）。
    - `subscription_timeout_sec` / `subscription_poll_interval`：单合约订阅超时与轮询间隔。
@@ -18,7 +19,7 @@
    - CLI 可临时覆盖：`python -m opt_data.cli snapshot --exchange CBOE --fallback-exchanges CBOEOPT --strikes 2 --ticks 100,233 --timeout 15 --poll-interval 0.5`。
 5. 配置 `.env` / 环境变量：
    - `IB_HOST`（默认 `127.0.0.1`）
-   - `IB_PORT`（默认 `7497`）
+   - `IB_PORT`（默认 `7496`）
    - `IB_CLIENT_ID`（默认 `101`）
    - `IB_MARKET_DATA_TYPE=1`（实时；若需强制延迟则设为 `3/4`）
    - `TZ=America/New_York`（统一调度时区）
@@ -36,7 +37,7 @@
   - `python -m opt_data.cli snapshot --date 2025-09-29 --slot 09:30 --symbols AAPL --config config/opt-data.test.toml`
   - `python -m opt_data.cli snapshot --run-day --config config/opt-data.toml`（执行当日剩余槽位）
 - 日终归档：`python -m opt_data.cli rollup --date 2025-09-29 --config config/opt-data.test.toml`
-- OI 回补：`python -m opt_data.cli enrichment --date 2025-09-29 --fields open_interest --config config/opt-data.test.toml`
+- OI 回补：`python -m opt_data.cli enrichment --date 2025-09-29 --fields open_interest --config config/opt-data.test.toml`（T+1 通过 `reqMktData` + tick `101` 读取上一交易日收盘 OI）
 - 存储维护：`make compact`（周度合并）、`python -m opt_data.cli retention --view intraday --older-than 60`
 
 > 若 CLI 尚未提供对应子命令，可调用等价脚本；命令命名需与实现同步。
@@ -157,13 +158,14 @@
 - 交易所选择
   - 默认 `SMART`，若长时间无报价可尝试 `CBOE` 或 `CBOEOPT`。同一账户在不同 venue 的可见性可能不同。
 
-**订约与订阅流程**
+**订约与订阅流程（2025 升级）**
 - 标的资格化
   - `stock = Stock('AAPL','SMART','USD')`；`ib.qualifyContracts(stock)`。
 - 期权链发现
   - `reqSecDefOptParams` 选择 `exchange=SMART`（或 CLI 指定）；取最近到期 `near_exp`。
   - 行权价：围绕现价挑最近 N 个（推荐 2–5 个），或按窗口过滤（如 ±$15）。
   - 现价获取：优先 `reqHistoricalData(1 day, useRTH=True)` 的最近收盘；备选：对标的 `reqMktData` 后读 `marketPrice()`。
+  - 资格化：构造 `Option(symbol, expiryYYYYMMDD, strike, right, exchange='SMART')` 列表，使用批量 `qualifyContracts`/`qualifyContractsAsync` 获取 `conId`；不使用 `reqContractDetails`。
 - 逐合约订阅（推荐）
   - 对每个 `Option`：`reqMktData(option, genericTickList=上文, snapshot=False)`；等待单个合约“就绪”后立刻 `cancelMktData`，降低 IB pacing 压力。
   - “就绪”条件：

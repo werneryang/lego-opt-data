@@ -145,7 +145,14 @@ def discover_contracts_for_symbol(
     acquire_token: Optional[Callable[[], None]] = None,
     max_strikes_per_expiry: Optional[int] = None,
 ) -> List[Dict[str, Any]]:
-    """Discover option contracts for *symbol* using IB and cache results."""
+    """Discover option contracts for *symbol* and cache results (SMART-only, 2025 flow).
+
+    Implementation follows IB API v10.26+ guidance:
+    - Use reqSecDefOptParams() to get expirations/strikes
+    - Restrict discovery to SMART routing
+    - Build Option contracts and batch-qualify via qualifyContracts
+    - Do NOT call reqContractDetails per candidate
+    """
 
     from ib_insync import Option  # type: ignore
 
@@ -159,36 +166,47 @@ def discover_contracts_for_symbol(
             return cached
 
     ib = session.ensure_connected()
-    if acquire_token:
-        acquire_token()
+
+    # 1) Fetch sec def params and keep SMART only
     params = ib.reqSecDefOptParams(symbol, "", "STK", underlying_conid or 0)
+    allowed_exchange = (cfg.snapshot.exchange or "SMART").upper()
+    secdef = None
+    for p in params:
+        exch = (p.exchange or "").upper()
+        if exch == allowed_exchange:
+            secdef = p
+            break
+    if secdef is None:
+        # Fallback: if SMART not returned, pick the first param as last resort
+        secdef = params[0] if params else None
+    if secdef is None:
+        return []
+
+    # 2) Build candidate grid (expiry x strike), apply scope filters
+    strikes_all = sorted(float(s) for s in secdef.strikes if s is not None)
+    raw_expirations = [_parse_expiration(exp) for exp in secdef.expirations]
+    expirations = [d for d in raw_expirations if d]
+    filtered_expiries = filter_expiries(expirations, cfg.filters.expiry_types)
+    if not filtered_expiries or not strikes_all:
+        return []
 
     candidates: List[Dict[str, Any]] = []
-    for param in params:
-        strikes = sorted(float(s) for s in param.strikes if s is not None)
-        if not strikes:
-            continue
-        raw_expirations = [_parse_expiration(exp) for exp in param.expirations]
-        expirations = [d for d in raw_expirations if d]
-        filtered_expiries = filter_expiries(expirations, cfg.filters.expiry_types)
-        if not filtered_expiries:
-            continue
-        exchange = param.exchange or "SMART"
-        trading_class = param.tradingClass or symbol
-        multiplier = float(param.multiplier or 100)
-        for expiry_date in filtered_expiries:
-            iso_expiry = expiry_date.isoformat()
-            for strike in strikes:
-                candidates.append(
-                    {
-                        "symbol": symbol,
-                        "expiry": iso_expiry,
-                        "strike": strike,
-                        "exchange": exchange,
-                        "tradingClass": trading_class,
-                        "multiplier": multiplier,
-                    }
-                )
+    exchange = allowed_exchange
+    trading_class = secdef.tradingClass or symbol
+    multiplier = float(secdef.multiplier or 100)
+    for expiry_date in filtered_expiries:
+        iso_expiry = expiry_date.isoformat()
+        for strike in strikes_all:
+            candidates.append(
+                {
+                    "symbol": symbol,
+                    "expiry": iso_expiry,
+                    "strike": strike,
+                    "exchange": exchange,
+                    "tradingClass": trading_class,
+                    "multiplier": multiplier,
+                }
+            )
 
     scoped_candidates = filter_by_scope(
         candidates,
@@ -204,45 +222,68 @@ def discover_contracts_for_symbol(
         max_per_expiry=max_strikes_per_expiry,
     )
 
-    results: Dict[tuple[int, str], Dict[str, Any]] = {}
-    for candidate in scoped_candidates:
-        expiry_yyyymmdd = candidate["expiry"].replace("-", "")
+    if not scoped_candidates:
+        return []
+
+    # 3) Build Option list for both rights and batch-qualify
+    options: List[Any] = []
+    for cand in scoped_candidates:
+        expiry_yyyymmdd = cand["expiry"].replace("-", "")
         for right in ("C", "P"):
-            option = Option(
+            opt = Option(
                 symbol=symbol,
                 lastTradeDateOrContractMonth=expiry_yyyymmdd,
-                strike=candidate["strike"],
+                strike=cand["strike"],
                 right=right,
-                exchange=candidate["exchange"],
+                exchange=exchange,
                 currency="USD",
-                tradingClass=candidate["tradingClass"],
+                tradingClass=trading_class,
             )
-            option.includeExpired = True
-            try:
-                if acquire_token:
-                    acquire_token()
-                details = ib.reqContractDetails(option)
-            except Exception as exc:  # pragma: no cover - network failure
-                logger.warning(
-                    "reqContractDetails failed",
-                    extra={"symbol": symbol, "right": right, "expiry": expiry_yyyymmdd},
-                    exc_info=exc,
-                )
-                continue
-            for detail in details:
-                contract = detail.contract
-                key = (contract.conId, contract.exchange or candidate["exchange"])
-                results[key] = {
-                    "conid": contract.conId,
-                    "symbol": contract.symbol or symbol,
-                    "expiry": _normalize_expiry(contract.lastTradeDateOrContractMonth),
-                    "right": contract.right or right,
-                    "strike": float(contract.strike or candidate["strike"]),
-                    "multiplier": float(contract.multiplier or candidate["multiplier"]),
-                    "exchange": contract.exchange or candidate["exchange"],
-                    "tradingClass": contract.tradingClass or candidate["tradingClass"],
-                    "currency": contract.currency or "USD",
-                }
+            opt.includeExpired = True
+            options.append(opt)
+
+    # Batch qualify; no per-candidate reqContractDetails
+    qualified: List[Any] = []
+    CHUNK = 50
+    for i in range(0, len(options), CHUNK):
+        chunk = options[i : i + CHUNK]
+        try:
+            # Optionally acquire token per chunk if provided; otherwise proceed immediately
+            if acquire_token:
+                acquire_token()
+            qualified.extend(ib.qualifyContracts(*chunk))
+        except Exception as exc:  # pragma: no cover - network failures
+            logger.warning("qualifyContracts chunk failed", extra={"size": len(chunk)}, exc_info=exc)
+            continue
+
+    # 4) Normalize outputs
+    results: Dict[tuple[int, str], Dict[str, Any]] = {}
+    for contract in qualified:
+        try:
+            conid = int(getattr(contract, "conId", 0) or 0)
+        except Exception:
+            conid = 0
+        if not conid:
+            continue
+        expiry_norm = _normalize_expiry(getattr(contract, "lastTradeDateOrContractMonth", ""))
+        right = getattr(contract, "right", "") or ""
+        strike_val = getattr(contract, "strike", None)
+        try:
+            strike_f = float(strike_val) if strike_val is not None else None
+        except Exception:
+            strike_f = None
+        exch = getattr(contract, "exchange", None) or exchange
+        results[(conid, exch)] = {
+            "conid": conid,
+            "symbol": getattr(contract, "symbol", symbol) or symbol,
+            "expiry": expiry_norm,
+            "right": right,
+            "strike": strike_f if strike_f is not None else 0.0,
+            "multiplier": float(getattr(contract, "multiplier", "100") or 100),
+            "exchange": exch,
+            "tradingClass": getattr(contract, "tradingClass", trading_class) or trading_class,
+            "currency": getattr(contract, "currency", "USD") or "USD",
+        }
 
     ordered = sorted(
         results.values(), key=lambda x: (x["expiry"], x["strike"], x["right"], x["exchange"])

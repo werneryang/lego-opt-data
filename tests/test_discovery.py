@@ -125,10 +125,6 @@ class FakeContract:
         self.currency = "USD"
 
 
-class FakeDetail:
-    def __init__(self, contract: FakeContract) -> None:
-        self.contract = contract
-
 
 class FakeParam:
     def __init__(self) -> None:
@@ -142,25 +138,29 @@ class FakeParam:
 class FakeIB:
     def __init__(self) -> None:
         self.secdef_calls = 0
-        self.contract_calls = []
+        self.qualify_calls = 0
         self._con_seq = 1000
 
     def reqSecDefOptParams(self, *args, **kwargs):
         self.secdef_calls += 1
         return [FakeParam()]
 
-    def reqContractDetails(self, option):
-        self.contract_calls.append(option)
-        self._con_seq += 1
-        contract = FakeContract(
-            con_id=self._con_seq,
-            symbol=option.symbol,
-            expiry=option.lastTradeDateOrContractMonth,
-            right=option.right,
-            strike=option.strike,
-            exchange=option.exchange,
-        )
-        return [FakeDetail(contract)]
+    def qualifyContracts(self, *contracts):
+        self.qualify_calls += 1
+        out = []
+        for option in contracts:
+            self._con_seq += 1
+            out.append(
+                FakeContract(
+                    con_id=self._con_seq,
+                    symbol=option.symbol,
+                    expiry=option.lastTradeDateOrContractMonth,
+                    right=option.right,
+                    strike=option.strike,
+                    exchange=option.exchange,
+                )
+            )
+        return out
 
 
 def test_discover_contracts_for_symbol_caches(monkeypatch, tmp_path: Path) -> None:
