@@ -34,6 +34,7 @@ from .ib import (
     bars_to_dicts,
     OptionSpec,
 )
+from .ib.oi_probe import OIProbeConfig, probe_oi
 
 
 app = typer.Typer(add_completion=False, help="opt-data CLI entrypoint")
@@ -599,9 +600,7 @@ def snapshot(
             snapshot_cfg.exchange = exchange.strip().upper()
         if fallback_exchanges:
             snapshot_cfg.fallback_exchanges = [
-                token.strip().upper()
-                for token in fallback_exchanges.split(",")
-                if token.strip()
+                token.strip().upper() for token in fallback_exchanges.split(",") if token.strip()
             ]
         if strikes and strikes > 0:
             snapshot_cfg.strikes_per_side = strikes
@@ -664,6 +663,93 @@ def snapshot(
             )
         if len(result.errors) > 5:
             typer.echo(f"[snapshot] ... {len(result.errors) - 5} more errors logged")
+
+
+@app.command()
+def oi_probe(
+    symbol: str = typer.Option("AAPL", "--symbol", "-s", help="Underlying symbol to probe"),
+    config: Optional[str] = typer.Option(None, help="Path to config TOML"),
+    expiries: int = typer.Option(
+        1,
+        "--expiries",
+        help="Number of expiries to probe starting from the offset",
+    ),
+    expiry_offset: int = typer.Option(
+        1,
+        "--expiry-offset",
+        help="Skip this many nearest expiries before probing (default 1 => next expiry)",
+    ),
+    strikes: int = typer.Option(
+        2,
+        "--strikes-per-side",
+        help="Number of strikes per side around spot (per expiry)",
+    ),
+    timeout: float = typer.Option(
+        15.0,
+        "--timeout",
+        help="Max seconds to wait for tick 101 OI data",
+    ),
+    poll_interval: float = typer.Option(
+        0.5,
+        "--poll-interval",
+        help="Polling interval while waiting for OI ticks",
+    ),
+    output: Optional[str] = typer.Option(
+        None,
+        "--output",
+        "-o",
+        help="Optional CSV output path (defaults under state/oi_probe)",
+    ),
+) -> None:
+    """Probe real-time option open interest for a single underlying using tick 101.
+
+    This is an operational helper and does not write to the main data/clean tree.
+    """
+
+    cfg = load_config(Path(config) if config else None)
+    session = IBSession(
+        host=cfg.ib.host,
+        port=cfg.ib.port,
+        client_id=cfg.ib.client_id,
+        market_data_type=cfg.ib.market_data_type,
+    )
+
+    probe_cfg = OIProbeConfig(
+        symbol=symbol.upper(),
+        expiries=max(expiries, 1),
+        expiry_offset=max(expiry_offset, 0),
+        strikes_per_side=max(strikes, 1),
+        timeout=max(timeout, 1.0),
+        poll_interval=max(poll_interval, 0.1),
+    )
+
+    with session as sess:
+        ib = sess.ensure_connected()
+        typer.echo(
+            f"[oi_probe] symbol={probe_cfg.symbol} expiries={probe_cfg.expiries} "
+            f"expiry_offset={probe_cfg.expiry_offset} strikes_per_side={probe_cfg.strikes_per_side} "
+            f"timeout={probe_cfg.timeout}s poll_interval={probe_cfg.poll_interval}s"
+        )
+        df = probe_oi(ib, probe_cfg)
+
+    if df.empty:
+        typer.echo("[oi_probe] no OI records collected (empty result)")
+        raise typer.Exit(code=1)
+
+    typer.echo(f"[oi_probe] records={len(df)} unique_strikes={df['strike'].nunique()}")
+    preview = df.sort_values("open_interest", ascending=False).head(10)
+    typer.echo(preview.to_string(index=False))
+
+    if output:
+        out_path = Path(output).expanduser()
+    else:
+        ts = datetime.utcnow().strftime("%Y%m%dT%H%M%SZ")
+        out_dir = cfg.paths.state / "oi_probe"
+        out_dir.mkdir(parents=True, exist_ok=True)
+        out_path = out_dir / f"oi_probe_{probe_cfg.symbol}_{ts}.csv"
+
+    df.to_csv(out_path, index=False)
+    typer.echo(f"[oi_probe] written_csv={out_path}")
 
 
 @app.command()

@@ -125,7 +125,6 @@ class FakeContract:
         self.currency = "USD"
 
 
-
 class FakeParam:
     def __init__(self) -> None:
         self.exchange = "SMART"

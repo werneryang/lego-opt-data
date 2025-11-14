@@ -253,7 +253,9 @@ def discover_contracts_for_symbol(
                 acquire_token()
             qualified.extend(ib.qualifyContracts(*chunk))
         except Exception as exc:  # pragma: no cover - network failures
-            logger.warning("qualifyContracts chunk failed", extra={"size": len(chunk)}, exc_info=exc)
+            logger.warning(
+                "qualifyContracts chunk failed", extra={"size": len(chunk)}, exc_info=exc
+            )
             continue
 
     # 4) Normalize outputs

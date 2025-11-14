@@ -526,15 +526,9 @@ class SnapshotRunner:
         acquire_token: Callable[[], None],
     ) -> list[dict[str, Any]]:
         preferences = self._preferred_exchanges()
-        timeout = (
-            self._snapshot_cfg.subscription_timeout
-            if self._snapshot_cfg
-            else 12.0
-        )
+        timeout = self._snapshot_cfg.subscription_timeout if self._snapshot_cfg else 12.0
         poll_interval = (
-            self._snapshot_cfg.subscription_poll_interval
-            if self._snapshot_cfg
-            else 0.25
+            self._snapshot_cfg.subscription_poll_interval if self._snapshot_cfg else 0.25
         )
         require_greeks = self._snapshot_cfg.require_greeks if self._snapshot_cfg else True
 

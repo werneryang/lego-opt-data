@@ -300,9 +300,7 @@ class BackfillRunner:
                             else self.cfg.cli.default_generic_ticks
                         )
                         timeout_val = (
-                            snapshot_cfg.subscription_timeout
-                            if snapshot_cfg
-                            else DEFAULT_TIMEOUT
+                            snapshot_cfg.subscription_timeout if snapshot_cfg else DEFAULT_TIMEOUT
                         )
                         poll_val = (
                             snapshot_cfg.subscription_poll_interval

@@ -310,7 +310,9 @@ def load_config(file: Optional[Path] = None) -> AppConfig:
             token.strip().upper() for token in fallback_raw.split(",") if token.strip()
         ]
     else:
-        fallback_exchanges = [str(token).strip().upper() for token in fallback_raw if str(token).strip()]
+        fallback_exchanges = [
+            str(token).strip().upper() for token in fallback_raw if str(token).strip()
+        ]
 
     snapshot_generic_ticks = g(
         "snapshot",
