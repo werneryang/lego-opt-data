@@ -7,6 +7,7 @@ from datetime import date, datetime, timedelta
 from zoneinfo import ZoneInfo
 from pathlib import Path
 from typing import Optional, Dict, Any, List
+import logging
 
 import typer
 
@@ -921,6 +922,11 @@ def schedule(
         True, "--enrichment/--skip-enrichment", help="Include enrichment job"
     ),
     misfire_grace_seconds: int = typer.Option(300, help="Grace window for missed jobs (seconds)"),
+    snapshot_interval_minutes: int = typer.Option(
+        30,
+        "--snapshot-interval-minutes",
+        help="Minutes between intraday snapshot slots (default 30)",
+    ),
 ) -> None:
     cfg = load_config(Path(config) if config else None)
     trade_date = (
@@ -933,7 +939,47 @@ def schedule(
         else None
     )
 
-    runner = ScheduleRunner(cfg)
+    if snapshot_interval_minutes <= 0:
+        typer.echo("--snapshot-interval-minutes must be positive", err=True)
+        raise typer.Exit(code=2)
+
+    def format_progress(kind: str):
+        def _progress(symbol: str, status: str, extra: Dict[str, Any]) -> None:
+            parts = [f"[{kind}:{status}]"]
+            if symbol:
+                parts.append(symbol)
+            slot_label = extra.get("slot")
+            if slot_label:
+                parts.append(f"slot={slot_label}")
+            details = []
+            for key, value in extra.items():
+                if key == "slot":
+                    continue
+                details.append(f"{key}={value}")
+            if details:
+                parts.append(", ".join(details))
+            typer.echo(" ".join(parts))
+
+        return _progress
+
+    snapshot_runner = SnapshotRunner(cfg, slot_minutes=snapshot_interval_minutes)
+    slots_today = snapshot_runner.available_slots(trade_date)
+    if not slots_today:
+        typer.echo(f"[schedule] no snapshot slots available for {trade_date}", err=True)
+        raise typer.Exit(code=1)
+    close_slot_idx = slots_today[-1].index
+    fallback_slot_idx = slots_today[-2].index if len(slots_today) >= 2 else close_slot_idx
+    rollup_runner = RollupRunner(cfg, close_slot=close_slot_idx, fallback_slot=fallback_slot_idx)
+
+    snapshot_progress = format_progress("snapshot")
+    rollup_progress = format_progress("rollup")
+    enrichment_progress = format_progress("enrichment")
+
+    runner = ScheduleRunner(
+        cfg,
+        snapshot_runner=snapshot_runner,
+        rollup_runner=rollup_runner,
+    )
     jobs = runner.plan_day(
         trade_date,
         symbols=symbol_list,
@@ -962,6 +1008,9 @@ def schedule(
             include_snapshots=snapshots,
             include_rollup=rollup,
             include_enrichment=enrichment,
+            snapshot_progress=snapshot_progress,
+            rollup_progress=rollup_progress,
+            enrichment_progress=enrichment_progress,
         )
         typer.echo(
             "[schedule] simulation completed "
@@ -985,6 +1034,7 @@ def schedule(
         )
         raise typer.Exit(code=1)
 
+    logging.getLogger("apscheduler").setLevel(logging.ERROR)
     scheduler = BackgroundScheduler(timezone=ZoneInfo(cfg.timezone.name))
     job_ids = runner.schedule(
         scheduler,
@@ -995,6 +1045,9 @@ def schedule(
         include_rollup=rollup,
         include_enrichment=enrichment,
         misfire_grace_seconds=misfire_grace_seconds,
+        snapshot_progress=snapshot_progress,
+        rollup_progress=rollup_progress,
+        enrichment_progress=enrichment_progress,
     )
 
     typer.echo(f"[schedule] scheduled jobs={len(job_ids)} ids={job_ids}")

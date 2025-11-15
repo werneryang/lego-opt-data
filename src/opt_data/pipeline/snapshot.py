@@ -91,7 +91,9 @@ class SnapshotResult:
     errors: list[dict[str, Any]]
 
 
-def _slot_schedule(trade_date: date, tz_name: str) -> list[SnapshotSlot]:
+def _slot_schedule(trade_date: date, tz_name: str, slot_minutes: int = 30) -> list[SnapshotSlot]:
+    if slot_minutes <= 0:
+        raise ValueError("slot_minutes must be positive")
     tz = ZoneInfo(tz_name)
 
     session = get_trading_session(trade_date)
@@ -105,6 +107,7 @@ def _slot_schedule(trade_date: date, tz_name: str) -> list[SnapshotSlot]:
     slots: list[SnapshotSlot] = []
     current = start
     index = 0
+    step = timedelta(minutes=slot_minutes)
     while current < end_dt:
         slots.append(
             SnapshotSlot(
@@ -113,7 +116,7 @@ def _slot_schedule(trade_date: date, tz_name: str) -> list[SnapshotSlot]:
                 utc=current.astimezone(ZoneInfo("UTC")),
             )
         )
-        current = current + timedelta(minutes=30)
+        current = current + step
         index += 1
     if not slots or slots[-1].et != end_dt:
         slots.append(
@@ -158,6 +161,7 @@ class SnapshotRunner:
         cleaner: CleaningPipeline | None = None,
         now_fn: Callable[[], datetime] | None = None,
         snapshot_grace_seconds: int = DEFAULT_SNAPSHOT_GRACE_SECONDS,
+        slot_minutes: int = 30,
     ) -> None:
         self.cfg = cfg
         self._session_factory = session_factory or (lambda: _default_session_factory(cfg))
@@ -185,6 +189,9 @@ class SnapshotRunner:
         self._cleaner = cleaner or CleaningPipeline.create(cfg)
         self._now_fn = now_fn or (lambda: datetime.now(ZoneInfo(cfg.timezone.name)))
         self._tz = ZoneInfo(cfg.timezone.name)
+        if slot_minutes <= 0:
+            raise ValueError("slot_minutes must be positive")
+        self._slot_minutes = slot_minutes
         snapshot_cfg = getattr(cfg, "snapshot", None)
         if snapshot_cfg is not None:
             self._generic_ticks = snapshot_cfg.generic_ticks or cfg.cli.default_generic_ticks
@@ -207,7 +214,7 @@ class SnapshotRunner:
         }
 
     def available_slots(self, trade_date: date) -> list[SnapshotSlot]:
-        return _slot_schedule(trade_date, self.cfg.timezone.name)
+        return _slot_schedule(trade_date, self.cfg.timezone.name, self._slot_minutes)
 
     def resolve_slot(self, trade_date: date, slot_label: str | None) -> SnapshotSlot:
         slots = self.available_slots(trade_date)
@@ -397,14 +404,24 @@ class SnapshotRunner:
         group_keys = ["symbol", "exchange"]
         rows_written = 0
         for (symbol, exchange), group in raw_df.groupby(group_keys):
-            part = partition_for(self.cfg, raw_root, trade_date, symbol, exchange)
-            path = self._writer.write_dataframe(group, part)
-            raw_files.append(path)
             rows_written += len(group)
+            path = self._merge_and_write_partition(
+                root=raw_root,
+                trade_date=trade_date,
+                symbol=symbol,
+                exchange=exchange,
+                new_rows=group,
+            )
+            raw_files.append(path)
 
         for (symbol, exchange), group in clean_df.groupby(group_keys):
-            part = partition_for(self.cfg, clean_root, trade_date, symbol, exchange)
-            path = self._writer.write_dataframe(group, part)
+            path = self._merge_and_write_partition(
+                root=clean_root,
+                trade_date=trade_date,
+                symbol=symbol,
+                exchange=exchange,
+                new_rows=group,
+            )
             clean_files.append(path)
 
         return SnapshotResult(
@@ -512,10 +529,58 @@ class SnapshotRunner:
         deduped = df.drop_duplicates(subset=["conid", "sample_time"], keep="last")
         # Ensure data_quality_flag remains list-typed
         if "data_quality_flag" in deduped.columns:
-            deduped["data_quality_flag"] = deduped["data_quality_flag"].apply(
-                lambda x: x if isinstance(x, list) else ([] if pd.isna(x) else [str(x)])
-            )
+            def _coerce_flags(value: Any) -> list[str]:
+                if isinstance(value, list):
+                    return value
+                if value is None:
+                    return []
+                if isinstance(value, (tuple, set)):
+                    return [str(v) for v in value]
+                if hasattr(value, "__iter__") and not isinstance(value, (str, bytes)):
+                    try:
+                        return [str(v) for v in list(value)]
+                    except TypeError:
+                        pass
+                try:
+                    if pd.isna(value):
+                        return []
+                except Exception:
+                    pass
+                return [str(value)]
+
+            deduped["data_quality_flag"] = deduped["data_quality_flag"].apply(_coerce_flags)
         return deduped
+
+    def _merge_and_write_partition(
+        self,
+        *,
+        root: Path,
+        trade_date: date,
+        symbol: str,
+        exchange: str,
+        new_rows: pd.DataFrame,
+    ) -> Path:
+        part = partition_for(self.cfg, root, trade_date, symbol, exchange)
+        file_path = part.path() / "part-000.parquet"
+        frames: list[pd.DataFrame] = [new_rows.copy()]
+        if file_path.exists():
+            try:
+                existing = pd.read_parquet(file_path)
+                if not existing.empty:
+                    frames.insert(0, existing)
+            except Exception as exc:  # pragma: no cover - read errors are logged
+                logger.warning(
+                    "Failed to read existing intraday partition",
+                    extra={"symbol": symbol, "exchange": exchange, "path": str(file_path)},
+                    exc_info=exc,
+                )
+        combined = (
+            pd.concat(frames, ignore_index=True)
+            if len(frames) > 1
+            else frames[0]
+        )
+        combined = self._deduplicate(combined)
+        return self._writer.write_dataframe(combined, part)
 
     def _capture_snapshot_rows(
         self,

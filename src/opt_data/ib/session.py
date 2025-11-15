@@ -1,7 +1,29 @@
 from __future__ import annotations
 
+import asyncio
 from dataclasses import dataclass
 from typing import Optional
+
+_IB_CLASS = None
+
+
+def _ensure_thread_event_loop() -> None:
+    """Ensure the current thread has an asyncio event loop for ib_insync/eventkit."""
+    try:
+        asyncio.get_event_loop()
+    except RuntimeError:
+        loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(loop)
+
+
+def _get_ib_class():
+    global _IB_CLASS
+    if _IB_CLASS is None:
+        _ensure_thread_event_loop()
+        from ib_insync import IB  # type: ignore
+
+        _IB_CLASS = IB
+    return _IB_CLASS
 
 
 @dataclass
@@ -14,8 +36,8 @@ class IBSession:
     ib: Optional[object] = None
 
     def connect(self) -> None:
-        # Lazy import to avoid dependency during tests without network
-        from ib_insync import IB  # type: ignore
+        _ensure_thread_event_loop()
+        IB = _get_ib_class()
 
         if self.ib is None:
             self.ib = IB()

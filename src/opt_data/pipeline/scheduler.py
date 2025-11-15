@@ -126,7 +126,9 @@ class ScheduleRunner:
         include_snapshots: bool = True,
         include_rollup: bool = True,
         include_enrichment: bool = True,
-        progress: callable[[str, str, Dict[str, Any]], None] | None = None,
+        snapshot_progress: callable[[str, str, Dict[str, Any]], None] | None = None,
+        rollup_progress: callable[[str, str, Dict[str, Any]], None] | None = None,
+        enrichment_progress: callable[[str, str, Dict[str, Any]], None] | None = None,
     ) -> ScheduleSummary:
         jobs = self.plan_day(
             trade_date,
@@ -141,13 +143,17 @@ class ScheduleRunner:
         for job in jobs:
             try:
                 if job.kind == "snapshot":
-                    self._run_snapshot_job(trade_date, job.payload, progress=progress)
+                    self._run_snapshot_job(
+                        trade_date, job.payload, progress=snapshot_progress
+                    )
                     summary.snapshots += 1
                 elif job.kind == "rollup":
-                    self._run_rollup_job(trade_date, job.payload, progress=progress)
+                    self._run_rollup_job(trade_date, job.payload, progress=rollup_progress)
                     summary.rollups += 1
                 elif job.kind == "enrichment":
-                    self._run_enrichment_job(trade_date, job.payload, progress=progress)
+                    self._run_enrichment_job(
+                        trade_date, job.payload, progress=enrichment_progress
+                    )
                     summary.enrichments += 1
             except Exception as exc:  # pragma: no cover - surfaced in summary
                 error = {
@@ -171,6 +177,9 @@ class ScheduleRunner:
         include_rollup: bool = True,
         include_enrichment: bool = True,
         misfire_grace_seconds: int = 120,
+        snapshot_progress: callable[[str, str, Dict[str, Any]], None] | None = None,
+        rollup_progress: callable[[str, str, Dict[str, Any]], None] | None = None,
+        enrichment_progress: callable[[str, str, Dict[str, Any]], None] | None = None,
     ) -> list[str]:
         if BackgroundScheduler is None:
             raise RuntimeError(
@@ -193,7 +202,11 @@ class ScheduleRunner:
                     self._run_snapshot_job,
                     trigger="date",
                     run_date=job.run_time,
-                    kwargs={"trade_date": trade_date, "payload": job.payload, "progress": None},
+                    kwargs={
+                        "trade_date": trade_date,
+                        "payload": job.payload,
+                        "progress": snapshot_progress,
+                    },
                     id=job_id,
                     replace_existing=True,
                     misfire_grace_time=misfire_grace_seconds,
@@ -203,7 +216,11 @@ class ScheduleRunner:
                     self._run_rollup_job,
                     trigger="date",
                     run_date=job.run_time,
-                    kwargs={"trade_date": trade_date, "payload": job.payload, "progress": None},
+                    kwargs={
+                        "trade_date": trade_date,
+                        "payload": job.payload,
+                        "progress": rollup_progress,
+                    },
                     id=job_id,
                     replace_existing=True,
                     misfire_grace_time=misfire_grace_seconds,
@@ -213,7 +230,11 @@ class ScheduleRunner:
                     self._run_enrichment_job,
                     trigger="date",
                     run_date=job.run_time,
-                    kwargs={"trade_date": trade_date, "payload": job.payload, "progress": None},
+                    kwargs={
+                        "trade_date": trade_date,
+                        "payload": job.payload,
+                        "progress": enrichment_progress,
+                    },
                     id=job_id,
                     replace_existing=True,
                     misfire_grace_time=misfire_grace_seconds,

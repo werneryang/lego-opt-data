@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from datetime import date, datetime
+from pathlib import Path
 from typing import Any, Dict, List
 
 import pandas as pd
@@ -165,3 +166,95 @@ def test_available_slots_respects_early_close(tmp_path, monkeypatch):
     assert labels[0] == "09:30"
     assert labels[-1] == "13:00"
     assert len(labels) == 8
+
+
+def test_snapshot_runner_accumulates_slots(tmp_path):
+    cfg = build_config(tmp_path)
+    trade_date = date(2025, 10, 6)
+    now_et = datetime(2025, 10, 6, 9, 35, tzinfo=ZoneInfo("America/New_York"))
+
+    contracts: List[Dict[str, Any]] = [
+        {
+            "conid": 2001,
+            "symbol": "AAPL",
+            "expiry": "2025-11-15",
+            "right": "C",
+            "strike": 150.0,
+            "exchange": "SMART",
+            "tradingClass": "AAPL",
+            "multiplier": 100,
+        },
+        {
+            "conid": 2002,
+            "symbol": "AAPL",
+            "expiry": "2025-11-15",
+            "right": "P",
+            "strike": 150.0,
+            "exchange": "SMART",
+            "tradingClass": "AAPL",
+            "multiplier": 100,
+        },
+    ]
+
+    snapshot_rows: List[Dict[str, Any]] = [
+        {
+            **contracts[0],
+            "bid": 1.0,
+            "ask": 1.2,
+            "last": 1.1,
+            "volume": 50,
+            "open_interest": 10,
+            "iv": 0.2,
+            "delta": 0.5,
+            "gamma": 0.04,
+            "theta": -0.01,
+            "vega": 0.1,
+            "market_data_type": 1,
+            "asof": "2025-10-06T14:30:00Z",
+        },
+        {
+            **contracts[1],
+            "bid": 0.9,
+            "ask": 1.1,
+            "last": 1.0,
+            "volume": 60,
+            "open_interest": 12,
+            "iv": 0.25,
+            "delta": -0.45,
+            "gamma": 0.03,
+            "theta": -0.02,
+            "vega": 0.11,
+            "market_data_type": 1,
+            "asof": "2025-10-06T14:30:00Z",
+        },
+    ]
+
+    runner = SnapshotRunner(
+        cfg,
+        session_factory=lambda: DummySession(DummyIB()),
+        contract_fetcher=lambda *_, **__: contracts,
+        snapshot_fetcher=lambda *_, **__: snapshot_rows,
+        underlying_fetcher=lambda *_, **__: 170.0,
+        now_fn=lambda: now_et,
+    )
+
+    slots = runner.available_slots(trade_date)
+    first_slot = slots[0]
+    second_slot = slots[1]
+
+    runner.run(trade_date, first_slot)
+    runner.run(trade_date, second_slot)
+
+    raw_path = (
+        Path(cfg.paths.raw)
+        / "view=intraday"
+        / f"date={trade_date.isoformat()}"
+        / "underlying=AAPL"
+        / "exchange=SMART"
+        / "part-000.parquet"
+    )
+    assert raw_path.exists()
+    df = pd.read_parquet(raw_path)
+    slots_present = sorted(df["slot_30m"].unique().tolist())
+    assert slots_present == [first_slot.index, second_slot.index]
+    assert len(df) == 4

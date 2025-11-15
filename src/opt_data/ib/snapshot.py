@@ -42,6 +42,12 @@ def collect_option_snapshots(
         if info.get("multiplier"):
             option.multiplier = str(info["multiplier"])
         option.includeExpired = True
+        conid = info.get("conid")
+        if conid:
+            try:
+                option.conId = int(conid)
+            except (TypeError, ValueError):
+                logger.debug("Invalid conid for %s: %s", info.get("symbol"), conid)
 
         if acquire_token:
             acquire_token()
