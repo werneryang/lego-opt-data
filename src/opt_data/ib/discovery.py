@@ -4,6 +4,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Callable, Dict, List, Iterable, Optional, TYPE_CHECKING
 from collections import defaultdict
+import calendar
 import json
 import logging
 from datetime import date
@@ -59,10 +60,19 @@ def filter_by_scope(
     allowed_expiry_types: Iterable[str],
     *,
     trade_date: date,
+    expiry_months_ahead: int | None = None,
 ) -> List[Dict[str, Any]]:
     low = underlying_close * (1.0 - moneyness_pct)
     high = underlying_close * (1.0 + moneyness_pct)
     kinds = {k.lower() for k in allowed_expiry_types}
+    expiry_cutoff: date | None = None
+    if expiry_months_ahead and expiry_months_ahead > 0:
+        # add months without external deps
+        month = trade_date.month - 1 + expiry_months_ahead
+        year = trade_date.year + month // 12
+        month = month % 12 + 1
+        day = min(trade_date.day, calendar.monthrange(year, month)[1])
+        expiry_cutoff = date(year, month, day)
 
     out: List[Dict[str, Any]] = []
     for c in contracts:
@@ -78,6 +88,8 @@ def filter_by_scope(
                 continue
 
         if d < trade_date:
+            continue
+        if expiry_cutoff and d > expiry_cutoff:
             continue
 
         is_monthly = is_standard_monthly_expiry(d)
@@ -164,6 +176,8 @@ def discover_contracts_for_symbol(
         cached = load_cache(cache_root, symbol, cache_key)
         if cached:
             return cached
+    # 使用 --force-refresh 时会跳过本地缓存，重新调用 IB 的 SecDef 接口获取 strikes/expiries。
+    # 因此即便缓存里没有某些档位，只要 SecDef 返回了对应行权价，就会被带入后续批量 qualify/订阅。
 
     ib = session.ensure_connected()
 
@@ -184,11 +198,74 @@ def discover_contracts_for_symbol(
 
     # 2) Build candidate grid (expiry x strike), apply scope filters
     strikes_all = sorted(float(s) for s in secdef.strikes if s is not None)
+    if not strikes_all:
+        return []
+    cached_strikes: List[float] = []
+    cached_path = cache_path(cache_root, symbol, cache_key)
+    if cached_path.exists():
+        try:
+            cached_items = json.loads(cached_path.read_text(encoding="utf-8"))
+            cached_strikes = sorted(
+                {
+                    float(item.get("strike", 0.0))
+                    for item in cached_items
+                    if item.get("strike") is not None
+                }
+            )
+        except Exception as exc:  # pragma: no cover - logging only
+            logger.debug(
+                "Failed to read cached strikes for comparison",
+                extra={"path": str(cached_path), "error": str(exc)},
+            )
+    if logger.isEnabledFor(logging.DEBUG):
+        logger.debug(
+            "SecDef strikes fetched",
+            extra={
+                "symbol": symbol,
+                "trade_date": trade_date.isoformat(),
+                "exchange": allowed_exchange,
+                "strikes_count": len(strikes_all),
+                "strikes_min": min(strikes_all),
+                "strikes_max": max(strikes_all),
+                "strikes_sample": strikes_all[:10],
+                "cache_path": str(cached_path),
+                "cache_count": len(cached_strikes),
+                "cache_sample": cached_strikes[:10],
+                "new_vs_cache_sample": [s for s in strikes_all if s not in cached_strikes][:10]
+                if cached_strikes
+                else [],
+                "missing_in_secdef_sample": [s for s in cached_strikes if s not in strikes_all][:10]
+                if cached_strikes
+                else [],
+            },
+        )
+    if cached_strikes:
+        secdef_set = set(strikes_all)
+        cache_set = set(cached_strikes)
+        if secdef_set != cache_set:
+            diff_new = [s for s in strikes_all if s not in cache_set][:10]
+            diff_missing = [s for s in cached_strikes if s not in secdef_set][:10]
+            logger.error(
+                "SecDef strikes mismatch cache; aborting to avoid requesting unknown strikes",
+                extra={
+                    "symbol": symbol,
+                    "trade_date": trade_date.isoformat(),
+                    "exchange": allowed_exchange,
+                    "cache_path": str(cached_path),
+                    "new_not_in_cache": diff_new,
+                    "cache_not_in_secdef": diff_missing,
+                },
+            )
+            raise RuntimeError("SecDef strikes differ from cached; rerun without mismatch")
+
     raw_expirations = [_parse_expiration(exp) for exp in secdef.expirations]
     expirations = [d for d in raw_expirations if d]
-    filtered_expiries = filter_expiries(expirations, cfg.filters.expiry_types)
+    filtered_expiries = sorted(filter_expiries(expirations, cfg.filters.expiry_types))
     if not filtered_expiries or not strikes_all:
         return []
+    # Keep only the earliest expiries to avoid requesting far-out contracts that may not be tradable.
+    MAX_EXPIRIES = 1
+    filtered_expiries = filtered_expiries[:MAX_EXPIRIES]
 
     candidates: List[Dict[str, Any]] = []
     exchange = allowed_exchange
@@ -214,6 +291,7 @@ def discover_contracts_for_symbol(
         moneyness_pct=cfg.filters.moneyness_pct,
         allowed_expiry_types=cfg.filters.expiry_types,
         trade_date=trade_date,
+        expiry_months_ahead=cfg.filters.expiry_months_ahead,
     )
 
     scoped_candidates = limit_strikes_per_expiry(

@@ -187,6 +187,7 @@
 - 始终无 bid/ask：账号缺少期权顶级行情，或非交易时段；尝试切换到 `CBOE/CBOEOPT`，或仅依赖模型 Greeks。
 - DataFrame 为空：检查 entitlement、交易时段、generic ticks 是否传入、是否取消过早，以及是否订阅了正确的 tradingClass（如 SPX vs SPXW）。
 - 端口不通：确认 TWS/Gateway API 设置、Socket Port、`Read Only API` 是否关闭，以及客户端 `clientId` 不冲突。
+- 缓存 vs force-refresh：常规运行优先复用 `state_test/contracts_cache/<SYMBOL>_<DATE>.json`。`--force-refresh` 会跳过缓存重拉 SecDef strikes/expiries，若新返回的 strikes 集合与缓存不一致（例如出现 222.5 这类缓存外行权价），当前实现会报错退出以避免向 IB 请求未知合约。调试时可将日志级别调为 DEBUG 查看 `SecDef strikes fetched` 日志，比较 strikes_sample/new_vs_cache_sample/missing_in_secdef_sample；如需避免报错，可关闭 force-refresh 或收紧行权价过滤（恢复 `strikes_per_side`/`max_strikes_per_expiry`、较小 moneyness）。
 
 **快速命令（实测通过）**
 - AAPL 单次快照（SMART，近 3 个行权价）：
