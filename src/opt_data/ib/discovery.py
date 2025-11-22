@@ -368,7 +368,13 @@ def discover_contracts_for_symbol(
     ordered = sorted(
         results.values(), key=lambda x: (x["expiry"], x["strike"], x["right"], x["exchange"])
     )
-    save_cache(cache_root, symbol, cache_key, ordered)
+    cache_written = save_cache(cache_root, symbol, cache_key, ordered)
+    if not cache_written.exists() or cache_written.stat().st_size == 0:
+        logger.error(
+            "Failed to write contracts cache",
+            extra={"symbol": symbol, "path": str(cache_written)},
+        )
+        raise RuntimeError(f"contracts cache not written: {cache_written}")
     logger.info(
         "Discovered %s contracts for %s",
         len(ordered),
