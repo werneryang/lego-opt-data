@@ -5,6 +5,7 @@ import logging
 import math
 import time
 import uuid
+import warnings
 from dataclasses import dataclass
 from datetime import date, datetime, time as dtime, timedelta
 from pathlib import Path
@@ -317,67 +318,92 @@ class SnapshotRunner:
             ib = sess.ensure_connected()
             for entry in entries:
                 symbol = entry.symbol
+                started_at = time.monotonic()
+                result_label = "success"
+                rows_count = 0
+                contracts_count = 0
                 emit(symbol, "start", {})
                 try:
-                    reference_price = self._fetch_reference_price(
-                        ib, symbol, trade_date, entry.conid
-                    )
-                    emit(symbol, "reference_price", {"price": reference_price})
-                except Exception as exc:
-                    record_error(symbol, "reference_price", exc, {})
-                    emit(symbol, "skip", {"reason": "reference_price_failed"})
-                    continue
+                    try:
+                        reference_price = self._fetch_reference_price(
+                            ib, symbol, trade_date, entry.conid
+                        )
+                        emit(symbol, "reference_price", {"price": reference_price})
+                    except Exception as exc:
+                        record_error(symbol, "reference_price", exc, {})
+                        emit(symbol, "skip", {"reason": "reference_price_failed"})
+                        result_label = "reference_price_failed"
+                        continue
 
-                try:
-                    contracts = self._contract_fetcher(
-                        sess,
-                        symbol,
-                        trade_date,
-                        reference_price,
-                        self.cfg,
-                        underlying_conid=entry.conid,
-                        force_refresh=force_refresh,
-                        # discovery phase uses batch qualification; no app-level throttling
-                        acquire_token=None,
-                    )
-                except Exception as exc:
-                    record_error(symbol, "contracts", exc, {})
-                    emit(symbol, "skip", {"reason": "contracts_failed"})
-                    continue
+                    try:
+                        contracts = self._contract_fetcher(
+                            sess,
+                            symbol,
+                            trade_date,
+                            reference_price,
+                            self.cfg,
+                            underlying_conid=entry.conid,
+                            force_refresh=force_refresh,
+                            # discovery phase uses batch qualification; no app-level throttling
+                            acquire_token=None,
+                        )
+                    except Exception as exc:
+                        record_error(symbol, "contracts", exc, {})
+                        emit(symbol, "skip", {"reason": "contracts_failed"})
+                        result_label = "contracts_failed"
+                        continue
 
-                if not contracts:
-                    emit(symbol, "no_contracts", {"reference_price": reference_price})
-                    continue
+                    if not contracts:
+                        emit(symbol, "no_contracts", {"reference_price": reference_price})
+                        result_label = "no_contracts"
+                        continue
 
-                contracts_total += len(contracts)
+                    contracts_count = len(contracts)
+                    contracts_total += len(contracts)
 
-                try:
-                    rows = self._capture_snapshot_rows(
-                        ib,
-                        contracts,
+                    try:
+                        rows = self._capture_snapshot_rows(
+                            ib,
+                            contracts,
+                            reference_price=reference_price,
+                            acquire_token=self._make_acquire("snapshot"),
+                        )
+                    except Exception as exc:
+                        record_error(symbol, "snapshot", exc, {"contracts": len(contracts)})
+                        emit(symbol, "skip", {"reason": "snapshot_failed"})
+                        result_label = "snapshot_failed"
+                        continue
+
+                    if not rows:
+                        record_error(symbol, "snapshot", None, {"reason": "no_rows"})
+                        emit(symbol, "skip", {"reason": "snapshot_empty"})
+                        result_label = "snapshot_empty"
+                        continue
+
+                    enriched = self._enrich_rows(
+                        rows,
+                        symbol=symbol,
+                        trade_date=trade_date,
+                        slot=slot,
+                        ingest_id=ingest_id,
                         reference_price=reference_price,
-                        acquire_token=self._make_acquire("snapshot"),
                     )
-                except Exception as exc:
-                    record_error(symbol, "snapshot", exc, {"contracts": len(contracts)})
-                    emit(symbol, "skip", {"reason": "snapshot_failed"})
-                    continue
-
-                if not rows:
-                    record_error(symbol, "snapshot", None, {"reason": "no_rows"})
-                    emit(symbol, "skip", {"reason": "snapshot_empty"})
-                    continue
-
-                enriched = self._enrich_rows(
-                    rows,
-                    symbol=symbol,
-                    trade_date=trade_date,
-                    slot=slot,
-                    ingest_id=ingest_id,
-                    reference_price=reference_price,
-                )
-                all_rows.extend(enriched)
-                emit(symbol, "rows", {"count": len(enriched)})
+                    all_rows.extend(enriched)
+                    rows_count = len(enriched)
+                    emit(symbol, "rows", {"count": rows_count})
+                    result_label = "success"
+                finally:
+                    elapsed = round(time.monotonic() - started_at, 3)
+                    emit(
+                        symbol,
+                        "done",
+                        {
+                            "elapsed_seconds": elapsed,
+                            "contracts": contracts_count,
+                            "rows": rows_count,
+                            "result": result_label,
+                        },
+                    )
 
         if not all_rows:
             return SnapshotResult(
@@ -548,7 +574,9 @@ class SnapshotRunner:
                     pass
                 return [str(value)]
 
-            deduped["data_quality_flag"] = deduped["data_quality_flag"].apply(_coerce_flags)
+            deduped.loc[:, "data_quality_flag"] = deduped["data_quality_flag"].apply(
+                _coerce_flags
+            )
         return deduped
 
     def _merge_and_write_partition(
@@ -574,11 +602,15 @@ class SnapshotRunner:
                     extra={"symbol": symbol, "exchange": exchange, "path": str(file_path)},
                     exc_info=exc,
                 )
-        combined = (
-            pd.concat(frames, ignore_index=True)
-            if len(frames) > 1
-            else frames[0]
-        )
+        frames = [f for f in frames if not f.empty]
+        if not frames:
+            combined = pd.DataFrame(columns=new_rows.columns)
+        elif len(frames) == 1:
+            combined = frames[0]
+        else:
+            with warnings.catch_warnings():
+                warnings.simplefilter("ignore", FutureWarning)
+                combined = pd.concat(frames, ignore_index=True)
         combined = self._deduplicate(combined)
         return self._writer.write_dataframe(combined, part)
 

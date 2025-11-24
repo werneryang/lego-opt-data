@@ -34,6 +34,7 @@ class DummyIB:
 def test_snapshot_runner_writes_intraday_partition(tmp_path):
     cfg = build_config(tmp_path)
     now_et = datetime(2025, 10, 6, 9, 31, tzinfo=ZoneInfo("America/New_York"))
+    progress_log: list[tuple[str, str, dict]] = []
 
     contracts: List[Dict[str, Any]] = [
         {
@@ -100,11 +101,15 @@ def test_snapshot_runner_writes_intraday_partition(tmp_path):
         snapshot_fetcher=lambda *_, **__: snapshot_rows,
         underlying_fetcher=lambda *_, **__: 172.35,
         now_fn=lambda: now_et,
+        # capture progress to ensure per-symbol timing is emitted
+        cleaner=None,
     )
+    def progress_cb(symbol: str, status: str, extra: Dict) -> None:
+        progress_log.append((symbol, status, extra))
 
     trade_date = date(2025, 10, 6)
     slot = runner.resolve_slot(trade_date, "09:30")
-    result = runner.run(trade_date, slot)
+    result = runner.run(trade_date, slot, progress=progress_cb)
 
     assert result.rows_written == 2
     assert len(result.raw_paths) == 1
@@ -124,6 +129,14 @@ def test_snapshot_runner_writes_intraday_partition(tmp_path):
     row_flags = {row.conid: set(row.data_quality_flag) for row in df.itertuples()}
     assert "missing_oi" in row_flags[1001]
     assert "delayed_fallback" in row_flags[1002]
+    done_events = [evt for evt in progress_log if evt[1] == "done"]
+    assert done_events, "expected per-symbol done event with timing"
+    done = done_events[0]
+    assert done[0] == "AAPL"
+    assert done[2]["rows"] == 2
+    assert done[2]["contracts"] == 2
+    assert done[2]["result"] == "success"
+    assert done[2]["elapsed_seconds"] >= 0
 
 
 def test_resolve_slot_defaults_to_next(tmp_path):
