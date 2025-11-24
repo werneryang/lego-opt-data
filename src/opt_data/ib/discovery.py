@@ -154,6 +154,7 @@ def discover_contracts_for_symbol(
     *,
     underlying_conid: Optional[int] = None,
     force_refresh: bool = False,
+    allow_rebuild: bool = False,
     acquire_token: Optional[Callable[[], None]] = None,
     max_strikes_per_expiry: Optional[int] = None,
 ) -> List[Dict[str, Any]]:
@@ -179,16 +180,30 @@ def discover_contracts_for_symbol(
         )
         raise RuntimeError("force_refresh disabled; use existing contracts cache")
 
-    cached = load_cache(cache_root, symbol, cache_key)
+    cached: List[Dict[str, Any]] = []
+    try:
+        cached = load_cache(cache_root, symbol, cache_key)
+    except Exception as exc:
+        logger.warning(
+            "Failed to read contracts cache; will rebuild if allowed",
+            extra={
+                "symbol": symbol,
+                "trade_date": trade_date.isoformat(),
+                "path": str(cache_root),
+                "error": str(exc),
+            },
+        )
+        cached = []
     if cached:
         return cached
 
-    # 缓存缺失直接中断，避免使用 SecDef 动态生成未知行权价
-    logger.error(
-        "contracts cache missing for trade_date; discovery is disabled",
-        extra={"symbol": symbol, "trade_date": trade_date.isoformat(), "path": str(cache_root)},
-    )
-    raise RuntimeError(f"contracts cache missing: {symbol} {cache_key}")
+    if not allow_rebuild:
+        # 缓存缺失直接中断，避免使用 SecDef 动态生成未知行权价
+        logger.error(
+            "contracts cache missing for trade_date; discovery is disabled",
+            extra={"symbol": symbol, "trade_date": trade_date.isoformat(), "path": str(cache_root)},
+        )
+        raise RuntimeError(f"contracts cache missing: {symbol} {cache_key}")
 
     ib = session.ensure_connected()
 

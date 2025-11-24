@@ -30,6 +30,11 @@
    - `[discovery] policy="session_freeze"`、`pre_open_time="09:25"`；若启用增量刷新，设 `midday_refresh_enabled=true` 且仅新增合约
    - `intraday_retain_days=60`、`weekly_compaction_enabled=true`、`same_day_compaction_enabled=false`
 8. 确认交易日历（含早收盘）可用；调度器/cron 中必须显式设置 `America/New_York`。项目使用 `pandas-market-calendars` 获取 XNYS 会话时间：若运行环境缺少该依赖或无法访问历年日历，将自动回退到固定 09:30–16:00 槽位，并在日志标记 `early_close=False`。
+9. **合约缓存预检与自动重建（新）**  
+   - `python -m opt_data.cli schedule` 在启动时会对本次运行的所有 symbols 预检 `paths.contracts_cache/<SYM>_<trade_date>.json`。  
+   - 缺失/空/损坏时会用 IBSession 拉取标的收盘价，再调用 `discover_contracts_for_symbol` 重建缓存；重建失败将直接终止，不会跳过或继续运行。  
+   - 如需强制严格模式（不自动重建），使用 `--fail-on-missing-cache`；默认自动重建以避免半程才发现缓存缺失。  
+   - 调度前可手工跑 `python -m opt_data.cli schedule --simulate --config config/opt-data.test.toml --symbols AAPL,MSFT`，以确保缓存可用并验证调度计划。
 
 ## 常用命令
 - 基础：`make install`、`make fmt lint test`
@@ -187,7 +192,7 @@
 - 始终无 bid/ask：账号缺少期权顶级行情，或非交易时段；尝试切换到 `CBOE/CBOEOPT`，或仅依赖模型 Greeks。
 - DataFrame 为空：检查 entitlement、交易时段、generic ticks 是否传入、是否取消过早，以及是否订阅了正确的 tradingClass（如 SPX vs SPXW）。
 - 端口不通：确认 TWS/Gateway API 设置、Socket Port、`Read Only API` 是否关闭，以及客户端 `clientId` 不冲突。
-- 缓存强制：生产/测试运行必须复用 `paths.contracts_cache` 下对应日期的缓存文件，`--force-refresh` 已被禁用；若缓存缺失会报错终止，避免拉取未知行权价。调试时可开 DEBUG 查看 `SecDef strikes fetched` 日志（缓存对比），但不会自动 fallback 到 SecDef。
+- 缓存强制：生产/测试运行必须复用 `paths.contracts_cache` 下对应日期的缓存文件，`--force-refresh` 已被禁用；若缓存缺失会报错终止，避免拉取未知行权价。调试时可开 DEBUG 查看 `SecDef strikes fetched` 日志（缓存对比），但不会自动 fallback 到 SecDef。调度入口会在启动前自动重建缺失/损坏缓存（获取标的收盘价后调用 `discover_contracts_for_symbol`），重建失败即终止，需先修复缓存再重试。
  - 缓存写入检查：发现阶段会将合约列表写入 `paths.contracts_cache` 对应文件，写入失败会直接报错；运行中若发现缓存缺失或空文件，需先修复缓存（重跑发现、检查目录权限）再继续 snapshot/rollup。
 
 **快速命令（实测通过）**
