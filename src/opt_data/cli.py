@@ -44,6 +44,100 @@ from .ib.oi_probe import OIProbeConfig, probe_oi
 app = typer.Typer(add_completion=False, help="opt-data CLI entrypoint")
 
 
+def _precheck_contract_caches(
+    cfg,
+    trade_date: date,
+    symbols_for_run: list[str],
+    entries_by_symbol: dict[str, Any],
+    *,
+    build_missing_cache: bool,
+    prefix: str,
+) -> None:
+    """Ensure contract caches exist for the requested symbols; optionally rebuild them."""
+
+    missing: list[str] = []
+    invalid: list[str] = []
+    cache_root = Path(cfg.paths.contracts_cache)
+
+    def check_cache(sym: str) -> tuple[str | None, str | None]:
+        cache_file = cache_path(cache_root, sym, trade_date.isoformat())
+        if not cache_file.exists() or cache_file.stat().st_size == 0:
+            return sym, f"{sym} ({cache_file})"
+        try:
+            data = json.loads(cache_file.read_text(encoding="utf-8"))
+        except Exception:
+            return None, f"{sym} ({cache_file})"
+        if not data:
+            return None, f"{sym} ({cache_file})"
+        return None, None
+
+    def rebuild_caches(symbols_to_build: list[str]) -> list[str]:
+        failures: list[str] = []
+        session = IBSession(
+            host=cfg.ib.host,
+            port=cfg.ib.port,
+            client_id=cfg.ib.client_id,
+            market_data_type=cfg.ib.market_data_type,
+        )
+        with session as sess:
+            ib = sess.ensure_connected()
+            for sym in symbols_to_build:
+                entry = entries_by_symbol.get(sym)
+                conid = entry.conid if entry else None
+                try:
+                    ref_price = fetch_underlying_close(ib, sym, trade_date, conid)
+                    discover_contracts_for_symbol(
+                        sess,
+                        sym,
+                        trade_date,
+                        ref_price,
+                        cfg,
+                        underlying_conid=conid,
+                        force_refresh=False,
+                        allow_rebuild=True,
+                        acquire_token=None,
+                        max_strikes_per_expiry=cfg.acquisition.max_strikes_per_expiry,
+                    )
+                    typer.echo(f"[{prefix}] rebuilt contract cache for {sym}")
+                except Exception as exc:  # pragma: no cover - runtime/IB dependent
+                    failures.append(f"{sym} ({exc})")
+        return failures
+
+    for sym in symbols_for_run:
+        miss, bad = check_cache(sym)
+        if miss:
+            missing.append(miss)
+        if bad:
+            invalid.append(bad)
+
+    if (missing or invalid) and build_missing_cache:
+        rebuild_targets = sorted(set(missing + [item.split()[0] for item in invalid]))
+        failures = rebuild_caches(rebuild_targets)
+        missing = []
+        invalid = failures
+        for sym in symbols_for_run:
+            miss, bad = check_cache(sym)
+            if miss:
+                missing.append(miss)
+            if bad:
+                invalid.append(bad)
+
+    if missing or invalid:
+        parts = []
+        if missing:
+            paths = [
+                cache_path(cache_root, sym, trade_date.isoformat()) for sym in sorted(set(missing))
+            ]
+            parts.append("missing=" + "; ".join(str(p) for p in paths))
+        if invalid:
+            parts.append(f"empty/invalid={'; '.join(sorted(set(invalid)))}")
+        typer.echo(
+            f"[{prefix}] contract cache precheck failed for {trade_date}: " + "; ".join(parts),
+            err=True,
+        )
+        raise typer.Exit(code=1)
+
+
 @app.command()
 def backfill(
     start: str = typer.Option(..., help="Start date YYYY-MM-DD"),
@@ -670,6 +764,101 @@ def snapshot(
 
 
 @app.command()
+def close_snapshot(
+    date_str: str = typer.Option("today", "--date", help="Trade date in ET or 'today'"),
+    symbols: Optional[str] = typer.Option(
+        None, "--symbols", help="Comma separated symbols (defaults to full universe)"
+    ),
+    config: Optional[str] = typer.Option(None, help="Path to config TOML"),
+    force_refresh: bool = typer.Option(False, help="Force refresh contract discovery cache"),
+    build_missing_cache: bool = typer.Option(
+        True,
+        "--build-missing-cache/--fail-on-missing-cache",
+        help="Automatically rebuild missing/invalid contract caches before running",
+    ),
+) -> None:
+    """Capture only the end-of-day (close) snapshot for the given date."""
+
+    cfg = load_config(Path(config) if config else None)
+    trade_date = (
+        to_et_date(datetime.utcnow()) if date_str == "today" else date.fromisoformat(date_str)
+    )
+    symbol_list = [s.strip().upper() for s in symbols.split(",") if s.strip()] if symbols else None
+
+    universe_entries = load_universe(cfg.universe.file)
+    entries_by_symbol = {e.symbol: e for e in universe_entries}
+    symbols_for_run: list[str]
+    if symbol_list:
+        symbols_for_run = symbol_list
+    else:
+        if not universe_entries:
+            typer.echo(
+                "[close-snapshot] no symbols available from universe for snapshot precheck", err=True
+            )
+            raise typer.Exit(code=1)
+        symbols_for_run = [u.symbol for u in universe_entries]
+
+    _precheck_contract_caches(
+        cfg,
+        trade_date,
+        symbols_for_run,
+        entries_by_symbol,
+        build_missing_cache=build_missing_cache,
+        prefix="close-snapshot",
+    )
+
+    runner = SnapshotRunner(cfg, snapshot_grace_seconds=cfg.cli.snapshot_grace_seconds)
+    slots = runner.available_slots(trade_date)
+    if not slots:
+        typer.echo(f"[close-snapshot] no slots available for {trade_date}", err=True)
+        raise typer.Exit(code=1)
+    close_slot = slots[-1]
+
+    typer.echo(
+        f"[close-snapshot] date={trade_date} slot={close_slot.label} "
+        f"symbols={symbol_list or 'ALL'} force_refresh={force_refresh}"
+    )
+
+    def progress_cb(symbol: str, status: str, extra: Dict[str, Any]) -> None:
+        parts = [f"[close-snapshot:{status}]", f"slot={close_slot.label}"]
+        if symbol:
+            parts.append(symbol)
+        if extra:
+            parts.append(", ".join(f"{k}={v}" for k, v in extra.items()))
+        typer.echo(" ".join(parts))
+
+    try:
+        result = runner.run(
+            trade_date,
+            close_slot,
+            symbol_list,
+            force_refresh=force_refresh,
+            progress=progress_cb,
+        )
+    except ValueError as exc:
+        typer.echo(f"[close-snapshot] {exc}", err=True)
+        raise typer.Exit(code=2)
+    except Exception as exc:  # pragma: no cover - runtime specific
+        typer.echo(f"[close-snapshot:error] {exc}", err=True)
+        raise typer.Exit(code=1)
+
+    typer.echo(
+        "[close-snapshot] "
+        f"ingest_id={result.ingest_id} rows={result.rows_written} "
+        f"raw_files={len(result.raw_paths)} clean_files={len(result.clean_paths)} "
+        f"errors={len(result.errors)}"
+    )
+    if result.errors:
+        for err in result.errors[:5]:
+            typer.echo(
+                "[close-snapshot:error] "
+                f"symbol={err.get('symbol')} stage={err.get('stage')} error={err.get('error')}"
+            )
+        if len(result.errors) > 5:
+            typer.echo(f"[close-snapshot] ... {len(result.errors) - 5} more errors logged")
+
+
+@app.command()
 def oi_probe(
     symbol: str = typer.Option("AAPL", "--symbol", "-s", help="Underlying symbol to probe"),
     config: Optional[str] = typer.Option(None, help="Path to config TOML"),
@@ -965,88 +1154,14 @@ def schedule(
                 raise typer.Exit(code=1)
             symbols_for_run = [u.symbol for u in universe_entries]
 
-        # Preflight: ensure per-symbol contracts cache exists and is non-empty
-        missing: list[str] = []
-        invalid: list[str] = []
-        cache_root = Path(cfg.paths.contracts_cache)
-
-        def check_cache(sym: str) -> tuple[str | None, str | None]:
-            cache_file = cache_path(cache_root, sym, trade_date.isoformat())
-            if not cache_file.exists() or cache_file.stat().st_size == 0:
-                return sym, f"{sym} ({cache_file})"
-            try:
-                data = json.loads(cache_file.read_text(encoding="utf-8"))
-            except Exception:
-                return None, f"{sym} ({cache_file})"
-            if not data:
-                return None, f"{sym} ({cache_file})"
-            return None, None
-
-        def rebuild_caches(symbols_to_build: list[str]) -> list[str]:
-            failures: list[str] = []
-            session = IBSession(
-                host=cfg.ib.host,
-                port=cfg.ib.port,
-                client_id=cfg.ib.client_id,
-                market_data_type=cfg.ib.market_data_type,
-            )
-            with session as sess:
-                ib = sess.ensure_connected()
-                for sym in symbols_to_build:
-                    entry = entries_by_symbol.get(sym)
-                    conid = entry.conid if entry else None
-                    try:
-                        ref_price = fetch_underlying_close(ib, sym, trade_date, conid)
-                        discover_contracts_for_symbol(
-                            sess,
-                            sym,
-                            trade_date,
-                            ref_price,
-                            cfg,
-                            underlying_conid=conid,
-                            force_refresh=False,
-                            allow_rebuild=True,
-                            acquire_token=None,
-                            max_strikes_per_expiry=cfg.acquisition.max_strikes_per_expiry,
-                        )
-                        typer.echo(f"[schedule] rebuilt contract cache for {sym}")
-                    except Exception as exc:  # pragma: no cover - runtime/IB dependent
-                        failures.append(f"{sym} ({exc})")
-            return failures
-
-        for sym in symbols_for_run:
-            miss, bad = check_cache(sym)
-            if miss:
-                missing.append(miss)
-            if bad:
-                invalid.append(bad)
-
-        if (missing or invalid) and build_missing_cache:
-            rebuild_targets = sorted(set(missing + [item.split()[0] for item in invalid]))
-            failures = rebuild_caches(rebuild_targets)
-            missing = []
-            invalid = failures
-            for sym in symbols_for_run:
-                miss, bad = check_cache(sym)
-                if miss:
-                    missing.append(miss)
-                if bad:
-                    invalid.append(bad)
-
-        if missing or invalid:
-            parts = []
-            if missing:
-                paths = [
-                    cache_path(cache_root, sym, trade_date.isoformat()) for sym in sorted(set(missing))
-                ]
-                parts.append("missing=" + "; ".join(str(p) for p in paths))
-            if invalid:
-                parts.append(f"empty/invalid={'; '.join(sorted(set(invalid)))}")
-            typer.echo(
-                f"[schedule] contract cache precheck failed for {trade_date}: " + "; ".join(parts),
-                err=True,
-            )
-            raise typer.Exit(code=1)
+        _precheck_contract_caches(
+            cfg,
+            trade_date,
+            symbols_for_run,
+            entries_by_symbol,
+            build_missing_cache=build_missing_cache,
+            prefix="schedule",
+        )
 
     def format_progress(kind: str):
         def _progress(symbol: str, status: str, extra: Dict[str, Any]) -> None:

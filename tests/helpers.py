@@ -42,9 +42,11 @@ def build_config(tmp_path: Path) -> AppConfig:
             contracts_cache=state_root / "contracts_cache",
             run_logs=state_root / "run_logs",
         ),
-        universe=UniverseConfig(file=universe_file, refresh_days=30),
-        reference=ReferenceConfig(corporate_actions=tmp_path / "config/corporate_actions.csv"),
-        filters=FiltersConfig(moneyness_pct=0.30, expiry_types=["monthly", "quarterly"]),
+    universe=UniverseConfig(file=universe_file, refresh_days=30),
+    reference=ReferenceConfig(corporate_actions=tmp_path / "config/corporate_actions.csv"),
+    filters=FiltersConfig(
+        moneyness_pct=0.30, expiry_types=["monthly", "quarterly"], expiry_months_ahead=12
+    ),
         rate_limits=RateLimitsConfig(
             discovery=RateLimitClassConfig(per_minute=1000, burst=1000),
             snapshot=RateLimitClassConfig(per_minute=1000, burst=1000, max_concurrent=10),
