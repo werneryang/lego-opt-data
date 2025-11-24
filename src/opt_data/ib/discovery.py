@@ -172,12 +172,23 @@ def discover_contracts_for_symbol(
     cache_root.mkdir(parents=True, exist_ok=True)
     cache_key = trade_date.isoformat()
 
-    if not force_refresh:
-        cached = load_cache(cache_root, symbol, cache_key)
-        if cached:
-            return cached
-    # 使用 --force-refresh 时会跳过本地缓存，重新调用 IB 的 SecDef 接口获取 strikes/expiries。
-    # 因此即便缓存里没有某些档位，只要 SecDef 返回了对应行权价，就会被带入后续批量 qualify/订阅。
+    if force_refresh:
+        logger.error(
+            "force_refresh disabled; cache must be used",
+            extra={"symbol": symbol, "trade_date": trade_date.isoformat()},
+        )
+        raise RuntimeError("force_refresh disabled; use existing contracts cache")
+
+    cached = load_cache(cache_root, symbol, cache_key)
+    if cached:
+        return cached
+
+    # 缓存缺失直接中断，避免使用 SecDef 动态生成未知行权价
+    logger.error(
+        "contracts cache missing for trade_date; discovery is disabled",
+        extra={"symbol": symbol, "trade_date": trade_date.isoformat(), "path": str(cache_root)},
+    )
+    raise RuntimeError(f"contracts cache missing: {symbol} {cache_key}")
 
     ib = session.ensure_connected()
 
