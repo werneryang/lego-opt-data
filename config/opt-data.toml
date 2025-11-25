@@ -28,6 +28,7 @@ corporate_actions = "config/corporate_actions.csv"
 [filters]
 moneyness_pct = 0.30             # ±30%
 expiry_types = ["monthly", "quarterly"]
+expiry_months_ahead = 12         # 限制月度/季度到期距离（<=0 表示不限制）
 
 [rate_limits.discovery]
 per_minute = 5
@@ -81,7 +82,7 @@ exchange = "SMART"
 fallback_exchanges = ["CBOE", "CBOEOPT"]
 generic_ticks = "100,101,104,105,106,165,221,225,233,293,294,295"
 strikes_per_side = 3
-subscription_timeout_sec = 12.0
+subscription_timeout_sec = 30.0
 subscription_poll_interval = 0.25
 require_greeks = true
 

@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import asyncio
 import logging
 import math
 from typing import Any, Callable, Dict, List, Optional, Sequence
@@ -21,128 +20,69 @@ def collect_option_snapshots(
     poll_interval: float = DEFAULT_POLL_INTERVAL,
     acquire_token: Optional[Callable[[], None]] = None,
     require_greeks: bool = True,
-    concurrency: int = 40,  # New parameter: max concurrent requests
 ) -> List[Dict[str, Any]]:
-    """
-    Collect option snapshots concurrently using asyncio.
-    """
-    # If the loop is already running (e.g. in a notebook or existing async context),
-    # we should use it. Otherwise, run_until_complete.
-    # For CLI usage, ib.run() is typically used to bridge sync/async.
-    return ib.run(
-        _collect_async(
-            ib,
-            contracts,
-            generic_ticks=generic_ticks,
-            timeout=timeout,
-            poll_interval=poll_interval,
-            acquire_token=acquire_token,
-            require_greeks=require_greeks,
-            concurrency=concurrency,
-        )
-    )
+    """Sequentially subscribe to each contract, wait for quotes/Greeks, then cancel."""
 
-
-async def _collect_async(
-    ib: Any,
-    contracts: Sequence[Dict[str, Any]],
-    *,
-    generic_ticks: str,
-    timeout: float,
-    poll_interval: float,
-    acquire_token: Optional[Callable[[], None]],
-    require_greeks: bool,
-    concurrency: int,
-) -> List[Dict[str, Any]]:
-    """Async implementation of the snapshot collection logic."""
     from ib_insync import Option  # type: ignore
 
-    # 1. Prepare Option objects
-    # We do this upfront to avoid overhead during the async loop.
-    option_objs = []
+    rows: List[Dict[str, Any]] = []
     for info in contracts:
         conid = info.get("conid")
         if conid:
-            opt = Option(conId=int(conid))
-            opt.exchange = info.get("exchange", "SMART")
-            opt.currency = info.get("currency", "USD")
+            # Prefer conId-only definition to avoid mismatches with exchange/tradingClass.
+            option = Option(conId=int(conid))
+            option.exchange = info.get("exchange", "SMART")
+            option.currency = info.get("currency", "USD")
         else:
-            # Fallback for contracts without conId (less reliable)
-            expiry = info.get("expiry", "").replace("-", "")
-            opt = Option(
+            expiry = info.get("expiry", "")
+            expiry_clean = expiry.replace("-", "")
+            option = Option(
                 info["symbol"],
-                expiry,
+                expiry_clean,
                 info["strike"],
                 info["right"],
                 exchange=info.get("exchange", "SMART"),
             )
-            opt.currency = info.get("currency", "USD")
+            option.currency = info.get("currency", "USD")
             if info.get("tradingClass"):
-                opt.tradingClass = info["tradingClass"]
+                option.tradingClass = info["tradingClass"]
             if info.get("multiplier"):
-                opt.multiplier = str(info["multiplier"])
-            opt.includeExpired = True
-        
-        # Attach original info to the object for easy retrieval later
-        opt._origin_info = info
-        option_objs.append(opt)
+                option.multiplier = str(info["multiplier"])
+            option.includeExpired = True
 
-    results: List[Dict[str, Any]] = []
-    sem = asyncio.Semaphore(concurrency)
+        if acquire_token:
+            acquire_token()
+        ticker = ib.reqMktData(option, genericTickList=generic_ticks, snapshot=False)
 
-    async def fetch_one(opt: Any) -> Dict[str, Any]:
-        async with sem:
-            # Rate limiting hook
-            if acquire_token:
-                # Note: acquire_token is likely sync, so we call it directly.
-                # If it blocks, it blocks the loop, but usually it's a fast token bucket check.
-                acquire_token()
-
-            # Subscribe
-            ticker = ib.reqMktData(opt, genericTickList=generic_ticks, snapshot=False)
-            
-            # Wait for data
-            loop = asyncio.get_running_loop()
-            start_time = loop.time()
-            while (loop.time() - start_time) < timeout:
-                price_ready = _has_price(ticker)
-                greeks_ready = _has_greeks(ticker)
-                
-                if price_ready and (not require_greeks or greeks_ready):
-                    break
-                
-                await asyncio.sleep(poll_interval)
-
-            # Check final state
+        elapsed = 0.0
+        while elapsed < timeout:
             price_ready = _has_price(ticker)
             greeks_ready = _has_greeks(ticker)
-            timed_out = not (price_ready and (not require_greeks or greeks_ready))
+            if price_ready and (not require_greeks or greeks_ready):
+                break
+            ib.sleep(poll_interval)
+            elapsed += poll_interval
 
-            # Build result
-            row = _build_row(
-                opt._origin_info,
+        price_ready = _has_price(ticker)
+        greeks_ready = _has_greeks(ticker)
+        timed_out = not (price_ready and (not require_greeks or greeks_ready))
+
+        rows.append(
+            _build_row(
+                info,
                 ticker,
                 price_ready=price_ready,
                 greeks_ready=greeks_ready,
                 timed_out=timed_out,
             )
+        )
 
-            # Unsubscribe
-            # We use cancelMktData to stop the stream.
-            # Note: In a high-throughput scenario, we might want to just let them expire 
-            # or batch cancel, but explicit cancel is safer for memory.
-            ib.cancelMktData(opt)
-            
-            return row
+        try:
+            ib.cancelMktData(option)
+        except Exception:  # pragma: no cover - best effort
+            pass
 
-    # 2. Run all tasks
-    # asyncio.gather will run them concurrently, limited by the Semaphore.
-    tasks = [fetch_one(opt) for opt in option_objs]
-    if tasks:
-        batch_results = await asyncio.gather(*tasks)
-        results.extend(batch_results)
-
-    return results
+    return rows
 
 
 def _has_price(ticker: Any) -> bool:
