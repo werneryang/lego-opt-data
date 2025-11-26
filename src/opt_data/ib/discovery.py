@@ -16,11 +16,24 @@ from ..util.expiry import (
     filter_expiries,
     third_friday,
 )
+from ..util.retry import retry_with_backoff
 
 if TYPE_CHECKING:  # pragma: no cover
     from .session import IBSession
 
 logger = logging.getLogger(__name__)
+
+
+@retry_with_backoff(max_attempts=3, initial_delay=1.0)
+def _fetch_sec_def_opt_params(ib: Any, symbol: str, underlying_conid: int) -> List[Any]:
+    """Fetch security definition option parameters with retry."""
+    return ib.reqSecDefOptParams(symbol, "", "STK", underlying_conid or 0)
+
+
+@retry_with_backoff(max_attempts=3, initial_delay=1.0)
+def _qualify_contracts_chunk(ib: Any, contracts: List[Any]) -> List[Any]:
+    """Qualify a chunk of contracts with retry."""
+    return ib.qualifyContracts(*contracts)
 
 
 @dataclass
@@ -157,6 +170,7 @@ def discover_contracts_for_symbol(
     allow_rebuild: bool = False,
     acquire_token: Optional[Callable[[], None]] = None,
     max_strikes_per_expiry: Optional[int] = None,
+    filter_contracts: bool = True,
 ) -> List[Dict[str, Any]]:
     """Discover option contracts for *symbol* and cache results (SMART-only, 2025 flow).
 
@@ -208,17 +222,33 @@ def discover_contracts_for_symbol(
     ib = session.ensure_connected()
 
     # 1) Fetch sec def params and keep SMART only
-    params = ib.reqSecDefOptParams(symbol, "", "STK", underlying_conid or 0)
+    try:
+        params = _fetch_sec_def_opt_params(ib, symbol, underlying_conid or 0)
+    except Exception as exc:
+        logger.error(
+            "Failed to fetch SecDefOptParams after retries",
+            extra={"symbol": symbol, "error": str(exc)},
+        )
+        raise
+
     allowed_exchange = (cfg.snapshot.exchange or "SMART").upper()
-    secdef = None
+    best_overall = max(params, key=lambda p: len(p.strikes or []), default=None)
+    best_tc = max(
+        (p for p in params if (p.tradingClass or "").upper() == symbol.upper()),
+        key=lambda p: len(p.strikes or []),
+        default=None,
+    )
+    secdef = best_tc or None
     for p in params:
         exch = (p.exchange or "").upper()
         if exch == allowed_exchange:
             secdef = p
             break
-    if secdef is None:
-        # Fallback: if SMART not returned, pick the first param as last resort
-        secdef = params[0] if params else None
+    if secdef is None or (best_tc and len(best_tc.strikes or []) > len(secdef.strikes or [])):
+        secdef = best_tc
+    if secdef is None or (best_overall and len(best_overall.strikes or []) > len(secdef.strikes or [])):
+        secdef = best_overall
+    # No debug prints; selection is deterministic based on richest chain.
     if secdef is None:
         return []
 
@@ -286,12 +316,17 @@ def discover_contracts_for_symbol(
 
     raw_expirations = [_parse_expiration(exp) for exp in secdef.expirations]
     expirations = [d for d in raw_expirations if d]
-    filtered_expiries = sorted(filter_expiries(expirations, cfg.filters.expiry_types))
+    filtered_expiries = (
+        sorted(filter_expiries(expirations, cfg.filters.expiry_types))
+        if filter_contracts
+        else [d for d in expirations if d]
+    )
     if not filtered_expiries or not strikes_all:
         return []
     # Keep only the earliest expiries to avoid requesting far-out contracts that may not be tradable.
     MAX_EXPIRIES = 1
-    filtered_expiries = filtered_expiries[:MAX_EXPIRIES]
+    if filter_contracts:
+        filtered_expiries = filtered_expiries[:MAX_EXPIRIES]
 
     candidates: List[Dict[str, Any]] = []
     exchange = allowed_exchange
@@ -311,20 +346,22 @@ def discover_contracts_for_symbol(
                 }
             )
 
-    scoped_candidates = filter_by_scope(
-        candidates,
-        underlying_close=underlying_close,
-        moneyness_pct=cfg.filters.moneyness_pct,
-        allowed_expiry_types=cfg.filters.expiry_types,
-        trade_date=trade_date,
-        expiry_months_ahead=cfg.filters.expiry_months_ahead,
-    )
-
-    scoped_candidates = limit_strikes_per_expiry(
-        scoped_candidates,
-        underlying_close=underlying_close,
-        max_per_expiry=max_strikes_per_expiry,
-    )
+    if filter_contracts:
+        scoped_candidates = filter_by_scope(
+            candidates,
+            underlying_close=underlying_close,
+            moneyness_pct=cfg.filters.moneyness_pct,
+            allowed_expiry_types=cfg.filters.expiry_types,
+            trade_date=trade_date,
+            expiry_months_ahead=cfg.filters.expiry_months_ahead,
+        )
+        scoped_candidates = limit_strikes_per_expiry(
+            scoped_candidates,
+            underlying_close=underlying_close,
+            max_per_expiry=max_strikes_per_expiry,
+        )
+    else:
+        scoped_candidates = candidates
 
     if not scoped_candidates:
         return []
@@ -348,17 +385,34 @@ def discover_contracts_for_symbol(
 
     # Batch qualify; no per-candidate reqContractDetails
     qualified: List[Any] = []
-    CHUNK = 50
+    
+    # Adaptive batch size based on total contract count
+    # Smaller batches for small sets, larger for medium, capped for very large
+    total_contracts = len(options)
+    if total_contracts <= 25:
+        CHUNK = total_contracts  # Process all at once for small sets
+    elif total_contracts <= 100:
+        CHUNK = 50  # Standard batch size
+    elif total_contracts <= 500:
+        CHUNK = 75  # Larger batches for medium sets
+    else:
+        CHUNK = 100  # Cap at 100 for very large sets to avoid timeouts
+    
+    logger.debug(
+        f"Qualifying {total_contracts} contracts with batch size {CHUNK}",
+        extra={"symbol": symbol, "total": total_contracts, "batch_size": CHUNK}
+    )
+    
     for i in range(0, len(options), CHUNK):
         chunk = options[i : i + CHUNK]
         try:
             # Optionally acquire token per chunk if provided; otherwise proceed immediately
             if acquire_token:
                 acquire_token()
-            qualified.extend(ib.qualifyContracts(*chunk))
+            qualified.extend(_qualify_contracts_chunk(ib, chunk))
         except Exception as exc:  # pragma: no cover - network failures
             logger.warning(
-                "qualifyContracts chunk failed", extra={"size": len(chunk)}, exc_info=exc
+                "qualifyContracts chunk failed after retries", extra={"size": len(chunk)}, exc_info=exc
             )
             continue
 

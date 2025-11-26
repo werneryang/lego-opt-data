@@ -58,6 +58,97 @@ def _precheck_contract_caches(
     missing: list[str] = []
     invalid: list[str] = []
     cache_root = Path(cfg.paths.contracts_cache)
+    resolved_conids: dict[str, int] = {}
+    universe_path = Path(cfg.universe.file)
+
+    def _update_universe_file(path: Path, updates: dict[str, int]) -> None:
+        if not updates or not path.exists():
+            return
+        try:
+            lines = path.read_text(encoding="utf-8").splitlines()
+            new_lines: list[str] = []
+            seen: set[str] = set()
+            for line in lines:
+                stripped = line.strip()
+                if not stripped or stripped.startswith("#"):
+                    new_lines.append(line)
+                    continue
+                parts = line.split(",")
+                if not parts:
+                    new_lines.append(line)
+                    continue
+                sym = parts[0].strip().upper()
+                if sym in updates:
+                    new_lines.append(f"{sym},{updates[sym]}")
+                    seen.add(sym)
+                else:
+                    new_lines.append(line)
+            for sym, conid in updates.items():
+                if sym not in seen:
+                    new_lines.append(f"{sym},{conid}")
+            new_lines.append("") if new_lines and new_lines[-1] != "" else None
+            path.write_text("\n".join(new_lines), encoding="utf-8")
+            typer.echo(
+                f"[{prefix}] persisted conid updates for {', '.join(sorted(updates))} -> {path}"
+            )
+        except Exception as exc:  # pragma: no cover - filesystem issues
+            typer.echo(f"[{prefix}] failed to persist conids to {path}: {exc}", err=True)
+
+    def resolve_underlying_conid(ib, sym: str, conid: int | None) -> int:
+        # Try to qualify the underlying to get a usable conid; prefer provided conid, fall back to
+        # stock on SMART, and for common indices try CBOE index routing.
+        from ib_insync import Stock, Index  # type: ignore
+
+        candidates = []
+        if conid:
+            candidates.append(Stock(sym, "SMART", "USD", conId=conid))
+        candidates.append(Stock(sym, "SMART", "USD"))
+        if sym.upper() in {"SPX", "NDX", "VIX"}:
+            candidates.append(Index(sym, "CBOE"))
+
+        errors: list[str] = []
+        for contract in candidates:
+            try:
+                qualified = ib.qualifyContracts(contract)
+                if qualified:
+                    return int(qualified[0].conId)
+            except Exception as exc:  # pragma: no cover - network/IB dependent
+                errors.append(str(exc))
+                continue
+            raise RuntimeError(f"unable to qualify underlying {sym}: {'; '.join(errors)}")
+
+    # Phase 1: ensure we have conids for all symbols (persist even if later steps fail)
+    symbols_needing_conid = [
+        sym for sym in symbols_for_run if not entries_by_symbol.get(sym) or not entries_by_symbol[sym].conid
+    ]
+    if symbols_needing_conid:
+        session = IBSession(
+            host=cfg.ib.host,
+            port=cfg.ib.port,
+            client_id=cfg.ib.client_id,
+            market_data_type=cfg.ib.market_data_type,
+        )
+        with session as sess:
+            ib = sess.ensure_connected()
+            for sym in symbols_needing_conid:
+                entry = entries_by_symbol.get(sym)
+                existing_conid = entry.conid if entry else None
+                try:
+                    resolved_conid = resolve_underlying_conid(ib, sym, existing_conid)
+                    if not existing_conid:
+                        typer.echo(
+                            f"[{prefix}] resolved underlying {sym} conid={resolved_conid} (secType auto)"
+                        )
+                    resolved_conids[sym] = resolved_conid
+                    if entry is not None:
+                        entry.conid = resolved_conid
+                    else:
+                        entries_by_symbol[sym] = UniverseEntry(symbol=sym, conid=resolved_conid)
+                except Exception as exc:  # pragma: no cover - runtime dependent
+                    typer.echo(f"[{prefix}] failed to resolve conid for {sym}: {exc}", err=True)
+                    invalid.append(sym)
+        if resolved_conids:
+            _update_universe_file(universe_path, resolved_conids)
 
     def check_cache(sym: str) -> tuple[str | None, str | None]:
         cache_file = cache_path(cache_root, sym, trade_date.isoformat())
@@ -85,14 +176,35 @@ def _precheck_contract_caches(
                 entry = entries_by_symbol.get(sym)
                 conid = entry.conid if entry else None
                 try:
-                    ref_price = fetch_underlying_close(ib, sym, trade_date, conid)
+                    resolved_conid = resolve_underlying_conid(ib, sym, conid)
+                    if not conid:
+                        typer.echo(
+                            f"[{prefix}] resolved underlying {sym} conid={resolved_conid} (secType auto)"
+                        )
+                        resolved_conids[sym] = resolved_conid
+                        if entry is not None:
+                            entry.conid = resolved_conid
+                    try:
+                        ref_price = fetch_underlying_close(ib, sym, trade_date, resolved_conid)
+                    except Exception:
+                        # Fallback to live snapshot price if HMDS is empty
+                        from ib_insync import Stock  # type: ignore
+
+                        contract = Stock(sym, "SMART", "USD", conId=resolved_conid)
+                        ticker = ib.reqMktData(contract, "", True, False)
+                        ib.sleep(1.0)
+                        ref_price = ticker.marketPrice()
+                        if ref_price is None or ref_price <= 0:
+                            raise RuntimeError(
+                                f"failed to fetch reference price for {sym} via market data fallback"
+                            )
                     discover_contracts_for_symbol(
                         sess,
                         sym,
                         trade_date,
                         ref_price,
                         cfg,
-                        underlying_conid=conid,
+                        underlying_conid=resolved_conid,
                         force_refresh=False,
                         allow_rebuild=True,
                         acquire_token=None,
@@ -770,7 +882,6 @@ def close_snapshot(
         None, "--symbols", help="Comma separated symbols (defaults to full universe)"
     ),
     config: Optional[str] = typer.Option(None, help="Path to config TOML"),
-    force_refresh: bool = typer.Option(False, help="Force refresh contract discovery cache"),
     build_missing_cache: bool = typer.Option(
         True,
         "--build-missing-cache/--fail-on-missing-cache",
@@ -807,7 +918,18 @@ def close_snapshot(
         prefix="close-snapshot",
     )
 
-    runner = SnapshotRunner(cfg, snapshot_grace_seconds=cfg.cli.snapshot_grace_seconds)
+    session_factory = lambda: IBSession(  # force delayed/replay data for EOD capture
+        host=cfg.ib.host,
+        port=cfg.ib.port,
+        client_id=cfg.ib.client_id,
+        market_data_type=2,
+    )
+
+    runner = SnapshotRunner(
+        cfg,
+        snapshot_grace_seconds=cfg.cli.snapshot_grace_seconds,
+        session_factory=session_factory,
+    )
     slots = runner.available_slots(trade_date)
     if not slots:
         typer.echo(f"[close-snapshot] no slots available for {trade_date}", err=True)
@@ -816,7 +938,7 @@ def close_snapshot(
 
     typer.echo(
         f"[close-snapshot] date={trade_date} slot={close_slot.label} "
-        f"symbols={symbol_list or 'ALL'} force_refresh={force_refresh}"
+        f"symbols={symbol_list or 'ALL'}"
     )
 
     def progress_cb(symbol: str, status: str, extra: Dict[str, Any]) -> None:
@@ -832,7 +954,6 @@ def close_snapshot(
             trade_date,
             close_slot,
             symbol_list,
-            force_refresh=force_refresh,
             progress=progress_cb,
         )
     except ValueError as exc:

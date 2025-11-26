@@ -56,11 +56,11 @@
 
 ## 扩容策略与门槛
 - **阶段 0：AAPL（基线）**
-  - 连续 5 个交易日通过自检：槽位覆盖率 ≥90%、`rollup_strategy` 回退率 ≤5%、延迟行情占比 <10%、`missing_oi` 补齐率 ≥95%。
+  - 最近连续 2 个交易日通过自检/日志（2025-11-18、2025-11-19）：槽位覆盖率 ≥90%、`rollup_strategy` 回退率 ≤5%、延迟行情占比 <10%、`missing_oi` 补齐率 ≥95%。
   - 无 pacing violation 或仅出现 1 次且定位明确；`errors_YYYYMMDD.log` 中无未处理异常。
-  - 保持默认限速：`snapshot per_minute=30`、`max_concurrent_snapshots=10`。
+  - 保持默认限速：`snapshot per_minute=30`、`max_concurrent_snapshots=10`，扩容前需强调缩短 burn-in 带来的波动风险。
 - **阶段 1：AAPL + MSFT（双标的）**
-  - 阶段 0 指标稳定后扩容，并继续运行满 5 个交易日；若槽位覆盖率跌破 88% 或 pacing 告警 >2 次，回退调优。
+  - 阶段 0（2-day gate）完成后即可扩容，扩容后前 3 个交易日重点监控；若槽位覆盖率跌破 88% 或 pacing 告警 >2 次，回退调优或暂缓并发提升。
   - 令牌桶调整：`snapshot per_minute=45`，视 Gateway 负载将并发提升至 12；宽限与重试策略保持。
   - Runbook 需补充并发调节、Gateway session 健康检查与故障切换步骤。
 - **阶段 2：Top 10（按 `config/universe.csv` 前十权重）**
@@ -80,7 +80,8 @@
 - M3：macOS 与 Linux 调度均可自动运行；限速/告警齐备；周度 compaction 生成目标大小文件；延迟行情降级路径验证。
 - M4：≥50 标的连续运行一周、槽位覆盖率 ≥90%、无 pacing 违规；文档/Runbook 更新完成，Linux 试运行验收通过。
 
-## 进展快照（2025-11-01）
+## 进展快照（2025-11-19 更新）
+- 2025-11-18/19 selfcheck 与 logscan 全部 PASS（AAPL），记作 2-day gate 完成，输出位于 `state_test/run_logs/selfcheck/selfcheck_20251118.json`、`selfcheck_20251119.json` 与对应 summary。
 - 实现 snapshot 模式设计确认：槽位模型、实时行情默认值、rollup 回退策略、OI enrichment 流程、存储/QA 原则达成共识。
 - 现有回填骨架与清洗管道将在 M1 重构为 snapshot + rollup 流程；配置与 CLI 拟新增 `snapshot`/`rollup`/`enrichment` 子命令。
 - 测试基线（`make install && make test`）已通过；接下来按新方案更新数据契约、Runbook、配置，并完成单标的冒烟。
@@ -96,4 +97,4 @@
   - 执行一次 AAPL 冒烟（测试目录）：`snapshot` → `rollup` → `enrichment` → `qa/selfcheck`，记录指标文件路径。
 - **依赖 & 风险同步**
   - 确认 IB 实时行情权限；若仅延迟权限，验证 `delayed_fallback` 标记链路。
-  - 为后续 AAPL→AAPL+MSFT 扩容准备材料（近 5 个交易日 QA/selfcheck 与 `logscan` 摘要）。
+  - 为后续 AAPL→AAPL+MSFT 扩容准备材料（近 2 个交易日 QA/selfcheck 与 `logscan` 摘要）。

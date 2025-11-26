@@ -137,6 +137,7 @@ def test_snapshot_runner_writes_intraday_partition(tmp_path):
     assert done[2]["contracts"] == 2
     assert done[2]["result"] == "success"
     assert done[2]["elapsed_seconds"] >= 0
+    assert "start_time_et" in done[2] and "end_time_et" in done[2]
 
 
 def test_resolve_slot_defaults_to_next(tmp_path):

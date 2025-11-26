@@ -36,7 +36,7 @@ def _cfg(tmp_path: Path) -> AppConfig:
         ),
         universe=UniverseConfig(file=tmp_path / "universe.csv", refresh_days=30),
         reference=ReferenceConfig(corporate_actions=tmp_path / "actions.csv"),
-        filters=FiltersConfig(moneyness_pct=0.3, expiry_types=["monthly", "quarterly"]),
+        filters=FiltersConfig(moneyness_pct=0.3, expiry_types=["monthly", "quarterly"], expiry_months_ahead=None),
         rate_limits=RateLimitsConfig(
             discovery=RateLimitClassConfig(per_minute=5, burst=5),
             snapshot=RateLimitClassConfig(per_minute=20, burst=10, max_concurrent=4),

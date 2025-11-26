@@ -25,6 +25,7 @@ from ..util.calendar import get_trading_session
 from ..ib.snapshot import collect_option_snapshots
 from .backfill import fetch_underlying_close
 from .cleaning import CleaningPipeline
+from ..observability import MetricsCollector, AlertManager
 
 logger = logging.getLogger(__name__)
 
@@ -213,6 +214,10 @@ class SnapshotRunner:
                 refill_per_minute=cfg.rate_limits.snapshot.per_minute,
             ),
         }
+        
+        # Observability
+        self.metrics = MetricsCollector(cfg.observability.metrics_db_path)
+        self.alerts = AlertManager(cfg.observability.webhook_url)
 
     def available_slots(self, trade_date: date) -> list[SnapshotSlot]:
         return _slot_schedule(trade_date, self.cfg.timezone.name, self._slot_minutes)
@@ -319,6 +324,7 @@ class SnapshotRunner:
             for entry in entries:
                 symbol = entry.symbol
                 started_at = time.monotonic()
+                started_wall = datetime.now(self._tz)
                 result_label = "success"
                 rows_count = 0
                 contracts_count = 0
@@ -344,6 +350,7 @@ class SnapshotRunner:
                             self.cfg,
                             underlying_conid=entry.conid,
                             force_refresh=force_refresh,
+                            allow_rebuild=True,  # Allow cache rebuild on missing contracts
                             # discovery phase uses batch qualification; no app-level throttling
                             acquire_token=None,
                         )
@@ -352,6 +359,23 @@ class SnapshotRunner:
                         emit(symbol, "skip", {"reason": "contracts_failed"})
                         result_label = "contracts_failed"
                         continue
+
+                    # Drop any contracts missing conids to avoid IB error 200 spam
+                    valid_contracts = [c for c in contracts if c.get("conid")]
+                    dropped = len(contracts) - len(valid_contracts)
+                    if dropped:
+                        record_error(
+                            symbol,
+                            "contracts",
+                            None,
+                            {"reason": "missing_conid", "dropped": dropped},
+                        )
+                        emit(
+                            symbol,
+                            "contracts_filtered",
+                            {"dropped": dropped, "kept": len(valid_contracts)},
+                        )
+                    contracts = valid_contracts
 
                     if not contracts:
                         emit(symbol, "no_contracts", {"reference_price": reference_price})
@@ -394,6 +418,7 @@ class SnapshotRunner:
                     result_label = "success"
                 finally:
                     elapsed = round(time.monotonic() - started_at, 3)
+                    end_wall = datetime.now(self._tz)
                     emit(
                         symbol,
                         "done",
@@ -402,6 +427,8 @@ class SnapshotRunner:
                             "contracts": contracts_count,
                             "rows": rows_count,
                             "result": result_label,
+                            "start_time_et": started_wall.isoformat(),
+                            "end_time_et": end_wall.isoformat(),
                         },
                     )
 
@@ -645,6 +672,8 @@ class SnapshotRunner:
                 poll_interval=poll_interval,
                 acquire_token=acquire_token,
                 require_greeks=require_greeks,
+                metrics=self.metrics,
+                alerts=self.alerts,
             )
             if rows:
                 return rows

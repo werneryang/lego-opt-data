@@ -25,6 +25,26 @@ If you prefer `uv` or another package manager, adapt the commands accordingly; t
 - `src/opt_data/` – primary Python package with runtime code
 - `tests/` – pytest-based test suite and fixtures
 - `data/` – optional folder (ignored by git) for local/raw datasets
+- `docs/` – documentation including developer guides and troubleshooting
+
+## Features
+
+### Robust Error Handling
+- **Automatic Retry**: Network errors and connection issues are automatically retried with exponential backoff
+- **Error Tracking**: All errors are flagged with `snapshot_error=True` and detailed error messages
+- **Graceful Degradation**: Rollup pipeline filters out error rows automatically
+
+### Performance Monitoring
+- **Operation Timing**: Key operations are automatically timed and logged
+- **Performance Logs**: Check `run-logs/` for detailed performance metrics
+- **Resource Tracking**: Monitor data collection efficiency
+
+### Enhanced Logging
+- **Structured Logging**: Consistent log format across all modules
+- **Context Tracking**: Trade dates, symbols, and operation IDs in all logs
+- **Debug Support**: Enable detailed logging for troubleshooting
+
+See [docs/troubleshooting.md](docs/troubleshooting.md) for common issues and solutions.
 
 ## Next steps
 

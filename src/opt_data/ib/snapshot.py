@@ -5,6 +5,9 @@ import logging
 import math
 from typing import Any, Callable, Dict, List, Optional, Sequence
 
+from opt_data.util.performance import log_performance
+from opt_data.util.log_context import LogContext
+
 logger = logging.getLogger(__name__)
 
 DEFAULT_GENERIC_TICKS = "100,101,104,105,106,165,221,225,233,293,294,295"
@@ -12,6 +15,7 @@ DEFAULT_TIMEOUT = 12.0  # seconds
 DEFAULT_POLL_INTERVAL = 0.25
 
 
+@log_performance(logger, "collect_option_snapshots")
 def collect_option_snapshots(
     ib: Any,
     contracts: Sequence[Dict[str, Any]],
@@ -21,26 +25,56 @@ def collect_option_snapshots(
     poll_interval: float = DEFAULT_POLL_INTERVAL,
     acquire_token: Optional[Callable[[], None]] = None,
     require_greeks: bool = True,
-    concurrency: int = 40,  # New parameter: max concurrent requests
+    concurrency: int = 40,
+    metrics: Optional[Any] = None,
+    alerts: Optional[Any] = None,
 ) -> List[Dict[str, Any]]:
     """
     Collect option snapshots concurrently using asyncio.
+    
+    Args:
+        ib: Interactive Brokers connection object
+        contracts: Sequence of contract dictionaries to fetch data for
+        generic_ticks: Comma-separated list of generic tick types
+        timeout: Maximum time to wait for each contract's data (seconds)
+        poll_interval: How often to check if data is ready (seconds)
+        acquire_token: Optional rate-limiting callback
+        require_greeks: Whether to require Greeks data for completion
+        concurrency: Maximum number of concurrent requests
+        
+    Returns:
+        List of dictionaries containing market data for each contract.
+        Failed contracts will have error information in the result.
+        
+    Raises:
+        RuntimeError: If ib.run() fails catastrophically
     """
-    # If the loop is already running (e.g. in a notebook or existing async context),
-    # we should use it. Otherwise, run_until_complete.
-    # For CLI usage, ib.run() is typically used to bridge sync/async.
-    return ib.run(
-        _collect_async(
-            ib,
-            contracts,
-            generic_ticks=generic_ticks,
-            timeout=timeout,
-            poll_interval=poll_interval,
-            acquire_token=acquire_token,
-            require_greeks=require_greeks,
-            concurrency=concurrency,
+    try:
+        # If the loop is already running (e.g. in a notebook or existing async context),
+        # we should use it. Otherwise, run_until_complete.
+        # For CLI usage, ib.run() is typically used to bridge sync/async.
+        return ib.run(
+            _collect_async(
+                ib,
+                contracts,
+                generic_ticks=generic_ticks,
+                timeout=timeout,
+                poll_interval=poll_interval,
+                acquire_token=acquire_token,
+                require_greeks=require_greeks,
+                concurrency=concurrency,
+                metrics=metrics,
+                alerts=alerts,
+            )
         )
-    )
+    except Exception as e:
+        logger.exception(
+            f"Critical error in collect_option_snapshots: {type(e).__name__}: {e}"
+        )
+        # Re-raise as RuntimeError to signal that the entire collection failed
+        raise RuntimeError(
+            f"Failed to collect option snapshots: {type(e).__name__}: {e}"
+        ) from e
 
 
 async def _collect_async(
@@ -53,6 +87,8 @@ async def _collect_async(
     acquire_token: Optional[Callable[[], None]],
     require_greeks: bool,
     concurrency: int,
+    metrics: Optional[Any],
+    alerts: Optional[Any],
 ) -> List[Dict[str, Any]]:
     """Async implementation of the snapshot collection logic."""
     from ib_insync import Option  # type: ignore
@@ -90,57 +126,195 @@ async def _collect_async(
     results: List[Dict[str, Any]] = []
     sem = asyncio.Semaphore(concurrency)
 
+    def _build_error_row(
+        info: Dict[str, Any],
+        error_type: str,
+        error_message: str,
+    ) -> Dict[str, Any]:
+        """Build an error row when data collection fails for a contract."""
+        return {
+            **info,
+            "bid": None,
+            "ask": None,
+            "mid": None,
+            "last": None,
+            "open": None,
+            "high": None,
+            "low": None,
+            "close": None,
+            "bid_size": None,
+            "ask_size": None,
+            "last_size": None,
+            "volume": None,
+            "vwap": None,
+            "iv": None,
+            "delta": None,
+            "gamma": None,
+            "theta": None,
+            "vega": None,
+            "market_data_type": None,
+            "asof": None,
+            "open_interest": None,
+            "price_ready": False,
+            "greeks_ready": False,
+            "snapshot_timed_out": False,
+            "snapshot_error": True,
+            "error_type": error_type,
+            "error_message": error_message,
+        }
+
     async def fetch_one(opt: Any) -> Dict[str, Any]:
+        """Fetch market data for a single option contract with comprehensive error handling."""
+        ticker = None
+        error_occurred = False
+        loop = asyncio.get_running_loop()
+        start_time = loop.time()
+        
         async with sem:
-            # Rate limiting hook
-            if acquire_token:
-                # Note: acquire_token is likely sync, so we call it directly.
-                # If it blocks, it blocks the loop, but usually it's a fast token bucket check.
-                acquire_token()
+            try:
+                # Rate limiting hook
+                if acquire_token:
+                    try:
+                        # Note: acquire_token is likely sync, so we call it directly.
+                        # If it blocks, it blocks the loop, but usually it's a fast token bucket check.
+                        acquire_token()
+                    except Exception as e:
+                        logger.warning(
+                            f"Rate limit acquisition failed for {opt.symbol} "
+                            f"{opt.strike} {opt.right}: {e}"
+                        )
+                        # Continue anyway - rate limit failure shouldn't block data collection
 
-            # Subscribe
-            ticker = ib.reqMktData(opt, genericTickList=generic_ticks, snapshot=False)
-            
-            # Wait for data
-            loop = asyncio.get_running_loop()
-            start_time = loop.time()
-            while (loop.time() - start_time) < timeout:
-                price_ready = _has_price(ticker)
-                greeks_ready = _has_greeks(ticker)
+                # Subscribe to market data
+                try:
+                    ticker = ib.reqMktData(opt, genericTickList=generic_ticks, snapshot=False)
+                except Exception as e:
+                    logger.error(
+                        f"Failed to subscribe to market data for {opt.symbol} "
+                        f"{opt.strike} {opt.right}: {type(e).__name__}: {e}"
+                    )
+                    return _build_error_row(
+                        opt._origin_info,
+                        error_type="subscription_failed",
+                        error_message=f"{type(e).__name__}: {str(e)}"
+                    )
                 
-                if price_ready and (not require_greeks or greeks_ready):
-                    break
+                # Wait for data with timeout
+                try:
+                    loop = asyncio.get_running_loop()
+                    start_time = loop.time()
+                    
+                    while (loop.time() - start_time) < timeout:
+                        price_ready = _has_price(ticker)
+                        greeks_ready = _has_greeks(ticker)
+                        
+                        if price_ready and (not require_greeks or greeks_ready):
+                            break
+                        
+                        await asyncio.sleep(poll_interval)
+                    
+                except asyncio.TimeoutError as e:
+                    logger.warning(
+                        f"Timeout waiting for data: {opt.symbol} "
+                        f"{opt.strike} {opt.right}"
+                    )
+                    return _build_error_row(
+                        opt._origin_info,
+                        error_type="timeout",
+                        error_message=f"Data not ready after {timeout}s"
+                    )
+                    error_occurred = True
+                    return result
+                except asyncio.CancelledError:
+                    logger.info(
+                        f"Data collection cancelled for {opt.symbol} "
+                        f"{opt.strike} {opt.right}"
+                    )
+                    raise  # Re-raise to allow proper cancellation handling
+                except Exception as e:
+                    logger.error(
+                        f"Unexpected error while waiting for data: {opt.symbol} "
+                        f"{opt.strike} {opt.right}: {type(e).__name__}: {e}"
+                    )
+                    return _build_error_row(
+                        opt._origin_info,
+                        error_type="data_collection_error",
+                        error_message=f"{type(e).__name__}: {str(e)}"
+                    )
+
+                # Check final state and build result
+                try:
+                    price_ready = _has_price(ticker)
+                    greeks_ready = _has_greeks(ticker)
+                    timed_out = not (price_ready and (not require_greeks or greeks_ready))
+
+                    row = _build_row(
+                        opt._origin_info,
+                        ticker,
+                        price_ready=price_ready,
+                        greeks_ready=greeks_ready,
+                        timed_out=timed_out,
+                    )
+                    return row
+                    
+                except Exception as e:
+                    logger.error(
+                        f"Error building result row for {opt.symbol} "
+                        f"{opt.strike} {opt.right}: {type(e).__name__}: {e}"
+                    )
+                    return _build_error_row(
+                        opt._origin_info,
+                        error_type="row_building_error",
+                        error_message=f"{type(e).__name__}: {str(e)}"
+                    )
+                    
+            except Exception as e:
+                # Catch-all for any unexpected errors
+                logger.exception(
+                    f"Unexpected error in fetch_one for {opt.symbol} "
+                    f"{opt.strike} {opt.right}: {type(e).__name__}: {e}"
+                )
+                error_occurred = True
+                return _build_error_row(
+                    opt._origin_info,
+                    error_type="unexpected_error",
+                    error_message=f"{type(e).__name__}: {str(e)}"
+                )
                 
-                await asyncio.sleep(poll_interval)
+            finally:
+                duration = (loop.time() - start_time) * 1000
+                if metrics:
+                    tags = {"symbol": opt.symbol, "exchange": opt.exchange}
+                    metrics.timing("snapshot.fetch.duration", duration, tags)
+                    metrics.count("snapshot.fetch.total", 1, tags)
+                    if error_occurred:
+                        metrics.count("snapshot.fetch.error", 1, tags)
+                    else:
+                        metrics.count("snapshot.fetch.success", 1, tags)
 
-            # Check final state
-            price_ready = _has_price(ticker)
-            greeks_ready = _has_greeks(ticker)
-            timed_out = not (price_ready and (not require_greeks or greeks_ready))
-
-            # Build result
-            row = _build_row(
-                opt._origin_info,
-                ticker,
-                price_ready=price_ready,
-                greeks_ready=greeks_ready,
-                timed_out=timed_out,
-            )
-
-            # Unsubscribe
-            # We use cancelMktData to stop the stream.
-            # Note: In a high-throughput scenario, we might want to just let them expire 
-            # or batch cancel, but explicit cancel is safer for memory.
-            ib.cancelMktData(opt)
-            
-            return row
+                # Always unsubscribe to prevent resource leaks
+                # We use cancelMktData to stop the stream.
+                if ticker is not None:
+                    try:
+                        ib.cancelMktData(opt)
+                    except Exception as e:
+                        # Log but don't raise - cleanup failure shouldn't break the flow
+                        logger.warning(
+                            f"Failed to cancel market data for {opt.symbol} "
+                            f"{opt.strike} {opt.right}: {type(e).__name__}: {e}"
+                        )
 
     # 2. Run all tasks
     # asyncio.gather will run them concurrently, limited by the Semaphore.
     tasks = [fetch_one(opt) for opt in option_objs]
     if tasks:
-        batch_results = await asyncio.gather(*tasks)
-        results.extend(batch_results)
+        try:
+            batch_results = await asyncio.gather(*tasks, return_exceptions=False)
+            results.extend(batch_results)
+        except Exception as e:
+            logger.error(f"Error in gather operation: {type(e).__name__}: {e}")
+            # If gather fails entirely, we still want to return partial results if any
+            # In this case, we log the error but don't crash
 
     return results
 
@@ -227,6 +401,9 @@ def _build_row(
         "price_ready": price_ready,
         "greeks_ready": greeks_ready,
         "snapshot_timed_out": timed_out,
+        "snapshot_error": timed_out,  # Mark timeout as error per requirements
+        "error_type": "timeout" if timed_out else None,
+        "error_message": "Data not ready" if timed_out else None,
     }
 
     row.update(_parse_rt_volume(getattr(ticker, "rtVolume", "")))

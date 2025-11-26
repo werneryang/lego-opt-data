@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import logging
 import uuid
 from collections import Counter
 from dataclasses import dataclass
@@ -14,7 +15,14 @@ import ast
 from ..config import AppConfig
 from ..storage.layout import partition_for
 from ..storage.writer import ParquetWriter
+from ..util.performance import log_performance
+from ..util.memory import optimize_dataframe_dtypes
+from ..quality import OptionMarketDataSchema, detect_anomalies, generate_quality_report
 from .cleaning import CleaningPipeline
+from ..observability import MetricsCollector, AlertManager
+import pandera as pa
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass
@@ -44,7 +52,12 @@ class RollupRunner:
         self._cleaner = cleaner or CleaningPipeline.create(cfg)
         self._close_slot = close_slot
         self._fallback_slot = fallback_slot
+        
+        # Observability
+        self.metrics = MetricsCollector(cfg.observability.metrics_db_path)
+        self.alerts = AlertManager(cfg.observability.webhook_url)
 
+    @log_performance(logger, "rollup")
     def run(
         self,
         trade_date: date,
@@ -63,9 +76,47 @@ class RollupRunner:
 
         intraday_df, read_errors = self._load_intraday(trade_date)
         for err in read_errors:
-            err.update({"component": "rollup", "stage": "read_intraday"})
-            errors.append(err)
-            _write_error_line(error_file, err)
+            payload = {
+                "component": "rollup",
+                "stage": "load_intraday",
+                "message": f"Failed to read parquet: {err['file']}: {err['error']}",
+            }
+            errors.append(payload)
+            _write_error_line(error_file, payload)
+
+        if intraday_df.empty:
+            return RollupResult(
+                ingest_id=ingest_id,
+                trade_date=trade_date,
+                rows_written=0,
+                symbols_processed=0,
+                strategy_counts=dict(strategy_counter),
+                daily_clean_paths=daily_clean_paths,
+                daily_adjusted_paths=daily_adjusted_paths,
+                errors=errors,
+            )
+
+        # Ensure underlying column exists (backfill produces 'symbol')
+        if "symbol" in intraday_df.columns and "underlying" not in intraday_df.columns:
+            intraday_df["underlying"] = intraday_df["symbol"]
+        
+        if "underlying" not in intraday_df.columns:
+            # If we still don't have 'underlying', we can't proceed
+            logger.error("Missing 'underlying' column in intraday data")
+            return RollupResult(
+                ingest_id=ingest_id,
+                trade_date=trade_date,
+                rows_written=0,
+                symbols_processed=0,
+                strategy_counts=dict(strategy_counter),
+                daily_clean_paths=daily_clean_paths,
+                daily_adjusted_paths=daily_adjusted_paths,
+                errors=errors,
+            )
+
+        # Ensure asof_ts exists (snapshot produces 'asof')
+        if "asof_ts" not in intraday_df.columns and "asof" in intraday_df.columns:
+            intraday_df["asof_ts"] = pd.to_datetime(intraday_df["asof"], errors="coerce")
 
         if symbols:
             wanted = {sym.upper() for sym in symbols}
@@ -84,6 +135,15 @@ class RollupRunner:
                 errors.append(payload)
                 _write_error_line(error_file, payload)
             intraday_df = intraday_df[intraday_df["underlying"].str.upper().isin(wanted)]
+
+        # Filter out snapshot errors (e.g. timeouts, subscription failures)
+        if "snapshot_error" in intraday_df.columns:
+            error_mask = intraday_df["snapshot_error"].fillna(False).astype(bool)
+            error_count = error_mask.sum()
+            if error_count > 0:
+                logger.warning(f"Filtering {error_count} error rows from rollup input")
+                # Log a sample of errors if needed, or just filter
+                intraday_df = intraday_df[~error_mask]
 
         if intraday_df.empty:
             return RollupResult(
@@ -124,6 +184,43 @@ class RollupRunner:
             selected["asof_ts"], utc=True, errors="coerce"
         ).dt.tz_convert(None)
 
+        # --- Data Quality Checks ---
+        logger.info("Running data quality checks...")
+        
+        # 1. Anomaly Detection
+        anomaly_flags = detect_anomalies(selected)
+        
+        # Merge new flags with existing flags
+        # Both are lists of strings
+        selected["data_quality_flag"] = [
+            list(set(existing + new))
+            for existing, new in zip(selected["data_quality_flag"], anomaly_flags)
+        ]
+        
+        # 2. Schema Validation
+        schema_errors = []
+        try:
+            OptionMarketDataSchema.validate(selected, lazy=True)
+        except pa.errors.SchemaErrors as err:
+            logger.warning(f"Schema validation failed with {len(err.failure_cases)} errors")
+            # Convert failure cases to readable strings
+            for _, row in err.failure_cases.head(10).iterrows():
+                schema_errors.append(f"{row['column']}: {row['check']} failed for value {row['failure_case']}")
+            if len(err.failure_cases) > 10:
+                schema_errors.append(f"... and {len(err.failure_cases) - 10} more")
+        except Exception as e:
+            logger.warning(f"Schema validation error: {e}")
+
+        # 3. Generate and Save Report
+        try:
+            report = generate_quality_report(selected, trade_date, schema_errors)
+            report_dir = Path(self.cfg.paths.clean) / "reports" / "quality"
+            report_path = report.save(report_dir)
+            logger.info(f"Quality report generated: {report_path}")
+        except Exception as e:
+            logger.error(f"Failed to generate quality report: {e}")
+        # ---------------------------
+
         cols_to_drop = ["sample_time", "sample_time_et", "slot_30m", "first_seen_slot"]
         cleaned = selected.drop(columns=[c for c in cols_to_drop if c in selected.columns])
 
@@ -150,6 +247,19 @@ class RollupRunner:
                 progress(underlying, "write_daily_adjusted", {"rows": len(group)})
 
         symbols_processed = cleaned["underlying"].nunique()
+        
+        # Record metrics
+        self.metrics.count("rollup.run.total", 1)
+        self.metrics.count("rollup.rows_written", rows_written)
+        self.metrics.count("rollup.symbols_processed", symbols_processed)
+        if errors:
+            self.metrics.count("rollup.errors", len(errors))
+            self.alerts.send_alert(
+                "Rollup Errors", 
+                f"Rollup encountered {len(errors)} errors for {trade_date}", 
+                level="warning"
+            )
+
         return RollupResult(
             ingest_id=ingest_id,
             trade_date=trade_date,
@@ -182,6 +292,10 @@ class RollupRunner:
         if not frames:
             return pd.DataFrame(), errors
         df = pd.concat(frames, ignore_index=True)
+        
+        # Optimize memory usage by downcasting data types
+        df = optimize_dataframe_dtypes(df, verbose=False)
+        
         return df, errors
 
     def _select_rows(self, df: pd.DataFrame) -> tuple[pd.DataFrame, Counter[str]]:

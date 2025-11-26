@@ -4,7 +4,7 @@ from __future__ import annotations
 import argparse
 import json
 from dataclasses import dataclass
-from datetime import date
+from datetime import date, datetime
 from pathlib import Path
 from typing import Dict, Iterable, List, Sequence, Set
 
@@ -12,13 +12,18 @@ import pandas as pd
 
 from opt_data.config import load_config
 from opt_data.pipeline.snapshot import SnapshotRunner
+from opt_data.util.calendar import to_et_date
 
 
 def _parse_date(value: str) -> date:
+    normalized = value.strip().lower()
+    if normalized == "today":
+        # Use ET trading date for consistency with main CLI commands
+        return to_et_date(datetime.utcnow())
     try:
         return date.fromisoformat(value)
     except ValueError as exc:  # pragma: no cover - arg validation
-        raise argparse.ArgumentTypeError("expected YYYY-MM-DD") from exc
+        raise argparse.ArgumentTypeError("expected YYYY-MM-DD or 'today'") from exc
 
 
 def _parse_symbols(value: str | None) -> set[str] | None:
@@ -326,7 +331,12 @@ def main() -> None:
     parser = argparse.ArgumentParser(
         description="Inspect artifacts produced by `python -m opt_data.cli schedule`."
     )
-    parser.add_argument("--date", required=True, type=_parse_date, help="Trade date YYYY-MM-DD")
+    parser.add_argument(
+        "--date",
+        type=_parse_date,
+        default=None,
+        help="Trade date YYYY-MM-DD or 'today' (ET). Defaults to today.",
+    )
     parser.add_argument("--config", default=None, help="Path to config TOML (defaults to project)")
     parser.add_argument(
         "--symbols",
@@ -347,18 +357,19 @@ def main() -> None:
     )
     args = parser.parse_args()
 
+    trade_date = args.date or to_et_date(datetime.utcnow())
     symbols = _parse_symbols(args.symbols)
     if args.snapshot_interval_minutes <= 0:
         parser.error("--snapshot-interval-minutes must be positive")
 
     cfg = load_config(Path(args.config) if args.config else None)
     snapshot_runner = SnapshotRunner(cfg, slot_minutes=args.snapshot_interval_minutes)
-    expected_slots = snapshot_runner.available_slots(args.date)
-    _print_header(args.date, symbols, args.snapshot_interval_minutes)
+    expected_slots = snapshot_runner.available_slots(trade_date)
+    _print_header(trade_date, symbols, args.snapshot_interval_minutes)
     _print_expected_slots(expected_slots)
 
     snapshot_dir = Path(cfg.paths.run_logs) / "snapshot"
-    summaries = _summarize_snapshot_logs(snapshot_dir, args.date, symbols)
+    summaries = _summarize_snapshot_logs(snapshot_dir, trade_date, symbols)
     _print_log_summary(summaries)
 
     index_to_label = {slot.index: slot.label for slot in expected_slots}
@@ -369,19 +380,19 @@ def main() -> None:
         print("  " + ", ".join(missing))
 
     raw_root = Path(cfg.paths.raw)
-    raw_partitions = _summarize_partitions(raw_root, args.date, symbols)
+    raw_partitions = _summarize_partitions(raw_root, trade_date, symbols)
     _print_partition_summary(raw_partitions, index_to_label)
 
     _print_slot_analysis(expected_slots, summaries, raw_partitions)
 
-    error_path = Path(cfg.paths.run_logs) / "errors" / f"errors_{args.date:%Y%m%d}.log"
+    error_path = Path(cfg.paths.run_logs) / "errors" / f"errors_{trade_date:%Y%m%d}.log"
     errors = _load_json_lines(error_path, symbols=symbols)
     _print_errors(errors, args.max_errors)
 
     daily_clean_root = Path(cfg.paths.clean) / "view=daily_clean"
     daily_adjusted_root = Path(cfg.paths.clean) / "view=daily_adjusted"
-    daily_clean = _summarize_daily_view(daily_clean_root, args.date, symbols)
-    daily_adjusted = _summarize_daily_view(daily_adjusted_root, args.date, symbols)
+    daily_clean = _summarize_daily_view(daily_clean_root, trade_date, symbols)
+    daily_adjusted = _summarize_daily_view(daily_adjusted_root, trade_date, symbols)
     _print_daily_summary("Daily clean", daily_clean, index_to_label)
     _print_daily_summary("Daily adjusted", daily_adjusted, index_to_label)
     _print_enrichment_stats(daily_clean)

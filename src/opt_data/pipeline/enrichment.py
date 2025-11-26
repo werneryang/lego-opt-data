@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import logging
 import uuid
 from collections import defaultdict
 from dataclasses import dataclass
@@ -15,8 +16,11 @@ from ..config import AppConfig
 from ..storage.layout import partition_for
 from ..storage.writer import ParquetWriter
 from ..util.ratelimit import TokenBucket
+from ..util.performance import log_performance
 from .cleaning import CleaningPipeline
 from ..ib.session import IBSession
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass
@@ -69,6 +73,7 @@ class EnrichmentRunner:
             refill_per_minute=cfg.rate_limits.historical.per_minute,
         )
 
+    @log_performance(logger, "enrichment")
     def run(
         self,
         trade_date: date,
@@ -324,6 +329,9 @@ class EnrichmentRunner:
         ib: Any,
         row: pd.Series,
         trade_date: date,
+        *,
+        duration: str | None = None,
+        use_rth: bool | None = None,
     ) -> tuple[int | float, date] | None:
         """Fetch previous-day OI via real-time tick 101 on T+1.
 

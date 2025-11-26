@@ -20,6 +20,7 @@ from opt_data.config import (
     StorageConfig,
     TimezoneConfig,
     UniverseConfig,
+    ObservabilityConfig,
 )
 
 
@@ -64,6 +65,7 @@ def build_config(tmp_path: Path) -> AppConfig:
             max_file_size_mb=256,
         ),
         logging=LoggingConfig(level="INFO", format="json"),
+        observability=ObservabilityConfig(metrics_db_path=tmp_path / "data/metrics.db"),
         cli=CLIConfig(
             default_generic_ticks="100,101,104,105,106,165,221,225,233,293,294,295",
             snapshot_grace_seconds=120,

@@ -91,19 +91,16 @@ def fetch_underlying_close(
         contract = Stock(symbol, "SMART", "USD")
     ib.qualifyContracts(contract)
 
-    end_dt = f"{trade_date.strftime('%Y%m%d')} 23:59:59"
-    bars = ib.reqHistoricalData(
-        contract,
-        endDateTime=end_dt,
-        durationStr="1 D",
-        barSizeSetting="1 day",
-        whatToShow="TRADES",
-        useRTH=False,
-        formatDate=1,
-    )
-    if not bars:
-        raise RuntimeError(f"No historical data returned for {symbol} on {trade_date}")
-    return float(bars[-1].close)
+    # Prefer live/delayed snapshot to avoid HMDS dependency; take marketPrice() with bid/ask fallback.
+    ticker = ib.reqMktData(contract, "", True, False)
+    ib.sleep(1.0)
+    price = ticker.marketPrice()
+    if price is None or price <= 0:
+        candidates = [ticker.last, ticker.close, ticker.bid, ticker.ask]
+        price = next((p for p in candidates if p is not None and p > 0), None)
+    if price is None or price <= 0:
+        raise RuntimeError(f"No market price returned for {symbol}")
+    return float(price)
 
 
 def fetch_option_snapshots(

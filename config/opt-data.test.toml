@@ -25,17 +25,18 @@ refresh_days = 30
 corporate_actions = "config/corporate_actions.csv"
 
 [filters]
-moneyness_pct = 0.30
+moneyness_pct = 0.25
 expiry_types = ["monthly"]
+expiry_months_ahead = 12
 
 [rate_limits.discovery]
 per_minute = 5
 burst = 5
 
 [rate_limits.snapshot]
-per_minute = 10
-burst = 5
-max_concurrent = 2
+per_minute = 45
+burst = 12
+max_concurrent = 12
 
 [rate_limits.historical]
 per_minute = 10
@@ -65,7 +66,7 @@ duration = "1 D"
 bar_size = "1 day"
 what_to_show = "TRADES,MIDPOINT"
 use_rth = true
-max_strikes_per_expiry = 3
+max_strikes_per_expiry = 0
 fill_missing_greeks_with_zero = false
 historical_timeout = 30
 
@@ -76,7 +77,7 @@ default_generic_ticks = "100,101,104,105,106,165,221,225,233,293,294,295"
 exchange = "SMART"
 fallback_exchanges = ["CBOE", "CBOEOPT"]
 generic_ticks = "100,101,104,105,106,165,221,225,233,293,294,295"
-strikes_per_side = 2
+strikes_per_side = 0
 subscription_timeout_sec = 12.0
 subscription_poll_interval = 0.25
 require_greeks = true

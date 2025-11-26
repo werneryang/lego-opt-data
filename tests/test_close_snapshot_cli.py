@@ -23,9 +23,10 @@ def test_close_snapshot_uses_last_slot(monkeypatch, tmp_path):
             self.label = label
 
     class DummyRunner:
-        def __init__(self, cfg, snapshot_grace_seconds=None) -> None:  # type: ignore[no-untyped-def]
+        def __init__(self, cfg, snapshot_grace_seconds=None, session_factory=None, **_) -> None:  # type: ignore[no-untyped-def]
             captured["cfg"] = cfg
             captured["grace"] = snapshot_grace_seconds
+            captured["session_factory"] = session_factory
 
         def available_slots(self, td):  # type: ignore[no-untyped-def]
             captured["requested_date"] = td
@@ -36,7 +37,6 @@ def test_close_snapshot_uses_last_slot(monkeypatch, tmp_path):
                 "trade_date": trade_date,
                 "slot_label": slot.label,
                 "symbols": symbols,
-                "force_refresh": force_refresh,
             }
             if progress:
                 progress("AAPL", "start", {"rows": 1})
@@ -50,9 +50,8 @@ def test_close_snapshot_uses_last_slot(monkeypatch, tmp_path):
 
     monkeypatch.setattr("opt_data.cli.load_config", lambda path=None: config)
     monkeypatch.setattr("opt_data.cli.SnapshotRunner", DummyRunner)
-    monkeypatch.setattr(
-        "opt_data.cli._precheck_contract_caches",
-        lambda cfg, td, symbols, entries_by_symbol, build_missing_cache, prefix: precheck_calls.append(
+    def fake_precheck(cfg, td, symbols, entries_by_symbol, build_missing_cache, prefix):
+        precheck_calls.append(
             {
                 "cfg": cfg,
                 "td": td,
@@ -61,8 +60,10 @@ def test_close_snapshot_uses_last_slot(monkeypatch, tmp_path):
                 "build": build_missing_cache,
                 "prefix": prefix,
             }
-        ),
-    )
+        )
+        return None
+
+    monkeypatch.setattr("opt_data.cli._precheck_contract_caches", fake_precheck)
 
     result = RUNNER.invoke(
         app,
@@ -74,7 +75,6 @@ def test_close_snapshot_uses_last_slot(monkeypatch, tmp_path):
             "AAPL,MSFT",
             "--config",
             "ignored",
-            "--force-refresh",
         ],
     )
 
@@ -83,6 +83,6 @@ def test_close_snapshot_uses_last_slot(monkeypatch, tmp_path):
     assert "[close-snapshot:start] slot=16:00 AAPL rows=1" in result.output
     assert captured["run"]["slot_label"] == "16:00"
     assert captured["run"]["symbols"] == ["AAPL", "MSFT"]
-    assert captured["run"]["force_refresh"] is True
     assert precheck_calls and precheck_calls[0]["symbols"] == ["AAPL", "MSFT"]
     assert precheck_calls[0]["prefix"] == "close-snapshot"
+    assert captured["session_factory"] is not None

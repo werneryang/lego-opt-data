@@ -3,6 +3,11 @@ from __future__ import annotations
 import asyncio
 from dataclasses import dataclass
 from typing import Optional
+import logging
+
+from opt_data.util.retry import retry_with_backoff
+
+logger = logging.getLogger(__name__)
 
 _IB_CLASS = None
 
@@ -35,15 +40,23 @@ class IBSession:
 
     ib: Optional[object] = None
 
+    @retry_with_backoff(
+        max_attempts=3,
+        initial_delay=2.0,
+        retriable_exceptions=(ConnectionError, TimeoutError, OSError),
+    )
     def connect(self) -> None:
+        """Connect to IB Gateway/TWS with automatic retry on connection failures."""
         _ensure_thread_event_loop()
         IB = _get_ib_class()
-
+        
         if self.ib is None:
             self.ib = IB()
         if not getattr(self.ib, "isConnected", lambda: False)():
+            logger.info(f"Connecting to IB Gateway at {self.host}:{self.port}")
             self.ib.connect(self.host, self.port, clientId=self.client_id)
             self.ib.reqMarketDataType(self.market_data_type)
+            logger.info(f"Successfully connected to IB Gateway")
 
     def ensure_connected(self) -> object:
         self.connect()
