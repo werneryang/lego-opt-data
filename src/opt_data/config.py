@@ -585,6 +585,7 @@ def load_config(file: Optional[Path] = None) -> AppConfig:
         storage=storage,
         compaction=compaction,
         logging=logging,
+        observability=observability,
         cli=cli,
         snapshot=snapshot_cfg,
         enrichment=enrichment,
