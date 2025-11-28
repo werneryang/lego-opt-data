@@ -219,6 +219,21 @@ class SnapshotRunner:
         self.metrics = MetricsCollector(cfg.observability.metrics_db_path)
         self.alerts = AlertManager(cfg.observability.webhook_url)
 
+    def _is_after_hours(self, trade_date: date | None = None) -> bool:
+        """Check if current time is after regular trading hours (4:00 PM ET)."""
+        now = self._now_fn()
+        if trade_date is None:
+            trade_date = now.date()
+        
+        try:
+            session = get_trading_session(trade_date)
+            # Consider after-hours if past market close
+            return now >= session.market_close
+        except Exception as e:
+            # If we can't determine trading session, assume not after-hours
+            logger.warning(f"Could not determine trading session: {e}")
+            return False
+
     def available_slots(self, trade_date: date) -> list[SnapshotSlot]:
         return _slot_schedule(trade_date, self.cfg.timezone.name, self._slot_minutes)
 
@@ -656,6 +671,17 @@ class SnapshotRunner:
         )
         require_greeks = self._snapshot_cfg.require_greeks if self._snapshot_cfg else True
 
+        # Determine market data type based on configuration and time
+        market_data_type = None
+        if self._snapshot_cfg and self._snapshot_cfg.force_frozen_data:
+            # Force frozen if configured
+            market_data_type = 2  # Frozen
+            logger.info("Using frozen data (market_data_type=2) per configuration")
+        elif self._is_after_hours():
+            # Automatically use frozen during after-hours
+            market_data_type = 2  # Frozen
+            logger.info("Using frozen data (market_data_type=2) for after-hours")
+
         for rank, exchange in enumerate(preferences):
             subset = self._filter_by_exchange(contracts, exchange)
             if not subset:
@@ -672,6 +698,10 @@ class SnapshotRunner:
                 poll_interval=poll_interval,
                 acquire_token=acquire_token,
                 require_greeks=require_greeks,
+                concurrency=self.cfg.rate_limits.snapshot.max_concurrent,
+                market_data_type=market_data_type,
+                mode=self.cfg.snapshot.fetch_mode,
+                batch_size=self.cfg.snapshot.batch_size,
                 metrics=self.metrics,
                 alerts=self.alerts,
             )

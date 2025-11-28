@@ -121,6 +121,9 @@ class SnapshotConfig:
     subscription_timeout: float
     subscription_poll_interval: float
     require_greeks: bool
+    force_frozen_data: bool = False
+    fetch_mode: str = "streaming"
+    batch_size: int = 50
 
 
 @dataclass
@@ -305,6 +308,18 @@ class AppConfig:
             errors.append(
                 f"Invalid snapshot.subscription_poll_interval: "
                 f"{self.snapshot.subscription_poll_interval} (must be > 0)"
+            )
+        
+        valid_fetch_modes = {"streaming", "snapshot", "reqtickers"}
+        if self.snapshot.fetch_mode not in valid_fetch_modes:
+            errors.append(
+                f"Invalid snapshot.fetch_mode: {self.snapshot.fetch_mode}. "
+                f"Valid modes: {valid_fetch_modes}"
+            )
+        
+        if self.snapshot.batch_size <= 0:
+            errors.append(
+                f"Invalid snapshot.batch_size: {self.snapshot.batch_size} (must be > 0)"
             )
 
         # Validate CLI configuration
@@ -538,6 +553,9 @@ def load_config(file: Optional[Path] = None) -> AppConfig:
         subscription_timeout=float(g("snapshot", "subscription_timeout_sec", 12.0)),
         subscription_poll_interval=float(g("snapshot", "subscription_poll_interval", 0.25)),
         require_greeks=bool(g("snapshot", "require_greeks", True)),
+        force_frozen_data=bool(g("snapshot", "force_frozen_data", False)),
+        fetch_mode=g("snapshot", "fetch_mode", "streaming"),
+        batch_size=int(g("snapshot", "batch_size", 50)),
     )
 
     enrichment_fields_raw = g("enrichment", "fields", ["open_interest"])

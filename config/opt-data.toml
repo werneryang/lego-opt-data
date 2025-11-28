@@ -5,7 +5,7 @@
 host = "127.0.0.1"
 port = 7496          # TWS 默认端口；如使用其他端口请在此调整
 client_id = 101
-market_data_type = 2 # 1=实时, 2=冻结, 3=延迟, 4=延迟冻结
+market_data_type = 1 # 1=实时（推荐用于 enrichment）, 2=冻结, 3=延迟, 4=延迟冻结
 
 [timezone]
 name = "America/New_York"
@@ -35,9 +35,14 @@ per_minute = 5
 burst = 5
 
 [rate_limits.snapshot]
-per_minute = 20
-burst = 10
-max_concurrent = 4
+# Rate limit configuration for snapshot collection
+# - per_minute: Maximum API calls per minute (token bucket refill rate)
+# - burst: Initial tokens available (handles bursts without waiting)
+# - max_concurrent: Maximum concurrent async tasks (should align with capacity)
+# Recommendation: Adjust these together after monitoring snapshot.token_wait.duration
+per_minute = 60
+burst = 20
+max_concurrent = 15
 
 [rate_limits.historical]
 per_minute = 20
@@ -85,6 +90,13 @@ strikes_per_side = 50
 subscription_timeout_sec = 30.0
 subscription_poll_interval = 0.25
 require_greeks = true
+# Market data type: 1=live, 2=frozen, 3=delayed, 4=delayed-frozen
+# Use frozen (2) for after-hours to get last available snapshot
+force_frozen_data = false  # If true, always use frozen regardless of trading hours
+# Fetch mode: streaming (legacy), snapshot (incompatible with Greeks), reqtickers (fastest, recommended)
+# Performance: reqtickers is 35% faster than streaming with 100% Greeks completeness
+fetch_mode = "reqtickers"  # Options: streaming, snapshot, reqtickers
+batch_size = 50  # For reqtickers mode: number of contracts per batch
 
 [enrichment]
 fields = ["open_interest"]
@@ -96,3 +108,7 @@ slot_coverage_threshold = 0.90
 delayed_ratio_threshold = 0.10
 rollup_fallback_threshold = 0.05
 oi_enrichment_threshold = 0.95
+
+[observability]
+metrics_db_path = "state/metrics.db"
+webhook_url = ""  # Optional: Webhook URL for alerts

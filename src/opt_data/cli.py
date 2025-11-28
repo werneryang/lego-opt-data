@@ -802,6 +802,11 @@ def snapshot(
     poll_interval: Optional[float] = typer.Option(
         None, "--poll-interval", help="Per-option subscription poll interval seconds"
     ),
+    snapshot_mode: Optional[str] = typer.Option(
+        None,
+        "--snapshot-mode",
+        help="Override snapshot fetch mode (streaming/snapshot/reqtickers)",
+    ),
 ) -> None:
     cfg = load_config(Path(config) if config else None)
     snapshot_cfg = getattr(cfg, "snapshot", None)
@@ -820,6 +825,12 @@ def snapshot(
             snapshot_cfg.subscription_timeout = float(timeout)
         if poll_interval and poll_interval > 0:
             snapshot_cfg.subscription_poll_interval = float(poll_interval)
+        if snapshot_mode:
+            mode_normalized = snapshot_mode.strip().lower()
+            if mode_normalized not in {"streaming", "snapshot", "reqtickers"}:
+                typer.echo(f"Invalid --snapshot-mode: {snapshot_mode}. Valid: streaming, snapshot, reqtickers", err=True)
+                raise typer.Exit(code=2)
+            snapshot_cfg.fetch_mode = mode_normalized
     elif ticks:
         cfg.cli.default_generic_ticks = ticks
     trade_date = (

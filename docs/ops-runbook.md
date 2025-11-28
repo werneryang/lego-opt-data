@@ -26,7 +26,7 @@
    - `TZ=America/New_York`（统一调度时区）
 6. 复制正式配置至测试版：`cp config/opt-data.toml config/opt-data.test.toml`，并将 `paths.raw/clean/state/contracts_cache/run_logs` 指向 `data_test/`、`state_test/`。
 7. 核对核心配置：
-   - `[acquisition] mode="snapshot"`、`market_data_type=1`、`allow_fallback_to_delayed=true`
+   - `[acquisition] mode="snapshot"`、`market_data_type=1`（默认实时，enrichment 必需）、`allow_fallback_to_delayed=true`
    - `slot_grace_seconds=120`、`rate_limits.snapshot.per_minute=30`、`max_concurrent_snapshots=10`
    - `[discovery] policy="session_freeze"`、`pre_open_time="09:25"`；若启用增量刷新，设 `midday_refresh_enabled=true` 且仅新增合约，并依赖已存在的当日缓存（不刷新/重建已有合约，发现缺失需先修复缓存再开启增量）
    - `intraday_retain_days=60`、`weekly_compaction_enabled=true`、`same_day_compaction_enabled=false`
@@ -46,8 +46,13 @@
   - `python -m opt_data.cli close-snapshot --date 2025-11-24 --symbols AAPL,MSFT --config config/opt-data.test.toml`（仅采集当日收盘槽，默认 16:00/早收盘取实际最后槽；运行前会预检并自动重建缺失/空的 contracts cache，可用 `--fail-on-missing-cache` 禁用自动重建；不提供/不支持 `--force-refresh`）
   - 收盘快照请设置 `IB_MARKET_DATA_TYPE=2`（盘后/回放模式，便于收盘后读取当日数据），命令内部也会强制 `reqMarketDataType(2)`；盘中快照/调度则按配置 `ib.market_data_type`（默认 1 实时，如需延迟改为 3/4）。
 - 日终归档：`python -m opt_data.cli rollup --date 2025-09-29 --config config/opt-data.test.toml`
-- OI 回补：`python -m opt_data.cli enrichment --date 2025-09-29 --fields open_interest --config config/opt-data.test.toml`（T+1 通过 `reqMktData` + tick `101` 读取上一交易日收盘 OI）
+- OI 回补：`python -m opt_data.cli enrichment --date 2025-09-29 --fields open_interest --config config/opt-data.test.toml`（T+1 通过 `reqMktData` + tick `101` 读取上一交易日收盘 OI；**注意**：enrichment 需要 `market_data_type=1`（实时数据）才能成功获取 OI，否则 tick-101 方法会失败并降级到历史数据方法，而历史数据方法会被 IBKR 拒绝）
 - 存储维护：`make compact`（周度合并）、`python -m opt_data.cli retention --view intraday --older-than 60`
+- **Console UI（Web 控制台）**：`streamlit run src/opt_data/dashboard/app.py` 或 `.venv/bin/streamlit run src/opt_data/dashboard/app.py`
+  - 在浏览器访问 http://localhost:8501
+  - **Overview 标签**：查看系统指标、快照活动趋势、延迟分布、最近错误
+  - **Console 标签**：数据状态面板、盘中快照控制、EOD 操作（收盘快照、Rollup、Enrichment）、错误日志查看
+  - **注意**：Console UI 使用独立的 client ID (200-250 范围)，不会与 CLI 进程冲突；UI 操作为同步执行，长时间操作会阻塞界面
 
 > 若 CLI 尚未提供对应子命令，可调用等价脚本；命令命名需与实现同步。
 
@@ -88,7 +93,8 @@
 - 早收盘：timer 触发脚本需检查日历并自行跳过闭市后的槽位。
 
 ## 限速与重试
-- 令牌桶配置：`rate_limits.discovery.per_minute=5`、`rate_limits.snapshot.per_minute=30`、`max_concurrent_snapshots=10`（放量后调优）。
+- 令牌桶配置：`rate_limits.snapshot.per_minute=30`、`max_concurrent_snapshots=10`（放量后调优）。
+  - *注*：发现阶段（Discovery）不再施加应用层限速，完全依赖 IB Pacing。
 - Pacing violation 处理：
   - 首次等待 30s，随后指数退避 `60s → 120s → 240s`；
   - 超过阈值后将槽位加入补采队列，标记 `slot_retry_exceeded`。
@@ -153,7 +159,7 @@
 
 ## IBKR 期权链拉取最佳实践（AAPL/SPX）
 
-以下经验来自 AAPL/SMART 成功拿到期权链报价与 Greeks 的实测，供采集器与回填脚本优先参考。
+以下经验来自 AAPL/SMART 成功拿到期权链报价与 Greeks 的实测，供采集器与内部诊断脚本参考。
 
 **核心配置**
 - 端口与会话
