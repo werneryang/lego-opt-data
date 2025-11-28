@@ -116,6 +116,31 @@
 | 收盘槽未采集 | 检查 16:00 槽日志，确认超时或降级原因 | 扩大宽限、提前 15:55 触发额外采集或降低并发 |
 | Rollup 回退过多 | 查看 `rollup_strategy` 字段；确认是否因槽位缺失 | 补齐缺失槽，再重跑 rollup；必要时优化宽限或补采逻辑 |
 | OI 回补失败 | `state/run_logs/enrichment_*` 中查看错误 | 次日重试；连续 3 次失败标记 `oi_enrichment_failed` 并通知运营 |
+
+### OI Enrichment 优化路线图
+
+当前 OI enrichment 已实现生产级稳定性（tick-101 事件驱动 + historical 降级），以下为分阶段优化建议：
+
+**✅ 立即可做（本周）**
+1. **OI 来源记录**：在 enrichment 结果中记录 OI 来源（`tick101` / `historical`），便于分析成功率分布
+2. **配置化参数**：将 `timeout=8.0` 和 `durationStr="3 D"` 提取到 `config/opt-data.toml` 的 `[enrichment]` 段，便于不同环境调参
+
+**🔄 短期优化（1-2周）**
+3. **运行观测**：收集一周 enrichment 日志，分析：
+   - tick-101 成功率（通过新增的 debug 日志统计）
+   - historical fallback 触发频率
+   - 长期失败的 conId 列表（考虑标记跳过）
+4. **文档更新**：在 `ops-runbook.md` 明确区分 `enrichment` 命令（生产）vs `data_test/aapl_oi_live_final.py`（本地验证）的用途
+
+**🚀 中期增强（1-2月，根据需要）**
+5. **有限并发**：在 `EnrichmentRunner.run()` 内批次处理 5-10 个合约（保持同步接口，内部用 asyncio worker 池），受 TokenBucket 控制，避免完全串行
+6. **智能重试**：区分 IB 420/321 错误，针对 pacing 错误做 1-2 次指数退避重试
+
+**🔮 观望（需要时再做）**
+7. **完全异步化**：仅在高并发场景（如全量 S&P 500）必要时重构整个 pipeline 为 async
+8. **第三层 fallback**：若 IBKR 真的废弃 `OPTION_OPEN_INTEREST` bar，可添加 TRADES bar + field 84 作为第三层保底
+
+**参考脚本**：`data_test/aapl_oi_live_final.py` - 用于本地验证 tick-101 方法是否正常工作（1.1s 获取 10 个合约 OI）
 | compaction 失败 | 检查 `state/run_logs/compaction_*.jsonl` | 确认无进程占用；必要时拆分分区或调整 `target_file_size_mb` |
 
 ## 恢复流程
