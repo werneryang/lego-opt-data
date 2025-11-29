@@ -34,6 +34,8 @@ class EnrichmentResult:
     daily_adjusted_paths: list[Path]
     enrichment_paths: list[Path]
     errors: list[dict[str, Any]]
+    oi_stats: dict[str, int] | None = None
+    oi_diffs: list[dict[str, Any]] | None = None
 
 
 def _default_session_factory(cfg: AppConfig) -> IBSession:
@@ -80,6 +82,7 @@ class EnrichmentRunner:
         symbols: Sequence[str] | None = None,
         *,
         fields: Sequence[str] | None = None,
+        force_overwrite: bool = False,
         progress: callable[[str, str, Dict[str, Any]], None] | None = None,
     ) -> EnrichmentResult:
         ingest_id = uuid.uuid4().hex
@@ -88,6 +91,10 @@ class EnrichmentRunner:
         daily_clean_paths: list[Path] = []
         daily_adjusted_paths: list[Path] = []
         enrichment_paths: list[Path] = []
+        
+        # Stats for overwrite comparison
+        oi_stats = {"filled_from_missing": 0, "same": 0, "changed": 0}
+        oi_diffs: list[dict[str, Any]] = []
 
         requested_fields = self._normalize_fields(fields)
         if not requested_fields:
@@ -142,7 +149,7 @@ class EnrichmentRunner:
                 if wanted and underlying not in wanted:
                     continue
 
-                mask = df.apply(_needs_open_interest, axis=1)
+                mask = df.apply(lambda r: _needs_open_interest(r, force_overwrite=force_overwrite), axis=1)
                 considered = int(mask.sum())
                 if considered == 0:
                     continue
@@ -177,12 +184,41 @@ class EnrichmentRunner:
                         continue
 
                     oi_value, asof_date = fetch_result
+                    
+                    # Comparison logic
+                    old_oi = row.get("open_interest")
+                    if pd.isna(old_oi):
+                        oi_stats["filled_from_missing"] += 1
+                    else:
+                        try:
+                            # Compare as integers for safety, though they are floats
+                            if int(float(old_oi)) == int(float(oi_value)):
+                                oi_stats["same"] += 1
+                            else:
+                                oi_stats["changed"] += 1
+                                if len(oi_diffs) < 100:  # Limit diffs size
+                                    oi_diffs.append({
+                                        "underlying": underlying,
+                                        "conid": conid,
+                                        "expiry": row.get("expiry"),
+                                        "right": row.get("right"),
+                                        "strike": row.get("strike"),
+                                        "old_oi": old_oi,
+                                        "new_oi": oi_value,
+                                        "old_asof": row.get("oi_asof_date"),
+                                        "new_asof": asof_date,
+                                    })
+                        except Exception:
+                            # Fallback if conversion fails
+                            oi_stats["changed"] += 1
+
                     df.at[idx, "open_interest"] = oi_value
                     df.at[idx, "oi_asof_date"] = pd.Timestamp(asof_date)
                     df.at[idx, "ingest_id"] = ingest_id
                     df.at[idx, "ingest_run_type"] = "enrichment"
                     df.at[idx, "data_quality_flag"] = _flags_after_success(
-                        row.get("data_quality_flag")
+                        row.get("data_quality_flag"),
+                        was_overwritten=force_overwrite and pd.notna(row.get("open_interest"))
                     )
                     updated_here += 1
                     total_updated += 1
@@ -287,6 +323,8 @@ class EnrichmentRunner:
             daily_adjusted_paths=daily_adjusted_paths,
             enrichment_paths=enrichment_paths,
             errors=errors,
+            oi_stats=oi_stats,
+            oi_diffs=oi_diffs,
         )
 
     def _normalize_fields(self, fields: Sequence[str] | None) -> tuple[str, ...]:
@@ -466,7 +504,9 @@ class EnrichmentRunner:
         return None
 
 
-def _needs_open_interest(row: pd.Series) -> bool:
+def _needs_open_interest(row: pd.Series, force_overwrite: bool = False) -> bool:
+    if force_overwrite:
+        return True
     oi = row.get("open_interest")
     if pd.isna(oi):
         return True
@@ -474,12 +514,14 @@ def _needs_open_interest(row: pd.Series) -> bool:
     return "missing_oi" in flags
 
 
-def _flags_after_success(value: Any) -> list[str]:
+def _flags_after_success(value: Any, was_overwritten: bool = False) -> list[str]:
     flags = _normalize_flags(value)
     if "missing_oi" in flags:
         flags.remove("missing_oi")
     if "oi_enriched" not in flags:
         flags.append("oi_enriched")
+    if was_overwritten and "oi_overwritten" not in flags:
+        flags.append("oi_overwritten")
     return flags
 
 

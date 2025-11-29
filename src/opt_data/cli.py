@@ -275,7 +275,7 @@ def backfill(
 
     def parse_date(value: str) -> date:
         if value == "today":
-            return to_et_date(datetime.utcnow())
+            return to_et_date(datetime.now(ZoneInfo("UTC")))
         try:
             return date.fromisoformat(value)
         except ValueError as exc:
@@ -681,7 +681,7 @@ def update(
     cfg.acquisition.mode = mode_normalized
 
     target_date = (
-        to_et_date(datetime.utcnow()) if date_arg == "today" else date.fromisoformat(date_arg)
+        to_et_date(datetime.now(ZoneInfo("UTC"))) if date_arg == "today" else date.fromisoformat(date_arg)
     )
 
     symbol_list = [s.strip().upper() for s in symbols.split(",")] if symbols else None
@@ -834,7 +834,7 @@ def snapshot(
     elif ticks:
         cfg.cli.default_generic_ticks = ticks
     trade_date = (
-        to_et_date(datetime.utcnow()) if date_str == "today" else date.fromisoformat(date_str)
+        to_et_date(datetime.now(ZoneInfo("UTC"))) if date_str == "today" else date.fromisoformat(date_str)
     )
     symbol_list = [s.strip().upper() for s in symbols.split(",") if s.strip()] if symbols else None
 
@@ -903,7 +903,7 @@ def close_snapshot(
 
     cfg = load_config(Path(config) if config else None)
     trade_date = (
-        to_et_date(datetime.utcnow()) if date_str == "today" else date.fromisoformat(date_str)
+        to_et_date(datetime.now(ZoneInfo("UTC"))) if date_str == "today" else date.fromisoformat(date_str)
     )
     symbol_list = [s.strip().upper() for s in symbols.split(",") if s.strip()] if symbols else None
 
@@ -1093,7 +1093,7 @@ def rollup(
 ) -> None:
     cfg = load_config(Path(config) if config else None)
     trade_date = (
-        to_et_date(datetime.utcnow()) if date_str == "today" else date.fromisoformat(date_str)
+        to_et_date(datetime.now(ZoneInfo("UTC"))) if date_str == "today" else date.fromisoformat(date_str)
     )
     symbol_list = [s.strip().upper() for s in symbols.split(",") if s.strip()] if symbols else None
 
@@ -1157,7 +1157,7 @@ def enrichment(
 ) -> None:
     cfg = load_config(Path(config) if config else None)
     trade_date = (
-        to_et_date(datetime.utcnow()) if date_str == "today" else date.fromisoformat(date_str)
+        to_et_date(datetime.now(ZoneInfo("UTC"))) if date_str == "today" else date.fromisoformat(date_str)
     )
     symbol_list = [s.strip().upper() for s in symbols.split(",") if s.strip()] if symbols else None
 
@@ -1259,7 +1259,7 @@ def schedule(
 ) -> None:
     cfg = load_config(Path(config) if config else None)
     trade_date = (
-        to_et_date(datetime.utcnow()) if date_str == "today" else date.fromisoformat(date_str)
+        to_et_date(datetime.now(ZoneInfo("UTC"))) if date_str == "today" else date.fromisoformat(date_str)
     )
     symbol_list = [s.strip().upper() for s in symbols.split(",") if s.strip()] if symbols else None
     fields = (
@@ -1422,7 +1422,7 @@ def qa(
 ) -> None:
     cfg = load_config(Path(config) if config else None)
     trade_date = (
-        to_et_date(datetime.utcnow()) if date_str == "today" else date.fromisoformat(date_str)
+        to_et_date(datetime.now(ZoneInfo("UTC"))) if date_str == "today" else date.fromisoformat(date_str)
     )
 
     calculator = QAMetricsCalculator(cfg)
@@ -1460,7 +1460,7 @@ def selfcheck(
 ) -> None:
     cfg = load_config(Path(config) if config else None)
     trade_date = (
-        to_et_date(datetime.utcnow()) if date_str == "today" else date.fromisoformat(date_str)
+        to_et_date(datetime.now(ZoneInfo("UTC"))) if date_str == "today" else date.fromisoformat(date_str)
     )
 
     qa_calc = QAMetricsCalculator(cfg)
@@ -1536,7 +1536,7 @@ def logscan(
 
     def parse_et(value: str) -> date:
         if value == "today":
-            return to_et_date(datetime.utcnow())
+            return to_et_date(datetime.now(ZoneInfo("UTC")))
         try:
             return date.fromisoformat(value)
         except ValueError as exc:  # pragma: no cover - CLI validation

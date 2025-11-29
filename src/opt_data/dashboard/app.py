@@ -12,6 +12,7 @@ import os
 from pathlib import Path
 from datetime import datetime, timedelta
 import pytz
+import pyarrow.dataset as ds
 
 # Opt-Data Imports
 from opt_data.config import load_config
@@ -90,6 +91,29 @@ def get_recent_errors(limit=50):
         df['ts'] = pd.to_datetime(df['ts'])
         df = df.sort_values('ts', ascending=False).head(limit)
     return df
+
+@st.cache_data(ttl=30)
+def load_parquet_data(path_str, filters=None, columns=None):
+    """Generic helper to load parquet data."""
+    try:
+        path = Path(path_str)
+        if not path.exists():
+            return pd.DataFrame()
+        
+        # Use pyarrow dataset for robust partitioned loading
+        # This handles schema evolution/mismatches better than pd.read_parquet(dir)
+        dataset = ds.dataset(path, partitioning="hive")
+        
+        # Apply columns projection if needed
+        # Note: filters in pyarrow dataset are expression based, simpler to load and filter in pandas for now
+        # unless dataset is huge. Given we load by date partition, it should be fine.
+        
+        table = dataset.to_table(columns=columns)
+        df = table.to_pandas()
+        return df
+    except Exception as e:
+        # st.warning(f"Failed to load data from {path_str}: {e}")
+        return pd.DataFrame()
 
 def render_overview_tab(df):
     st.header("🚀 System Status")
@@ -185,7 +209,8 @@ def render_console_tab():
     with col_date:
         # Default to today if trading day, else last trading day? 
         # For simplicity, default to today ET
-        today_et = to_et_date(datetime.utcnow())
+        # Use aware UTC to ensure correct conversion to ET
+        today_et = to_et_date(datetime.now(pytz.utc))
         selected_date = st.date_input("Trade Date", value=today_et)
         
     with col_date_btn:
@@ -193,9 +218,6 @@ def render_console_tab():
         st.write("") 
         c1, c2 = st.columns(2)
         if c1.button("Prev Trading Day"):
-            # This is a bit tricky in Streamlit to update the date_input widget directly without session state
-            # For now, just show a message or use session state if we want to be fancy.
-            # Let's stick to simple for MVP.
             st.info("Use date picker to select previous dates.")
         if c2.button("Today (ET)"):
             st.info(f"Today is {today_et}")
@@ -211,20 +233,15 @@ def render_console_tab():
     # 2. Data Status Panel
     st.subheader(f"Data Status: {selected_date}")
     
-    # Check data existence (Mock logic for now, or real check if possible)
-    # We can check directories
+    # Paths - CORRECTED to ib/chain
+    intraday_path = Path(f"data/clean/ib/chain/view=intraday/date={selected_date}")
+    daily_path = Path(f"data/clean/ib/chain/view=daily_clean/date={selected_date}")
+    enrich_path = Path(f"data/clean/ib/chain/view=enrichment/date={selected_date}")
     
-    # Intraday
-    intraday_path = Path(f"data/clean/option_chain/view=intraday/date={selected_date}")
     intraday_exists = intraday_path.exists()
     intraday_count = sum(1 for _ in intraday_path.glob("**/*.parquet")) if intraday_exists else 0
     
-    # Daily
-    daily_path = Path(f"data/clean/option_chain/view=daily_clean/date={selected_date}")
     daily_exists = daily_path.exists()
-    
-    # Enrichment
-    enrich_path = Path(f"data/clean/option_chain/view=enrichment/date={selected_date}")
     enrich_exists = enrich_path.exists()
 
     m1, m2, m3, m4 = st.columns(4)
@@ -358,14 +375,6 @@ def render_console_tab():
                 import random
                 unique_client_id = 200 + random.randint(0, 50)
                 
-                def dashboard_session_factory():
-                    return IBSession(
-                        host=run_cfg.ib.host,
-                        port=run_cfg.ib.port,
-                        client_id=unique_client_id,
-                        market_data_type=run_cfg.ib.market_data_type
-                    )
-                
                 # Resolve slots
                 sn_runner = SnapshotRunner(run_cfg)
                 slots_today = sn_runner.available_slots(selected_date)
@@ -375,7 +384,8 @@ def render_console_tab():
                 close_slot_idx = slots_today[-1].index
                 fallback_slot_idx = slots_today[-2].index if len(slots_today) >= 2 else slots_today[-1].index
                 
-                r_runner = RollupRunner(run_cfg, close_slot=close_slot_idx, fallback_slot=fallback_slot_idx, session_factory=dashboard_session_factory)
+                # RollupRunner doesn't need session_factory - it only processes already-captured data
+                r_runner = RollupRunner(run_cfg, close_slot=close_slot_idx, fallback_slot=fallback_slot_idx)
                 res = r_runner.run(selected_date, symbols=symbols_arg)
                 st_roll.success(f"Rollup Done. Written: {res.rows_written}")
             except Exception as e:
@@ -384,9 +394,13 @@ def render_console_tab():
     with eod_c3:
         st.markdown("**3. Enrichment (OI)**")
         st.caption("Fetch Open Interest (T+1).")
+        
+        # Overwrite option
+        allow_overwrite = st.checkbox("允许覆盖已有 OI（仅本日期）", value=False)
+        
         if st.button("Run Enrichment"):
             st_enr = st.empty()
-            st_enr.info("Running Enrichment...")
+            st_enr.info(f"Running Enrichment (Overwrite={allow_overwrite})...")
             try:
                 run_cfg = load_config(Path(selected_config))
                 
@@ -403,10 +417,189 @@ def render_console_tab():
                     )
                 
                 enr_runner = EnrichmentRunner(run_cfg, session_factory=dashboard_session_factory)
-                res = enr_runner.run(selected_date, symbols=symbols_arg)
+                res = enr_runner.run(selected_date, symbols=symbols_arg, force_overwrite=allow_overwrite)
+                
                 st_enr.success(f"Enrichment Done. Updated: {res.rows_updated}")
+                
+                if res.oi_stats:
+                    s = res.oi_stats
+                    st.markdown(f"""
+                    **Overwrite Stats:**
+                    - ✨ Filled (was missing): `{s.get('filled_from_missing', 0)}`
+                    - 🟢 Same (unchanged): `{s.get('same', 0)}`
+                    - 🔴 Changed: `{s.get('changed', 0)}`
+                    """)
+                    
+                    if res.oi_diffs:
+                        with st.expander(f"View Changed Items ({len(res.oi_diffs)})"):
+                            st.dataframe(pd.DataFrame(res.oi_diffs))
+                            
             except Exception as e:
                 st_enr.error(f"Failed: {e}")
+
+    st.divider()
+
+    # -------------------------------------------------------------------------
+    # 1. Close Snapshot View
+    # -------------------------------------------------------------------------
+    st.subheader("🏁 Close Snapshot Data")
+    
+    # Determine close slot
+    close_slot_val = None
+    try:
+        slots = runner.available_slots(selected_date)
+        if slots:
+            close_slot_val = slots[-1].index
+    except:
+        pass
+
+    if not close_slot_val:
+        st.warning("Could not determine close slot for this date.")
+    else:
+        # Load intraday data
+        # We need to filter by slot_30m == close_slot_val
+        # Since parquet partitioning is by date/underlying, we load and then filter
+        # Optimization: If we could push down filters to read_parquet, that would be better.
+        # But partition structure is date=.../underlying=...
+        # So we load the date partition and filter in memory (or use pyarrow filters if possible)
+        
+        # Columns to load
+        cols = [
+            'underlying', 'exchange', 'conid', 'expiry', 'right', 'strike', 
+            'bid', 'ask', 'mid', 'last', 'volume', 
+            'iv', 'delta', 'gamma', 'theta', 'vega', 
+            'market_data_type', 'sample_time', 'slot_30m', 
+            'snapshot_error', 'data_quality_flag'
+        ]
+        
+        if st.button("Refresh Close Data"):
+            st.cache_data.clear()
+            
+        df_close = load_parquet_data(str(intraday_path), columns=cols)
+        
+        if df_close.empty:
+            st.info("No intraday data found for this date.")
+        else:
+            # Filter for close slot
+            df_close_filtered = df_close[df_close['slot_30m'] == close_slot_val].copy()
+            
+            if symbols_arg:
+                df_close_filtered = df_close_filtered[df_close_filtered['underlying'].isin(symbols_arg)]
+            
+            if df_close_filtered.empty:
+                st.warning(f"No data found for close slot ({close_slot_val}). Please run Close Snapshot.")
+            else:
+                # Metrics
+                c1, c2, c3, c4 = st.columns(4)
+                c1.metric("Underlyings", f"{df_close_filtered['underlying'].nunique()}")
+                c2.metric("Contracts", f"{len(df_close_filtered)}")
+                
+                err_count = df_close_filtered['snapshot_error'].sum() if 'snapshot_error' in df_close_filtered.columns else 0
+                err_pct = (err_count / len(df_close_filtered) * 100) if len(df_close_filtered) > 0 else 0
+                c3.metric("Errors", f"{err_count} ({err_pct:.1f}%)")
+                
+                mdt_dist = df_close_filtered['market_data_type'].value_counts().to_dict()
+                c4.json(mdt_dist, expanded=False)
+                
+                st.dataframe(df_close_filtered, use_container_width=True)
+
+    st.divider()
+
+    # -------------------------------------------------------------------------
+    # 2. Daily Rollup View
+    # -------------------------------------------------------------------------
+    st.subheader("📦 Daily Rollup Data")
+    
+    if not daily_exists:
+        st.warning("Daily Rollup data does not exist. Please run Rollup.")
+    else:
+        cols_rollup = [
+            'trade_date', 'underlying', 'exchange', 'conid', 'expiry', 'right', 'strike', 
+            'underlying_close', 'bid', 'ask', 'mid', 'last', 'volume', 
+            'iv', 'delta', 'gamma', 'theta', 'vega', 
+            'rollup_strategy', 'rollup_source_slot', 'rollup_source_time', 'data_quality_flag'
+        ]
+        
+        df_rollup = load_parquet_data(str(daily_path), columns=cols_rollup)
+        
+        if df_rollup.empty:
+            st.info("Daily data file exists but is empty or unreadable.")
+        else:
+            if symbols_arg:
+                df_rollup = df_rollup[df_rollup['underlying'].isin(symbols_arg)]
+                
+            # Metrics
+            r1, r2, r3 = st.columns(3)
+            r1.metric("Contracts", f"{len(df_rollup)}")
+            
+            strat_dist = df_rollup['rollup_strategy'].value_counts().to_dict() if 'rollup_strategy' in df_rollup.columns else {}
+            r2.write("Strategy Dist:")
+            r2.json(strat_dist, expanded=False)
+            
+            # Flags
+            if 'data_quality_flag' in df_rollup.columns:
+                # Count occurrences of flags
+                # Assuming list or string? Usually list in pandas from parquet if array
+                # But might be stringified. Let's just show raw value counts for now or simple check
+                pass
+                
+            st.dataframe(df_rollup, use_container_width=True)
+
+    st.divider()
+
+    # -------------------------------------------------------------------------
+    # 3. OI Enrichment View (T+1)
+    # -------------------------------------------------------------------------
+    st.subheader("💰 OI Enrichment (T+1)")
+    
+    # Check if enrichment marker exists
+    if not enrich_exists:
+        st.warning("OI Enrichment has not been run (view=enrichment missing).")
+    else:
+        st.success("OI Enrichment executed.")
+        
+    # We load from daily_clean because enrichment updates daily_clean in place (or rather, creates a new version/overwrites)
+    # But wait, the user request says: "OI View displays daily_clean/date=D ... updated by enrichment"
+    # And also mentions "view=enrichment/date=D partition" as a status indicator.
+    
+    if not daily_exists:
+        st.error("Daily clean data missing, cannot show OI.")
+    else:
+        cols_oi = [
+            'underlying', 'exchange', 'conid', 'expiry', 'right', 'strike',
+            'underlying_close', 'bid', 'ask', 'mid', 'last', 'volume',
+            'open_interest', 'oi_asof_date', 'data_quality_flag'
+        ]
+        
+        if st.button("Refresh OI Data"):
+            st.cache_data.clear()
+            
+        df_oi = load_parquet_data(str(daily_path), columns=cols_oi)
+        
+        if symbols_arg:
+            df_oi = df_oi[df_oi['underlying'].isin(symbols_arg)]
+            
+        if not df_oi.empty:
+            # Metrics
+            oi1, oi2, oi3 = st.columns(3)
+            
+            # Rows with OI > 0
+            has_oi = df_oi[df_oi['open_interest'] > 0]
+            coverage = (len(has_oi) / len(df_oi) * 100) if len(df_oi) > 0 else 0
+            oi1.metric("OI Coverage (>0)", f"{coverage:.1f}%")
+            
+            # Missing OI flag
+            # Assuming data_quality_flag is a list or string. 
+            # If it's a list column in parquet, pandas reads as array.
+            # Let's try to handle it safely.
+            missing_count = 0
+            enriched_count = 0
+            
+            # Simple string check if it's string, or apply if list
+            # For performance, let's just sample or assume string for now if simple
+            # Or just don't calculate if complex
+            
+            st.dataframe(df_oi, use_container_width=True)
 
     st.divider()
     
