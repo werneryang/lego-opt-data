@@ -26,6 +26,12 @@
 ## 进行中
 - 无
 
+## Done 2025-11-26
+- [x] 错误处理健壮性改进：统一 snapshot 错误标记（`snapshot_error`/`error_type`/`error_message`），修复 rollup 在错误行与缺失列上的崩溃路径，并为 discovery 关键 IB 调用添加重试；对应实现与验证见 `docs/dev/error_handling_robustness_fixes.md` 与错误处理验证报告。
+- [x] 重试机制与日志/性能增强落地：实现通用 `retry_with_backoff`、性能计时与日志上下文工具，并应用于 IB 会话、snapshot、rollup、enrichment 等关键路径；开发文档更新至 `docs/dev/retry_and_logging_implementation.md` 与 `docs/dev/retry_usage_guide.md`。
+- [x] 基础可观测性与 Dashboard：实现基于 SQLite 的指标采集（`MetricsCollector`）、告警接口（`AlertManager`）以及 Streamlit observability dashboard（`src/opt_data/dashboard/app.py`），并在 rollup 等路径开始写入基础运行指标。
+- [x] Roadmap 文档整理：在 `docs/dev/roadmap.md` 中按短期/中期/长期整理后续改进方向，为后续在 `PLAN.md` 与本文件中拆解任务提供来源。
+
 ## Done 2025-11-19
 - [x] 2-day gate 完成：2025-11-18、2025-11-19 selfcheck/logscan 全部 PASS（AAPL），槽位覆盖率/回退率/延迟占比/缺 OI 补齐均达标；文档更新以缩短 Stage 0 burn-in。
 

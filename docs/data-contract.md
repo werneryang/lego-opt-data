@@ -51,6 +51,9 @@
 | `ingest_id` | `string` | 本次采集批次 ID | 否 | UUID |
 | `ingest_run_type` | `string` | 运行类型 | 否 | `intraday` / `eod_rollup` / `enrichment` |
 | `data_quality_flag` | `list<string>` | 数据质量标签 | 是 | 允许多个，如 `delayed_fallback` |
+| `snapshot_error` | `boolean` | 是否发生快照错误 | 是 | 默认为 False；同时也会在 `data_quality_flag` 中出现同名标记以便筛选 |
+| `error_type` | `string` | 错误类型 | 是 | 如 `timeout`, `subscription_failed` |
+| `error_message` | `string` | 详细错误信息 | 是 | |
 
 ### Intraday 专属字段（view=intraday）
 | 字段名 | 类型 | 描述 | 允许为空 | 备注 |

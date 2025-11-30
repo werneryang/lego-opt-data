@@ -1,13 +1,23 @@
 # opt-data
 
-A lightweight Python toolkit for loading, inspecting, and transforming options market datasets. The project starts with a clean scaffolding so you can plug in your data sources and analysis workflows quickly.
+A lightweight Python toolkit for loading, inspecting, and transforming options market datasets. The project uses a **Snapshot + Rollup** architecture to collect real-time option chains and archive them into daily views.
 
 ## Getting started
 
 1. Create a Python 3.11 virtual environment: `python3.11 -m venv .venv`
 2. Activate it and install dependencies: `source .venv/bin/activate` then `pip install -e .[dev]`
 3. Run the test suite: `pytest`
-4. Plan and execute a smoke backfill (using your isolated config): `python -m opt_data.cli backfill --start 2024-10-01 --symbols AAPL,MSFT --execute --config config/opt-data.test.toml`
+4. **Smoke Test (Snapshot + Rollup)**:
+   ```bash
+   # 1. Take a snapshot (using test config)
+   python -m opt_data.cli snapshot --date today --slot now --symbols AAPL --config config/opt-data.test.toml
+
+   # 2. Run end-of-day rollup (archives snapshots to daily view)
+   python -m opt_data.cli rollup --date today --symbols AAPL --config config/opt-data.test.toml
+   
+   # 3. Run enrichment (fills T+1 data like Open Interest)
+   python -m opt_data.cli enrichment --date today --symbols AAPL --config config/opt-data.test.toml
+   ```
 
 If you prefer `uv` or another package manager, adapt the commands accordingly; the project is configured via `pyproject.toml` and uses Hatch for builds.
 
@@ -25,6 +35,7 @@ If you prefer `uv` or another package manager, adapt the commands accordingly; t
 - `src/opt_data/` – primary Python package with runtime code
 - `tests/` – pytest-based test suite and fixtures
 - `data/` – optional folder (ignored by git) for local/raw datasets
+- `state/` – runtime state, logs, and checkpoints
 - `docs/` – documentation including developer guides and troubleshooting
 
 ## Features
@@ -36,7 +47,7 @@ If you prefer `uv` or another package manager, adapt the commands accordingly; t
 
 ### Performance Monitoring
 - **Operation Timing**: Key operations are automatically timed and logged
-- **Performance Logs**: Check `run-logs/` for detailed performance metrics
+- **Performance Logs**: Check `state/run_logs/` for detailed performance metrics
 - **Resource Tracking**: Monitor data collection efficiency
 
 ### Enhanced Logging
@@ -48,8 +59,7 @@ See [docs/troubleshooting.md](docs/troubleshooting.md) for common issues and sol
 
 ## Next steps
 
-- Implement data loaders or adapters under `src/opt_data`
-- Populate the `data/` directory with your local datasets (kept out of version control)
-- Extend the test suite to cover your transformations and calculations
-- Before running large backfills, create a copy of `config/opt-data.toml` (for example `config/opt-data.test.toml`) that points to isolated directories such as `data_test/` and `state_test/`, then run `python -m opt_data.cli backfill --start 2024-10-01 --symbols AAPL,MSFT --execute --config config/opt-data.test.toml` to perform a smoke validation.
-- The `[acquisition]` section of the config controls how data is fetched. Set `mode = "historical"` (default) to use `reqHistoricalData` bars for option chains, or switch to `mode = "snapshot"` if you have real-time permissions. `max_strikes_per_expiry` and other knobs allow you to tune request volume.
+- **Configuration**: Review `config/opt-data.toml` to adjust universe, rate limits, and storage paths.
+- **Scheduling**: Use `python -m opt_data.cli schedule` to generate or run daily jobs (Snapshot -> Rollup -> Enrichment).
+- **Expansion**: Follow the expansion plan in `PLAN.md` to gradually add symbols (AAPL -> MSFT -> Top 10 -> S&P 500).
+- **Monitoring**: Check `state/run_logs/errors/` for error summaries and `state/run_logs/metrics/` for QA reports.

@@ -14,9 +14,9 @@ This directory (`docs/dev/`) contains technical documentation for developers wor
 ## Additional Resources
 
 - [Troubleshooting Guide](../troubleshooting.md) - Common issues and solutions
-- [Error Handling Verification Report](../error-handling-verification-report.md) - Verification results from testing
-g-verification-guide.md) - 位于上级目录，指导如何验证系统的错误处理能力。
-- [错误处理验证报告](../error-handling-verification-report.md) - 2025-11-26 的验证测试结果。
+
+- [Error Handling Verification Guide](../error-handling-verification-guide.md) - Guide on how to verify error handling capabilities.
+- [Error Handling Verification Report](../error-handling-verification-report.md) - Verification results from 2025-11-26.
 
 ---
 

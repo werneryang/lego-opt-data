@@ -16,20 +16,21 @@
 
 **Solutions**:
 
-1. **Enable automatic cache rebuild** (Recommended):
+1. **Enable automatic cache rebuild** (Default behavior):
+   The snapshot command automatically attempts to rebuild missing caches unless `--fail-on-missing-cache` is used.
    ```bash
-   # The snapshot command now has allow_rebuild=True by default
    python -m opt_data.cli snapshot --date today --config config/opt-data.toml
    ```
 
-2. **Force refresh contract cache**:
+2. **Strict Mode (Fail on missing)**:
+   If you want to ensure no unexpected API calls are made for discovery:
    ```bash
-   python -m opt_data.cli snapshot --date today --force-refresh --config config/opt-data.toml
+   python -m opt_data.cli close-snapshot --date today --fail-on-missing-cache --config config/opt-data.toml
    ```
 
-3. **Pre-generate cache using backfill**:
+3. **Pre-generate cache using schedule**:
    ```bash
-   python -m opt_data.cli update --date today --symbols AAPL,MSFT --config config/opt-data.toml
+   python -m opt_data.cli schedule --simulate --date today --build-missing-cache --config config/opt-data.toml
    ```
 
 ---
@@ -125,7 +126,7 @@ KeyError: 'underlying'
 1. **Verify data exists**:
    ```bash
    # Check intraday data directory
-   ls -R data/clean/view=intraday/date=2025-11-26/
+   ls -R data/clean/ib/chain/view=intraday/date=2025-11-26/
    ```
 
 2. **Check column compatibility**:
@@ -136,7 +137,7 @@ KeyError: 'underlying'
 3. **Re-run with clean data**:
    ```bash
    # Clear old data and re-snapshot
-   rm -rf data/clean/view=intraday/date=2025-11-26/
+   rm -rf data/clean/ib/chain/view=intraday/date=2025-11-26/
    python -m opt_data.cli snapshot --date 2025-11-26 --config config/opt-data.toml
    python -m opt_data.cli rollup --date 2025-11-26 --config config/opt-data.toml
    ```
@@ -193,7 +194,7 @@ You'll see retry attempts in logs:
 
 3. **Enable performance logging**:
    - Performance metrics are automatically logged for key operations
-   - Check log files in `run-logs/snapshot/`
+   - Check log files in `state/run_logs/snapshot/`
 
 **Optimizations**:
 - Reduce `strikes_per_side` to limit contracts
@@ -237,8 +238,8 @@ Common flags in `data_quality_flag` column:
 ### Log Files
 
 Key log locations:
-- **Snapshot logs**: `run-logs/snapshot/snapshot_YYYY-MM-DD_HHMM_*.log`
-- **Error logs**: `run-logs/errors/errors_YYYYMMDD.log`
+- **Snapshot logs**: `state/run_logs/snapshot/snapshot_YYYY-MM-DD_HHMM_*.log`
+- **Error logs**: `state/run_logs/errors/errors_YYYYMMDD.log`
 - **Performance logs**: Check stderr output or configure file logging
 
 ### Diagnostic Commands

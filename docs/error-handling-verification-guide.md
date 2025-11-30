@@ -368,4 +368,4 @@ python -m opt_data.cli selfcheck --date $(date +%Y-%m-%d) --config config/opt-da
 - 下游处理测试: `scripts/test_error_row_downstream.py`
 - 单元测试框架: `tests/test_snapshot_error_handling.py`
 - 错误处理实现: `src/opt_data/ib/snapshot.py`
-- 完成报告: `walkthrough.md`
+- 完成报告: `error-handling-verification-report.md`

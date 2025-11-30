@@ -21,7 +21,7 @@ python scripts/test_error_scenarios.py --scenario subscription_failed
 - ✅ IB API 返回 Error 200: "No security definition has been found"
 - ✅ 合约返回了数据行（而不是崩溃）
 - ✅ 数据行有 `snapshot_timed_out=true`
-- ⚠️ 缺少 `snapshot_error` 字段（需要改进）
+- ✅ `snapshot_error=true` 字段已存在 (Verified in code)
 
 **关键日志**:
 ```
@@ -99,14 +99,14 @@ Error 200 for AAPL, INVALID_XYZ, MSFT
 
 | 场景 | 测试状态 | 系统行为 | 需改进 |
 |------|---------|---------|--------|
-| 订阅失败 | ✅ 通过 | 返回数据行，有timeout标记 | 需要 `snapshot_error` 字段 |
+| 订阅失败 | ✅ 通过 | 返回数据行，有timeout标记 | `snapshot_error` 已确认存在 |
 | 超时 | ✅ 通过 | 正确检测和标记超时 | - |
 | 部分失败 | ✅ 通过 | 所有合约都被处理 | 错误标记不够明确 |
 
 **关键发现**:
 1. ✅ **资源清理**: 没有观察到 "Failed to cancel market data" 警告
 2. ✅ **无崩溃**: 所有错误场景都优雅处理
-3. ⚠️ **错误标记**: 当前实现使用 `snapshot_timed_out` 但缺少 `snapshot_error` 统一标记
+3. ✅ **错误标记**: `snapshot_error` 统一标记已在代码中实现。
 
 **建议改进**:
 ```python
@@ -239,9 +239,9 @@ This might be expected if error rows cause validation failures
 
 ### ⚠️ 需改进项
 
-1. **统一错误标记**: 
-   - 当前问题: `snapshot_timed_out` 存在但 `snapshot_error` 缺失
-   - 建议: 所有错误行都应设置 `snapshot_error=True`
+1. **统一错误标记**: ✅ **已解决**
+   - 原问题: `snapshot_timed_out` 存在但 `snapshot_error` 缺失
+   - 现状: 当前版本已在 `_build_error_row` 中补齐 `snapshot_error`，所有错误行均包含此标记。
 
 2. **Rollup 异常处理**:
    - 当前问题: Rollup 遇到错误行会抛出 KeyError
@@ -257,14 +257,8 @@ This might be expected if error rows cause validation failures
 
 ### 立即改进（高优先级）
 
-1. **在 snapshot.py 中添加统一错误标记**:
-```python
-# 在超时情况下也设置 snapshot_error
-if timed_out:
-    row["snapshot_error"] = True
-    if not row.get("error_type"):
-        row["error_type"] = "timeout"
-```
+1. **在 snapshot.py 中添加统一错误标记**: ✅ **已完成**
+   (代码审查确认 `_build_error_row` 已包含 `snapshot_error` 字段)
 
 2. **改进 Rollup 错误处理**:
 ```python

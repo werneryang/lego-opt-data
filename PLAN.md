@@ -86,6 +86,12 @@
 - 现有回填骨架与清洗管道将在 M1 重构为 snapshot + rollup 流程；配置与 CLI 拟新增 `snapshot`/`rollup`/`enrichment` 子命令。
 - 测试基线（`make install && make test`）已通过；接下来按新方案更新数据契约、Runbook、配置，并完成单标的冒烟。
 
+## 进展快照（2025-11-26 更新）
+- 错误处理健壮性改进完成：统一 snapshot 错误行标记（`snapshot_error`/`error_type`/`error_message`）、修复 rollup 在错误行和缺失列上的崩溃路径，并为 discovery 关键 IB 调用补充重试机制；详见 `docs/dev/error_handling_robustness_fixes.md` 与错误处理验证报告。
+- 重试与日志/性能监控基础设施落地：实现通用 `retry_with_backoff`、性能计时与日志上下文工具，并在 `snapshot`、`rollup`、`enrichment` 等关键路径启用；开发文档见 `docs/dev/retry_and_logging_implementation.md` 与 `docs/dev/retry_usage_guide.md`。
+- 初步可观测性能力上线：新增基于 SQLite 的指标采集器（`MetricsCollector`）、告警接口（`AlertManager`）与 Streamlit Dashboard（`src/opt_data/dashboard/app.py`），rollup 已开始写入基础运行指标。
+- 整理未来改进方向：在 `docs/dev/roadmap.md` 中按短期/中期/长期分类整理后续改进清单，为后续纳入 `PLAN.md`/`TODO.now.md` 提供来源。
+
 ## 本周目标（2025-11-03 当周）
 - **M1 · 槽位与调度（早收盘感知）**
   - 在 `src/opt_data/util/calendar.py` 增加会话开/收盘获取（优先使用 `pandas-market-calendars`，无依赖则 Mon–Fri 回退）。
