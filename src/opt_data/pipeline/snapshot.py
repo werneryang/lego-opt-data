@@ -319,6 +319,14 @@ class SnapshotRunner:
             _write_error_line(error_file, payload)
 
         def emit(symbol: str, status: str, details: dict[str, Any]) -> None:
+            if status == "reference_price":
+                self._record_reference_price(
+                    trade_date=trade_date,
+                    slot=slot,
+                    symbol=symbol,
+                    price=details.get("price"),
+                    ingest_id=ingest_id,
+                )
             msg = json.dumps(
                 {
                     "symbol": symbol,
@@ -522,6 +530,44 @@ class SnapshotRunner:
                 current_date = current_date - timedelta(days=1)
         assert last_exception is not None
         raise last_exception
+
+    def _record_reference_price(
+        self,
+        *,
+        trade_date: date,
+        slot: SnapshotSlot,
+        symbol: str,
+        price: float | None,
+        ingest_id: str,
+    ) -> None:
+        """Persist underlying reference price for IV/Greeks reconciliation."""
+        if price is None or math.isnan(price):
+            return
+        log_dir = Path(self.cfg.paths.run_logs) / "reference_prices"
+        log_dir.mkdir(parents=True, exist_ok=True)
+        log_path = log_dir / f"reference_prices_{trade_date:%Y%m%d}.jsonl"
+        payload = {
+            "ts": datetime.now(ZoneInfo("UTC")).isoformat().replace("+00:00", "Z"),
+            "trade_date": trade_date.isoformat(),
+            "slot": slot.label,
+            "slot_et": slot.et_iso,
+            "slot_utc": slot.utc_iso,
+            "symbol": symbol,
+            "reference_price": float(price),
+            "ingest_id": ingest_id,
+            "source": "snapshot",
+        }
+        try:
+            with log_path.open("a", encoding="utf-8") as fh:
+                fh.write(json.dumps(payload, ensure_ascii=False) + "\n")
+        except Exception as exc:  # pragma: no cover - log failures are best-effort
+            logger.debug(
+                "Failed to append reference price log | %s %s slot=%s: %s",
+                symbol,
+                trade_date,
+                slot.label,
+                exc,
+            )
 
     def _enrich_rows(
         self,

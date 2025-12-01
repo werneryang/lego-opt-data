@@ -103,6 +103,7 @@
 
 ## 日志与错误收集
 - 日志目录：所有运行日志写入 `state/run_logs/<task>/`；错误日志统一追加到 `state/run_logs/errors/errors_YYYYMMDD.log`。
+- 标的参考价：snapshot 获取的 `reference_price` 事件会追加到 `state/run_logs/reference_prices/reference_prices_YYYYMMDD.jsonl`，字段含 `trade_date/slot/symbol/reference_price/ingest_id`，用于后续 IV/Greeks 校验。
 - CLI/调度脚本需捕获未处理异常并写入错误日志，内容包含时间戳、任务、`ingest_id`、堆栈。
 - 每日 17:30 ET 运行 `python -m opt_data.cli logscan --date today --keywords ERROR,CRITICAL,PACING --write-summary --max-total 0` 生成摘要（`state/run_logs/errors/summary_YYYYMMDD.json`），若匹配条数 >0 则退出码非零并触发告警。
 - 保留策略：错误日志默认保留 30 天，可通过 `python -m opt_data.cli retention --view errors --older-than 30` 清理。
