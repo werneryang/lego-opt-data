@@ -50,6 +50,7 @@ def _precheck_contract_caches(
     symbols_for_run: list[str],
     entries_by_symbol: dict[str, Any],
     *,
+    universe_path: Path | None = None,
     build_missing_cache: bool,
     prefix: str,
 ) -> None:
@@ -59,7 +60,8 @@ def _precheck_contract_caches(
     invalid: list[str] = []
     cache_root = Path(cfg.paths.contracts_cache)
     resolved_conids: dict[str, int] = {}
-    universe_path = Path(cfg.universe.file)
+    # Use provided universe_path, or fall back to default config path
+    effective_universe_path = universe_path or Path(cfg.universe.file)
 
     def _update_universe_file(path: Path, updates: dict[str, int]) -> None:
         if not updates or not path.exists():
@@ -148,7 +150,7 @@ def _precheck_contract_caches(
                     typer.echo(f"[{prefix}] failed to resolve conid for {sym}: {exc}", err=True)
                     invalid.append(sym)
         if resolved_conids:
-            _update_universe_file(universe_path, resolved_conids)
+            _update_universe_file(effective_universe_path, resolved_conids)
 
     def check_cache(sym: str) -> tuple[str | None, str | None]:
         cache_file = cache_path(cache_root, sym, trade_date.isoformat())
@@ -781,6 +783,9 @@ def snapshot(
         None, "--symbols", help="Comma separated symbols (defaults to full universe)"
     ),
     config: Optional[str] = typer.Option(None, help="Path to config TOML"),
+    universe: Optional[str] = typer.Option(
+        None, "--universe", help="Override universe file path (defaults to intraday_file or file)"
+    ),
     force_refresh: bool = typer.Option(False, help="Force refresh contract discovery cache"),
     exchange: Optional[str] = typer.Option(
         None, "--exchange", help="Override default option exchange (e.g., SMART)"
@@ -833,6 +838,15 @@ def snapshot(
             snapshot_cfg.fetch_mode = mode_normalized
     elif ticks:
         cfg.cli.default_generic_ticks = ticks
+
+    # Determine effective universe path: CLI override > intraday_file > file
+    if universe:
+        effective_universe = Path(universe).expanduser().resolve()
+    elif cfg.universe.intraday_file and cfg.universe.intraday_file.exists():
+        effective_universe = cfg.universe.intraday_file
+    else:
+        effective_universe = cfg.universe.file
+
     trade_date = (
         to_et_date(datetime.now(ZoneInfo("UTC"))) if date_str == "today" else date.fromisoformat(date_str)
     )
@@ -845,9 +859,21 @@ def snapshot(
         typer.echo(f"[snapshot] {exc}", err=True)
         raise typer.Exit(code=2)
 
+    cfg_path = Path(config).resolve() if config else Path(cfg.paths.state).parent.resolve()
+    typer.echo(
+        "[snapshot:params] "
+        f"config={cfg_path} universe={effective_universe} view=intraday slot={slot_obj.label} "
+        f"symbols={symbol_list or 'ALL'} fetch_mode={snapshot_cfg.fetch_mode if snapshot_cfg else 'N/A'} "
+        f"strikes_per_side={snapshot_cfg.strikes_per_side if snapshot_cfg else 'N/A'} "
+        f"generic_ticks={snapshot_cfg.generic_ticks if snapshot_cfg else cfg.cli.default_generic_ticks} "
+        f"market_data_type={cfg.ib.market_data_type} "
+        f"paths.raw={cfg.paths.raw} paths.clean={cfg.paths.clean} "
+        f"paths.state={cfg.paths.state} paths.run_logs={cfg.paths.run_logs}"
+    )
+
     typer.echo(
         f"[snapshot] date={trade_date} slot={slot_obj.label} symbols={symbol_list or 'ALL'} "
-        f"force_refresh={force_refresh}"
+        f"universe={effective_universe.name} force_refresh={force_refresh}"
     )
 
     def progress_cb(symbol: str, status: str, extra: Dict[str, Any]) -> None:
@@ -863,6 +889,8 @@ def snapshot(
             trade_date,
             slot_obj,
             symbol_list,
+            universe_path=effective_universe,
+            ingest_run_type="intraday",
             force_refresh=force_refresh,
             progress=progress_cb,
         )
@@ -893,6 +921,9 @@ def close_snapshot(
         None, "--symbols", help="Comma separated symbols (defaults to full universe)"
     ),
     config: Optional[str] = typer.Option(None, help="Path to config TOML"),
+    universe: Optional[str] = typer.Option(
+        None, "--universe", help="Override universe file path (defaults to close_file or file)"
+    ),
     build_missing_cache: bool = typer.Option(
         True,
         "--build-missing-cache/--fail-on-missing-cache",
@@ -902,12 +933,21 @@ def close_snapshot(
     """Capture only the end-of-day (close) snapshot for the given date."""
 
     cfg = load_config(Path(config) if config else None)
+    snapshot_cfg = getattr(cfg, "snapshot", None)
     trade_date = (
         to_et_date(datetime.now(ZoneInfo("UTC"))) if date_str == "today" else date.fromisoformat(date_str)
     )
     symbol_list = [s.strip().upper() for s in symbols.split(",") if s.strip()] if symbols else None
 
-    universe_entries = load_universe(cfg.universe.file)
+    # Determine effective universe path: CLI override > close_file > file
+    if universe:
+        effective_universe = Path(universe).expanduser().resolve()
+    elif cfg.universe.close_file and cfg.universe.close_file.exists():
+        effective_universe = cfg.universe.close_file
+    else:
+        effective_universe = cfg.universe.file
+
+    universe_entries = load_universe(effective_universe)
     entries_by_symbol = {e.symbol: e for e in universe_entries}
     symbols_for_run: list[str]
     if symbol_list:
@@ -925,6 +965,7 @@ def close_snapshot(
         trade_date,
         symbols_for_run,
         entries_by_symbol,
+        universe_path=effective_universe,
         build_missing_cache=build_missing_cache,
         prefix="close-snapshot",
     )
@@ -947,9 +988,21 @@ def close_snapshot(
         raise typer.Exit(code=1)
     close_slot = slots[-1]
 
+    cfg_path = Path(config).resolve() if config else Path(cfg.paths.state).parent.resolve()
+    typer.echo(
+        "[close-snapshot:params] "
+        f"config={cfg_path} universe={effective_universe} view=close slot={close_slot.label} "
+        f"symbols={symbol_list or 'ALL'} fetch_mode={snapshot_cfg.fetch_mode if snapshot_cfg else 'N/A'} "
+        f"strikes_per_side={snapshot_cfg.strikes_per_side if snapshot_cfg else 'N/A'} "
+        f"generic_ticks={snapshot_cfg.generic_ticks if snapshot_cfg else cfg.cli.default_generic_ticks} "
+        "market_data_type=2 "
+        f"paths.raw={cfg.paths.raw} paths.clean={cfg.paths.clean} "
+        f"paths.state={cfg.paths.state} paths.run_logs={cfg.paths.run_logs}"
+    )
+
     typer.echo(
         f"[close-snapshot] date={trade_date} slot={close_slot.label} "
-        f"symbols={symbol_list or 'ALL'}"
+        f"universe={effective_universe.name} symbols={symbol_list or 'ALL'}"
     )
 
     def progress_cb(symbol: str, status: str, extra: Dict[str, Any]) -> None:
@@ -965,6 +1018,9 @@ def close_snapshot(
             trade_date,
             close_slot,
             symbol_list,
+            universe_path=effective_universe,
+            ingest_run_type="close_snapshot",
+            view="close",
             progress=progress_cb,
         )
     except ValueError as exc:
@@ -1291,6 +1347,7 @@ def schedule(
             trade_date,
             symbols_for_run,
             entries_by_symbol,
+            universe_path=Path(cfg.universe.file),
             build_missing_cache=build_missing_cache,
             prefix="schedule",
         )

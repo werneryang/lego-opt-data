@@ -1,5 +1,7 @@
 # 运维手册：30 分钟快照与日终归档
 
+> 本手册面向**生产环境运维与调度**：描述 `opt_data.cli` 相关命令在正式配置上的使用方式与故障排查流程。开发/测试脚本（`data_test/*`）与实验性配置请参阅 `docs/dev/ops-runbook-dev.md`。
+
 ## 运行前准备
 1. 启动 IB Gateway/TWS（默认：`127.0.0.1:7496`），确认登录账号具备美股期权**实时行情**权限；若仅有延迟权限，允许自动降级。
 2. 推荐使用项目专用虚拟环境（避免污染 base Conda 并触发 NumPy 升级冲突）：
@@ -24,7 +26,9 @@
    - `IB_MARKET_DATA_TYPE=1`（盘中默认实时；如需强制延迟改为 `3/4`）
    - **收盘快照**：运行前将 `IB_MARKET_DATA_TYPE=2`（盘后/回放模式），命令内部也会强制 `reqMarketDataType(2)` 以读取当日收盘数据
    - `TZ=America/New_York`（统一调度时区）
-6. 复制正式配置至测试版：`cp config/opt-data.toml config/opt-data.test.toml`，并将 `paths.raw/clean/state/contracts_cache/run_logs` 指向 `data_test/`、`state_test/`。
+6. 配置文件准备：
+   - **本地/生产配置**：`cp config/opt-data.toml config/opt-data.local.toml`，在此文件中修改本地特定配置（如端口、路径），该文件已加入 `.gitignore`。
+   - **测试配置**：`cp config/opt-data.toml config/opt-data.test.toml`，并将 `paths.raw/clean/state/contracts_cache/run_logs` 指向 `data_test/`、`state_test/`。
 7. 核对核心配置：
    - `[acquisition] mode="snapshot"`、`market_data_type=1`（默认实时，enrichment 必需）、`allow_fallback_to_delayed=true`
    - `slot_grace_seconds=120`、`rate_limits.snapshot.per_minute=30`、`max_concurrent_snapshots=10`
@@ -40,11 +44,17 @@
 
 ## 常用命令
 - 基础：`make install`、`make fmt lint test`
-- Snapshot（单槽或按计划）：
+- Snapshot（单槽）：
   - `python -m opt_data.cli snapshot --date 2025-09-29 --slot 09:30 --symbols AAPL --config config/opt-data.test.toml`
-  - `python -m opt_data.cli snapshot --run-day --config config/opt-data.toml`（执行当日剩余槽位）
   - `python -m opt_data.cli close-snapshot --date 2025-11-24 --symbols AAPL,MSFT --config config/opt-data.test.toml`（仅采集当日收盘槽，默认 16:00/早收盘取实际最后槽；运行前会预检并自动重建缺失/空的 contracts cache，可用 `--fail-on-missing-cache` 禁用自动重建；不提供/不支持 `--force-refresh`）
   - 收盘快照请设置 `IB_MARKET_DATA_TYPE=2`（盘后/回放模式，便于收盘后读取当日数据），命令内部也会强制 `reqMarketDataType(2)`；盘中快照/调度则按配置 `ib.market_data_type`（默认 1 实时，如需延迟改为 3/4）。
+- 每日调度（整天所有槽位 + 日终）：
+  - 生产模拟运行（不常驻 scheduler，只一次性跑完当日所有 snapshot/rollup/enrichment 任务）：  
+    - `python -m opt_data.cli schedule --simulate --config config/opt-data.toml`
+  - 生产实际调度（常驻 APScheduler，按 30 分钟间隔触发盘口快照，并在收盘后执行 rollup/enrichment）：  
+    - `python -m opt_data.cli schedule --live --config config/opt-data.toml`
+  - 测试环境（仅 AAPL/MSFT 冒烟）：  
+    - `python -m opt_data.cli schedule --simulate --config config/opt-data.test.toml --symbols AAPL,MSFT`
 - 日终归档：`python -m opt_data.cli rollup --date 2025-09-29 --config config/opt-data.test.toml`
 - OI 回补：`python -m opt_data.cli enrichment --date 2025-09-29 --fields open_interest --config config/opt-data.test.toml`（T+1 通过 `reqMktData` + tick `101` 读取上一交易日收盘 OI；**注意**：enrichment 需要 `market_data_type=1`（实时数据）才能成功获取 OI，否则 tick-101 方法会失败并降级到历史数据方法，而历史数据方法会被 IBKR 拒绝）
 - 存储维护：`make compact`（周度合并）、`python -m opt_data.cli retention --view intraday --older-than 60`
@@ -66,6 +76,91 @@
 4. 模拟无实时权限：临时设置 `market_data_type=3` 再采集一槽，确认输出标记 `delayed_fallback`。
 5. 收盘后运行 `python -m opt_data.cli rollup --date today --config ...`，验证 `rollup_source_slot=13`（或 fallback）与 `rollup_strategy` 字段。
 6. 查看 `state_test/run_logs/` 的 snapshot/rollup 日志，确保记录槽位、回退、延迟等信息。
+
+## 收盘快照独立 View 与双 Universe 配置
+
+### 概述
+
+系统支持将盘中快照与收盘快照分离存储和采用不同的 symbol 清单，以优化 API 负载和数据管理：
+
+| 快照类型 | 写入路径 | 默认 Universe | 用途 |
+|----------|----------|---------------|------|
+| 盘中 `snapshot` | `view=intraday` | `universe.intraday.csv` | 高频监控，精简清单 |
+| 收盘 `close-snapshot` | `view=close` | `universe.csv` | 日终归档，全量清单 |
+
+### 配置项
+
+**Universe 配置** (`config/opt-data.toml`)：
+```toml
+[universe]
+file = "config/universe.csv"                    # 默认全量清单
+intraday_file = "config/universe.intraday.csv"  # 盘中快照专用（可选）
+close_file = ""                                 # 收盘快照专用（为空则回退到 file）
+```
+
+**Rollup 配置**：
+```toml
+[rollup]
+close_slot = 13                     # 16:00 槽位
+fallback_slot = 12                  # 15:30 备用槽位
+allow_intraday_fallback = false     # close view 缺失时是否回退到 intraday
+```
+
+### 存储路径
+
+```
+data/
+├── raw/ib/chain/
+│   ├── view=intraday/date=YYYY-MM-DD/...   # 盘中快照
+│   └── view=close/date=YYYY-MM-DD/...      # 收盘快照
+├── clean/ib/chain/
+│   ├── view=intraday/...
+│   ├── view=close/...
+│   ├── view=daily_clean/...                # Rollup 输出
+│   └── view=daily_adjusted/...
+```
+
+### Rollup 行为
+
+| 场景 | 行为 |
+|------|------|
+| `view=close` 存在 | 使用 close 数据进行 rollup |
+| `view=close` 缺失 + `allow_intraday_fallback=false` | **报错退出**，需先运行 close-snapshot |
+| `view=close` 缺失 + `allow_intraday_fallback=true` | 回退到 intraday 末槽，添加 `fallback_intraday` 标记 |
+
+### 命令示例
+
+```bash
+# 盘中快照（使用 universe.intraday.csv，写入 view=intraday）
+python -m opt_data.cli snapshot --date today --slot now --config config/opt-data.toml
+
+# 收盘快照（使用 universe.csv，写入 view=close）
+python -m opt_data.cli close-snapshot --date 2025-12-05 --config config/opt-data.toml
+
+# 覆盖默认 universe（临时使用全量清单采集盘中）
+python -m opt_data.cli snapshot --date today --slot now --universe config/universe.csv
+
+# Rollup（优先读取 view=close）
+python -m opt_data.cli rollup --date 2025-12-05 --config config/opt-data.toml
+```
+
+### 运维流程
+
+1. **正常流程**：
+   - 盘中：调度器按 30 分钟间隔执行 `snapshot`（精简清单）
+   - 16:00 后：执行 `close-snapshot`（全量清单，写入 `view=close`）
+   - 17:00：执行 `rollup`（优先读取 `view=close`）
+
+2. **收盘快照缺失处理**：
+   - **推荐**：重跑 `close-snapshot` 补数据
+   - **不推荐**：启用 `allow_intraday_fallback`（会导致数据质量下降）
+   - 若启用 fallback，需在日报中注明 `fallback_intraday` 比例
+
+3. **历史数据迁移**：
+   - 已有历史数据保持在 `view=intraday` 不变
+   - 新数据自动写入对应 view
+   - Rollup 已处理过的历史日期无需重跑
+
 
 ## 调度配置
 ### APScheduler（开发环境）
@@ -231,12 +326,5 @@
 - 缓存强制：生产/测试运行必须复用 `paths.contracts_cache` 下对应日期的缓存文件，`--force-refresh` 已被禁用；若缓存缺失会报错终止，避免拉取未知行权价。调试时可开 DEBUG 查看 `SecDef strikes fetched` 日志（缓存对比），但不会自动 fallback 到 SecDef。调度入口会在启动前自动重建缺失/损坏缓存（获取标的收盘价后调用 `discover_contracts_for_symbol`），重建失败即终止，需先修复缓存再重试。
  - 缓存写入检查：发现阶段会将合约列表写入 `paths.contracts_cache` 对应文件，写入失败会直接报错；运行中若发现缓存缺失或空文件，需先修复缓存（重跑发现、检查目录权限）再继续 snapshot/rollup。
 
-**快速命令（实测通过）**
-- AAPL 单次快照（SMART，近 3 个行权价）：
-  - `python data_test/aapl_delayed_chain_async.py --exchange SMART --strikes 3`
-- 诊断脚本（逐合约抓取 + 详细字段，保存至 CSV）：
-  - `python data_test/aapl_delayed_chain_async.py --exchange SMART`
-  - `python data_test/aapl_delayed_chain_async.py --exchange CBOE`
-  - `python data_test/test_from_ib_insync_grok.py`
-
-以上流程已在 `data_test/aapl_delayed_chain_async.py` 与 `data_test/test_from_ib_insync_grok.py` 体现；如需扩展到 SPX/0DTE，请注意 `tradingClass`（SPX/SPXW）与交易所选择差异，并调整行权价选择策略与限速参数。
+**开发/测试脚本与实验**
+- data_test 脚本（AAPL 诊断、SPY 收盘批并发等）已整理到 `docs/dev/ops-runbook-dev.md`。生产调度仍按本手册的顺序批模式执行，实验性并发仅限测试配置。 

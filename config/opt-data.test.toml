@@ -18,7 +18,7 @@ contracts_cache = "state_test/contracts_cache"
 run_logs = "state_test/run_logs"
 
 [universe]
-file = "config/universe.csv"
+file = "config/universe.intraday.csv"
 refresh_days = 30
 
 [reference]
@@ -26,7 +26,7 @@ corporate_actions = "config/corporate_actions.csv"
 
 [filters]
 moneyness_pct = 0.25
-expiry_types = ["monthly"]
+expiry_types = ["weekly", "monthly"]
 expiry_months_ahead = 12
 
 [rate_limits.discovery]
@@ -81,3 +81,4 @@ strikes_per_side = 0
 subscription_timeout_sec = 12.0
 subscription_poll_interval = 0.25
 require_greeks = true
+fetch_mode = "reqtickers"

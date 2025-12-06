@@ -19,15 +19,17 @@ contracts_cache = "state/contracts_cache"
 run_logs = "state/run_logs"
 
 [universe]
-file = "config/universe.csv"    # 标的清单（Symbol,conid）
-refresh_days = 30                # 可选：多少天后提醒更新成分
+file = "config/universe.csv"              # 默认全量标的清单（Symbol,conid）
+intraday_file = "config/universe.intraday.csv"  # 盘中快照精简版（可选）
+close_file = ""                           # 收盘快照专用（为空则使用 file）
+refresh_days = 30                         # 可选：多少天后提醒更新成分
 
 [reference]
 corporate_actions = "config/corporate_actions.csv"
 
 [filters]
 moneyness_pct = 0.30             # ±30%
-expiry_types = ["monthly", "quarterly"]
+expiry_types = ["weekly", "monthly", "quarterly"]
 expiry_months_ahead = 12         # 限制月度/季度到期距离（<=0 表示不限制）
 
 [rate_limits.discovery]
@@ -112,3 +114,8 @@ oi_enrichment_threshold = 0.95
 [observability]
 metrics_db_path = "state/metrics.db"
 webhook_url = ""  # Optional: Webhook URL for alerts
+
+[rollup]
+close_slot = 13                     # 16:00 槽位（默认收盘）
+fallback_slot = 12                  # 15:30 槽位（备选）
+allow_intraday_fallback = false     # close view 缺失时是否回退到 intraday（默认报错）

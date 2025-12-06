@@ -43,8 +43,10 @@ class PathsConfig:
 
 @dataclass
 class UniverseConfig:
-    file: Path
+    file: Path                      # Default full universe (backward compatible)
     refresh_days: int
+    intraday_file: Path | None = None  # Optional: smaller set for intraday snapshots
+    close_file: Path | None = None     # Optional: close-specific (defaults to file)
 
 
 @dataclass
@@ -154,6 +156,13 @@ class QAConfig:
 
 
 @dataclass
+class RollupConfig:
+    close_slot: int = 13                    # 16:00 slot (default close)
+    fallback_slot: int = 12                 # 15:30 slot (backup)
+    allow_intraday_fallback: bool = False   # If True, fallback to intraday when close view empty
+
+
+@dataclass
 class AppConfig:
     ib: IBConfig
     timezone: TimezoneConfig
@@ -171,6 +180,7 @@ class AppConfig:
     enrichment: EnrichmentConfig
     qa: QAConfig
     acquisition: AcquisitionConfig
+    rollup: RollupConfig = None  # Optional, with defaults
 
     def validate(self) -> List[str]:
         """Validate configuration and return list of errors.
@@ -447,9 +457,15 @@ def load_config(file: Optional[Path] = None) -> AppConfig:
         run_logs=_as_path(g("paths", "run_logs", "state/run_logs")),
     )
 
+    # Universe config with optional intraday/close files
+    intraday_file_raw = g("universe", "intraday_file", "")
+    close_file_raw = g("universe", "close_file", "")
+
     universe = UniverseConfig(
         file=_as_path(g("universe", "file", "config/universe.csv")),
         refresh_days=g("universe", "refresh_days", 30),
+        intraday_file=_as_path(intraday_file_raw) if intraday_file_raw else None,
+        close_file=_as_path(close_file_raw) if close_file_raw else None,
     )
 
     reference = ReferenceConfig(
@@ -592,6 +608,12 @@ def load_config(file: Optional[Path] = None) -> AppConfig:
         historical_timeout=float(g("acquisition", "historical_timeout", 30.0)),
     )
 
+    rollup = RollupConfig(
+        close_slot=int(g("rollup", "close_slot", 13)),
+        fallback_slot=int(g("rollup", "fallback_slot", 12)),
+        allow_intraday_fallback=bool(g("rollup", "allow_intraday_fallback", False)),
+    )
+
     cfg = AppConfig(
         ib=ib,
         timezone=tz,
@@ -609,6 +631,7 @@ def load_config(file: Optional[Path] = None) -> AppConfig:
         enrichment=enrichment,
         qa=qa,
         acquisition=acquisition,
+        rollup=rollup,
     )
 
     # Validate configuration before returning

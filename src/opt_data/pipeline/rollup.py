@@ -44,14 +44,16 @@ class RollupRunner:
         *,
         writer: ParquetWriter | None = None,
         cleaner: CleaningPipeline | None = None,
-        close_slot: int = 13,
-        fallback_slot: int = 12,
+        close_slot: int | None = None,
+        fallback_slot: int | None = None,
     ) -> None:
         self.cfg = cfg
         self._writer = writer or ParquetWriter(cfg)
         self._cleaner = cleaner or CleaningPipeline.create(cfg)
-        self._close_slot = close_slot
-        self._fallback_slot = fallback_slot
+        # Use config values, with parameter overrides for backward compatibility
+        self._close_slot = close_slot if close_slot is not None else cfg.rollup.close_slot
+        self._fallback_slot = fallback_slot if fallback_slot is not None else cfg.rollup.fallback_slot
+        self._allow_intraday_fallback = cfg.rollup.allow_intraday_fallback
         
         # Observability
         self.metrics = MetricsCollector(cfg.observability.metrics_db_path)
@@ -70,21 +72,53 @@ class RollupRunner:
         strategy_counter: Counter[str] = Counter()
         daily_clean_paths: list[Path] = []
         daily_adjusted_paths: list[Path] = []
+        using_intraday_fallback = False
 
         error_file = Path(self.cfg.paths.run_logs) / "errors" / f"errors_{trade_date:%Y%m%d}.log"
         error_file.parent.mkdir(parents=True, exist_ok=True)
 
-        intraday_df, read_errors = self._load_intraday(trade_date)
+        # Try to load from view=close first (preferred source for EOD data)
+        source_df, read_errors = self._load_close(trade_date)
+        source_view = "close"
+        
+        if source_df.empty:
+            # No close data found - check if intraday fallback is allowed
+            if not self._allow_intraday_fallback:
+                payload = {
+                    "component": "rollup",
+                    "stage": "load_close",
+                    "message": f"No close snapshot data for {trade_date}; intraday fallback disabled",
+                }
+                errors.append(payload)
+                _write_error_line(error_file, payload)
+                logger.error(f"No close snapshot data for {trade_date}; set rollup.allow_intraday_fallback=true to use intraday data")
+                return RollupResult(
+                    ingest_id=ingest_id,
+                    trade_date=trade_date,
+                    rows_written=0,
+                    symbols_processed=0,
+                    strategy_counts=dict(strategy_counter),
+                    daily_clean_paths=daily_clean_paths,
+                    daily_adjusted_paths=daily_adjusted_paths,
+                    errors=errors,
+                )
+            
+            # Fallback to intraday data with warning
+            logger.warning(f"No close snapshot for {trade_date}, falling back to intraday data")
+            source_df, read_errors = self._load_intraday(trade_date)
+            source_view = "intraday"
+            using_intraday_fallback = True
+        
         for err in read_errors:
             payload = {
                 "component": "rollup",
-                "stage": "load_intraday",
+                "stage": f"load_{source_view}",
                 "message": f"Failed to read parquet: {err['file']}: {err['error']}",
             }
             errors.append(payload)
             _write_error_line(error_file, payload)
 
-        if intraday_df.empty:
+        if source_df.empty:
             return RollupResult(
                 ingest_id=ingest_id,
                 trade_date=trade_date,
@@ -95,6 +129,9 @@ class RollupRunner:
                 daily_adjusted_paths=daily_adjusted_paths,
                 errors=errors,
             )
+        
+        # Rename for consistency with rest of method
+        intraday_df = source_df
 
         # Ensure underlying column exists (backfill produces 'symbol')
         if "symbol" in intraday_df.columns and "underlying" not in intraday_df.columns:
@@ -180,6 +217,13 @@ class RollupRunner:
 
         selected["data_quality_flag"] = selected["data_quality_flag"].apply(_ensure_flags)
         selected["data_quality_flag"] = selected["data_quality_flag"].apply(list)
+        
+        # Add fallback_intraday flag if using intraday data as fallback
+        if using_intraday_fallback:
+            selected["data_quality_flag"] = selected["data_quality_flag"].apply(
+                lambda flags: flags + ["fallback_intraday"] if "fallback_intraday" not in flags else flags
+            )
+            logger.info(f"Added 'fallback_intraday' flag to {len(selected)} rows")
         selected["asof_ts"] = pd.to_datetime(
             selected["asof_ts"], utc=True, errors="coerce"
         ).dt.tz_convert(None)
@@ -273,6 +317,34 @@ class RollupRunner:
 
     def _load_intraday(self, trade_date: date) -> tuple[pd.DataFrame, list[dict[str, Any]]]:
         root = Path(self.cfg.paths.clean) / "view=intraday" / f"date={trade_date.isoformat()}"
+        if not root.exists():
+            return pd.DataFrame(), []
+
+        frames: list[pd.DataFrame] = []
+        errors: list[dict[str, Any]] = []
+
+        for parquet_path in sorted(root.rglob("*.parquet")):
+            try:
+                frames.append(pd.read_parquet(parquet_path))
+            except Exception as exc:
+                errors.append(
+                    {
+                        "file": str(parquet_path),
+                        "error": str(exc),
+                    }
+                )
+        if not frames:
+            return pd.DataFrame(), errors
+        df = pd.concat(frames, ignore_index=True)
+        
+        # Optimize memory usage by downcasting data types
+        df = optimize_dataframe_dtypes(df, verbose=False)
+        
+        return df, errors
+
+    def _load_close(self, trade_date: date) -> tuple[pd.DataFrame, list[dict[str, Any]]]:
+        """Load data from view=close for the given date."""
+        root = Path(self.cfg.paths.clean) / "view=close" / f"date={trade_date.isoformat()}"
         if not root.exists():
             return pd.DataFrame(), []
 

@@ -36,7 +36,7 @@
 ├─ PLAN.md          # 四周计划与范围
 ├─ TODO.now.md      # 当周/当日任务
 ├─ SCOPE.md         # 采集范围与字段约定
-├─ docs/            # ADR、数据契约、运维手册
+├─ docs/            # ADR、数据契约、运维手册（生产 + 开发）
 ├─ config/          # 配置模板、标的清单
 ├─ data/            # 数据输出（受 .gitignore 控制）
 ├─ state/           # 运行状态、检查点
@@ -49,7 +49,10 @@
 2. 设计决策 → 在 `docs/ADR-xxxx.md` 或 `SCOPE.md` 记录。
 3. 开发 → 遵循模块化结构，提交前运行 `make fmt lint test`。
 4. 在执行大规模回填前，复制配置到测试目录（如 `config/opt-data.test.toml`），对 AAPL/MSFT 进行冒烟验证，确认输出完整后再切换正式目录。
-5. 数据/调度变更 → 更新 `docs/ops-runbook.md` 与配置模板。
+5. 文档分类与更新：
+   - 生产运维与正式流程：更新 `docs/ops-runbook.md` 及相关正式方案文档（如“基于 ib_insync 的TWS 期权链数据拉取正式方案.md”）。
+   - 开发/测试与实验脚本：更新 `docs/dev/` 下文档（如 `docs/dev/ops-runbook-dev.md`），以及相关 ADR 中的“实验性/仅限 data_test”说明。
+   - 文档双向同步：更新项目文档时，需同步维护 `.agent/` 下的对应规则/摘要；同理，更新 `.agent/` 内规则时需回写到正式文档或目录（如 `docs/`、`SCOPE.md` 等）以保持一致。
 6. 部署 → 按 `docs/ops-runbook.md` 操作，并记录结果或问题。
 
 附注：拉取 IBKR 期权链时，优先遵循以下文档与清单：

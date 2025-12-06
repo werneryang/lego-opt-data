@@ -4,6 +4,21 @@
 - 默认宇宙：S&P 500 成分股（可通过 `config/universe.csv` 缩减或扩展），包含 `symbol` 与可选 `conid`。
 - 成分调整或扩容需更新 `config/universe.csv` 并在 `PLAN.md`、`TODO.now.md` 留痕；上线前建议按 AAPL → AAPL,MSFT → Top 10 → 全量的节奏逐步放量。
 
+### 双清单配置（盘中/收盘分离）
+
+系统支持为盘中快照和收盘快照配置不同的 symbol 清单：
+
+| 配置项 | 路径 | 用途 |
+|--------|------|------|
+| `universe.file` | `config/universe.csv` | 默认全量清单（收盘快照使用） |
+| `universe.intraday_file` | `config/universe.intraday.csv` | 盘中快照专用（可选，精简清单） |
+| `universe.close_file` | 配置中指定 | 收盘快照专用（可选，默认回退到 `file`） |
+
+**用途说明**：
+- **盘中清单**（`intraday_file`）：包含高流动性、高关注度标的（如 SPY, QQQ, AAPL），用于 30 分钟间隔的高频监控，减少 API 负载
+- **收盘清单**（`file` 或 `close_file`）：包含完整目标宇宙（如 S&P 500 全量），确保日终归档数据完整
+
+
 ## 时间范围与采样频率
 - 日内采集：美国交易日 09:30–16:00（America/New_York），每 30 分钟一个槽位，共 14 槽，包含 16:00 收盘槽；早收盘按交易日历截断。
 - 槽位时间按 ET 定义，存储时 `sample_time` 使用 UTC，另存 `slot_30m`（0–13）；单槽允许 ±120 秒宽限并重试。
@@ -30,8 +45,13 @@
 - 若实时行情降级为延迟（`market_data_type=3/4`），需在 `data_quality_flag` 中记录 `delayed_fallback`。
 
 ## 数据层级
-- 原始层（Raw）：记录 IB 快照原样字段及槽位信息，按 `date/underlying/exchange/view=intraday` 分区；保留 `market_data_type` 与任何错误码。
-- 清洗层（Clean）：标准化字段类型、落槽去重、填充缺失标记；包含 `view=intraday` 与 `view=daily_clean`。
+- 原始层（Raw）：记录 IB 快照原样字段及槽位信息，按 `date/underlying/exchange/view=<type>` 分区；保留 `market_data_type` 与任何错误码。
+  - `view=intraday`：盘中 30 分钟间隔快照
+  - `view=close`：收盘快照（16:00 槽位，独立存储）
+- 清洗层（Clean）：标准化字段类型、落槽去重、填充缺失标记。
+  - `view=intraday`：清洗后的盘中数据
+  - `view=close`：清洗后的收盘数据
+  - `view=daily_clean`：Rollup 输出（优先使用 `view=close`，可配置回退到 `view=intraday`）
 - 调整层（Adjusted）：在 daily_clean 基础上应用公司行动调整（拆分、特别分红、乘数变化等），输出 `view=daily_adjusted`。
 - 附加层：`view=enrichment` 可选记录 T+1 OI 回填及其他慢字段。
 

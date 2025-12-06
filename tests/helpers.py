@@ -17,6 +17,7 @@ from opt_data.config import (
     RateLimitClassConfig,
     RateLimitsConfig,
     ReferenceConfig,
+    RollupConfig,
     StorageConfig,
     TimezoneConfig,
     UniverseConfig,
@@ -43,7 +44,7 @@ def build_config(tmp_path: Path) -> AppConfig:
             contracts_cache=state_root / "contracts_cache",
             run_logs=state_root / "run_logs",
         ),
-    universe=UniverseConfig(file=universe_file, refresh_days=30),
+    universe=UniverseConfig(file=universe_file, refresh_days=30, intraday_file=None, close_file=None),
     reference=ReferenceConfig(corporate_actions=tmp_path / "config/corporate_actions.csv"),
     filters=FiltersConfig(
         moneyness_pct=0.30, expiry_types=["monthly", "quarterly"], expiry_months_ahead=12
@@ -102,4 +103,5 @@ def build_config(tmp_path: Path) -> AppConfig:
             fill_missing_greeks_with_zero=False,
             historical_timeout=30.0,
         ),
+        rollup=RollupConfig(),
     )

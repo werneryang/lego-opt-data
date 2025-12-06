@@ -38,7 +38,7 @@ def _cfg(tmp_path, actions_path=None) -> AppConfig:
             contracts_cache=tmp_path / "cache",
             run_logs=tmp_path / "logs",
         ),
-        universe=UniverseConfig(file=tmp_path / "universe.csv", refresh_days=30),
+        universe=UniverseConfig(file=tmp_path / "universe.csv", refresh_days=30, intraday_file=None, close_file=None),
         reference=ReferenceConfig(corporate_actions=reference_path),
         filters=FiltersConfig(moneyness_pct=0.3, expiry_types=["monthly", "quarterly"], expiry_months_ahead=None),
         rate_limits=RateLimitsConfig(

@@ -83,6 +83,7 @@ def fetch_underlying_close(
     ib: Any, symbol: str, trade_date: date, conid: Optional[int] = None
 ) -> float:
     from ib_insync import Stock  # type: ignore
+    import math
 
     # Qualify the underlying contract
     if conid:
@@ -93,14 +94,26 @@ def fetch_underlying_close(
 
     # Prefer live/delayed snapshot to avoid HMDS dependency; take marketPrice() with bid/ask fallback.
     ticker = ib.reqMktData(contract, "", True, False)
-    ib.sleep(1.0)
-    price = ticker.marketPrice()
-    if price is None or price <= 0:
+
+    def _valid(value: Any) -> bool:
+        try:
+            return value is not None and float(value) > 0 and not math.isnan(float(value))
+        except Exception:
+            return False
+
+    price: float | None = None
+    # Attempt twice with a short wait to mitigate transient NaN/None responses after hours
+    for attempt in (0, 1):
+        ib.sleep(1.0)
+        price = ticker.marketPrice()
+        if _valid(price):
+            return float(price)
+        # Fallback to other fields on second try as well
         candidates = [ticker.last, ticker.close, ticker.bid, ticker.ask]
-        price = next((p for p in candidates if p is not None and p > 0), None)
-    if price is None or price <= 0:
-        raise RuntimeError(f"No market price returned for {symbol}")
-    return float(price)
+        price = next((p for p in candidates if _valid(p)), None)
+        if _valid(price):
+            return float(price)
+    raise RuntimeError(f"No market price returned for {symbol}")
 
 
 def fetch_option_snapshots(

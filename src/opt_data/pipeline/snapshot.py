@@ -270,10 +270,15 @@ class SnapshotRunner:
         slot: SnapshotSlot,
         symbols: Sequence[str] | None = None,
         *,
+        universe_path: Path | None = None,
+        ingest_run_type: str = "intraday",
+        view: str = "intraday",  # Output view: "intraday" or "close"
         force_refresh: bool = False,
         progress: Callable[[str, str, Dict[str, Any]], None] | None = None,
     ) -> SnapshotResult:
-        universe = load_universe(self.cfg.universe.file)
+        # Use provided universe_path, or fall back to config default
+        effective_path = universe_path or self.cfg.universe.file
+        universe = load_universe(effective_path)
         wanted = {sym.upper() for sym in symbols} if symbols else None
         entries = [u for u in universe if wanted is None or u.symbol in wanted]
         if not entries:
@@ -434,6 +439,7 @@ class SnapshotRunner:
                         slot=slot,
                         ingest_id=ingest_id,
                         reference_price=reference_price,
+                        ingest_run_type=ingest_run_type,
                     )
                     all_rows.extend(enriched)
                     rows_count = len(enriched)
@@ -474,8 +480,8 @@ class SnapshotRunner:
         if "data_quality_flag" in raw_df.columns and "data_quality_flag" in clean_df.columns:
             clean_df["data_quality_flag"] = raw_df["data_quality_flag"]
 
-        raw_root = Path(self.cfg.paths.raw) / "view=intraday"
-        clean_root = Path(self.cfg.paths.clean) / "view=intraday"
+        raw_root = Path(self.cfg.paths.raw) / f"view={view}"
+        clean_root = Path(self.cfg.paths.clean) / f"view={view}"
 
         group_keys = ["symbol", "exchange"]
         rows_written = 0
@@ -578,6 +584,7 @@ class SnapshotRunner:
         slot: SnapshotSlot,
         ingest_id: str,
         reference_price: float,
+        ingest_run_type: str = "intraday",
     ) -> list[dict[str, Any]]:
         enriched: list[dict[str, Any]] = []
         sample_time_utc_str = slot.utc_iso
@@ -618,7 +625,7 @@ class SnapshotRunner:
                         "underlying": symbol,
                         "underlying_close": reference_price,
                         "ingest_id": ingest_id,
-                        "ingest_run_type": "intraday",
+                        "ingest_run_type": ingest_run_type,
                         "source": "IBKR",
                         "data_quality_flag": flags,
                     }

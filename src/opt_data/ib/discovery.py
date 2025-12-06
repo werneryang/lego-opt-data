@@ -7,13 +7,12 @@ from collections import defaultdict
 import calendar
 import json
 import logging
-from datetime import date
+from datetime import date, timedelta
 
 from ..config import AppConfig
 from ..util.expiry import (
     is_standard_monthly_expiry,
     is_quarterly_expiry,
-    filter_expiries,
     third_friday,
 )
 from ..util.retry import retry_with_backoff
@@ -26,13 +25,13 @@ logger = logging.getLogger(__name__)
 
 @retry_with_backoff(max_attempts=3, initial_delay=1.0)
 def _fetch_sec_def_opt_params(ib: Any, symbol: str, underlying_conid: int) -> List[Any]:
-    """Fetch security definition option parameters with retry."""
+    """Fetch security definition option parameters (strikes/expirations) with retry."""
     return ib.reqSecDefOptParams(symbol, "", "STK", underlying_conid or 0)
 
 
 @retry_with_backoff(max_attempts=3, initial_delay=1.0)
 def _qualify_contracts_chunk(ib: Any, contracts: List[Any]) -> List[Any]:
-    """Qualify a chunk of contracts with retry."""
+    """Batch-qualify Option contracts (avoid per-contract reqContractDetails) with retry."""
     return ib.qualifyContracts(*contracts)
 
 
@@ -107,9 +106,15 @@ def filter_by_scope(
 
         is_monthly = is_standard_monthly_expiry(d)
         is_quarter = is_quarterly_expiry(d)
+        allow_weekly = "weekly" in kinds
+        allowed = False
         if ("monthly" in kinds and is_monthly) or ("quarterly" in kinds and is_quarter):
-            if low <= strike <= high:
-                out.append(c)
+            allowed = True
+        elif allow_weekly and not is_monthly and not is_quarter:
+            allowed = True
+
+        if allowed and low <= strike <= high:
+            out.append(c)
     return out
 
 
@@ -131,6 +136,68 @@ def limit_strikes_per_expiry(
         ordered = sorted(items, key=lambda c: abs(float(c.get("strike", 0.0)) - underlying_close))
         limited.extend(ordered[:max_per_expiry])
     return limited
+
+
+def _is_multiple_of_five(value: float) -> bool:
+    if value == 0:
+        return False
+    return abs((value / 5.0) - round(value / 5.0)) < 1e-6
+
+
+def _select_strikes(
+    strikes: Iterable[float],
+    *,
+    underlying_close: float,
+    moneyness_pct: float,
+    max_strikes_per_expiry: Optional[int],
+) -> List[float]:
+    """Prefer SecDef strikes that are 5-multiples and near spot; cap per-expiry."""
+    strikes_all = sorted(float(s) for s in strikes if s is not None)
+    if not strikes_all:
+        return []
+
+    low = underlying_close * (1.0 - moneyness_pct)
+    high = underlying_close * (1.0 + moneyness_pct)
+
+    in_range = [s for s in strikes_all if low <= s <= high]
+    multiples = [s for s in in_range if _is_multiple_of_five(s)]
+
+    candidates = multiples or in_range or strikes_all
+    ordered = sorted(candidates, key=lambda s: abs(s - underlying_close))
+    if max_strikes_per_expiry and max_strikes_per_expiry > 0:
+        ordered = ordered[:max_strikes_per_expiry]
+    return ordered
+
+
+def _is_valid_far_expiry(d: date) -> bool:
+    """Third Friday of Mar/Jun/Sep/Dec, accepting Thu/Fri/Sat encodings."""
+    if d.month not in {1, 3, 6, 9, 12}:
+        return False
+    tf = third_friday(d.year, d.month)
+    return d in {tf - timedelta(days=1), tf, tf + timedelta(days=1)}
+
+
+def _select_expirations_spy_style(expirations: List[date], today: date) -> List[date]:
+    """Mirror data_test/SPY_auto_collect.py expiry selection."""
+    near = []
+    far = []
+    for d in sorted(expirations):
+        days = (d - today).days
+        if 0 <= days <= 30 and d.weekday() == 4:
+            near.append(d)
+        elif days > 30 and _is_valid_far_expiry(d):
+            far.append(d)
+
+    ordered = near + far
+    seen: set[date] = set()
+    dedup: List[date] = []
+    for d in ordered:
+        if d not in seen:
+            dedup.append(d)
+            seen.add(d)
+        if len(dedup) >= 30:
+            break
+    return dedup
 
 
 def discover_contracts(
@@ -183,6 +250,8 @@ def discover_contracts_for_symbol(
 
     from ib_insync import Option  # type: ignore
 
+    # Cache guardrails: discovery should only run when cache is allowed; avoids pulling
+    # unexpected strikes intraday. Cache key = (symbol, trade_date).
     cache_root = Path(cfg.paths.contracts_cache)
     cache_root.mkdir(parents=True, exist_ok=True)
     cache_key = trade_date.isoformat()
@@ -221,7 +290,7 @@ def discover_contracts_for_symbol(
 
     ib = session.ensure_connected()
 
-    # 1) Fetch sec def params and keep SMART only
+    # 1) Fetch SecDef params and pick the richest SMART chain (qualifyContracts only, no reqContractDetails)
     try:
         params = _fetch_sec_def_opt_params(ib, symbol, underlying_conid or 0)
     except Exception as exc:
@@ -252,7 +321,7 @@ def discover_contracts_for_symbol(
     if secdef is None:
         return []
 
-    # 2) Build candidate grid (expiry x strike), apply scope filters
+    # 2) Build candidate grid (expiry x strike), apply scope filters (moneyness/expiry window)
     strikes_all = sorted(float(s) for s in secdef.strikes if s is not None)
     if not strikes_all:
         return []
@@ -316,17 +385,20 @@ def discover_contracts_for_symbol(
 
     raw_expirations = [_parse_expiration(exp) for exp in secdef.expirations]
     expirations = [d for d in raw_expirations if d]
-    filtered_expiries = (
-        sorted(filter_expiries(expirations, cfg.filters.expiry_types))
-        if filter_contracts
-        else [d for d in expirations if d]
-    )
+    if filter_contracts:
+        filtered_expiries = _select_expirations_spy_style(expirations, trade_date)
+    else:
+        filtered_expiries = sorted(expirations)
     if not filtered_expiries or not strikes_all:
         return []
-    # Keep only the earliest expiries to avoid requesting far-out contracts that may not be tradable.
-    MAX_EXPIRIES = 1
-    if filter_contracts:
-        filtered_expiries = filtered_expiries[:MAX_EXPIRIES]
+    strike_candidates = _select_strikes(
+        strikes_all,
+        underlying_close=underlying_close,
+        moneyness_pct=cfg.filters.moneyness_pct,
+        max_strikes_per_expiry=max_strikes_per_expiry,
+    )
+    if not strike_candidates:
+        return []
 
     candidates: List[Dict[str, Any]] = []
     exchange = allowed_exchange
@@ -334,7 +406,7 @@ def discover_contracts_for_symbol(
     multiplier = float(secdef.multiplier or 100)
     for expiry_date in filtered_expiries:
         iso_expiry = expiry_date.isoformat()
-        for strike in strikes_all:
+        for strike in strike_candidates:
             candidates.append(
                 {
                     "symbol": symbol,
@@ -366,7 +438,7 @@ def discover_contracts_for_symbol(
     if not scoped_candidates:
         return []
 
-    # 3) Build Option list for both rights and batch-qualify
+    # 3) Build Option list (C/P) and batch-qualify; no per-contract details calls
     options: List[Any] = []
     for cand in scoped_candidates:
         expiry_yyyymmdd = cand["expiry"].replace("-", "")

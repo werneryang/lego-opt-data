@@ -16,6 +16,7 @@ from opt_data.config import (
     StorageConfig,
     CompactionConfig,
     LoggingConfig,
+    ObservabilityConfig,
     CLIConfig,
     SnapshotConfig,
     EnrichmentConfig,
@@ -37,7 +38,7 @@ def _cfg(tmp_path: Path) -> AppConfig:
             contracts_cache=tmp_path / "cache",
             run_logs=tmp_path / "logs",
         ),
-        universe=UniverseConfig(file=tmp_path / "universe.csv", refresh_days=30),
+        universe=UniverseConfig(file=tmp_path / "universe.csv", refresh_days=30, intraday_file=None, close_file=None),
         reference=ReferenceConfig(corporate_actions=tmp_path / "actions.csv"),
         filters=FiltersConfig(moneyness_pct=0.3, expiry_types=["monthly", "quarterly"], expiry_months_ahead=None),
         rate_limits=RateLimitsConfig(
@@ -57,6 +58,7 @@ def _cfg(tmp_path: Path) -> AppConfig:
             max_file_size_mb=256,
         ),
         logging=LoggingConfig(level="INFO", format="json"),
+        observability=ObservabilityConfig(metrics_db_path=tmp_path / "metrics.db", webhook_url=None),
         cli=CLIConfig(
             default_generic_ticks="100",
             snapshot_grace_seconds=120,
@@ -194,6 +196,7 @@ def test_discover_contracts_for_symbol_caches(monkeypatch, tmp_path: Path) -> No
         trade_date=trade_date,
         underlying_close=150.0,
         cfg=cfg,
+        allow_rebuild=True,
     )
 
     assert len(results) == 4  # two strikes x two rights
@@ -209,6 +212,7 @@ def test_discover_contracts_for_symbol_caches(monkeypatch, tmp_path: Path) -> No
         trade_date=trade_date,
         underlying_close=150.0,
         cfg=cfg,
+        allow_rebuild=True,
     )
     assert cached == results
     assert ib.secdef_calls == before_calls

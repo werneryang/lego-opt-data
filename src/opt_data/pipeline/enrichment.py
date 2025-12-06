@@ -484,7 +484,7 @@ class EnrichmentRunner:
         bars = ib.reqHistoricalData(
             contract,
             endDateTime=end_dt,
-            durationStr="3 D",           # 多拿几天保证一定有数据
+            durationStr="1 D",           # 收窄窗口，降低开销
             barSizeSetting="1 day",
             whatToShow="OPTION_OPEN_INTEREST",
             useRTH=True,
@@ -508,10 +508,14 @@ def _needs_open_interest(row: pd.Series, force_overwrite: bool = False) -> bool:
     if force_overwrite:
         return True
     oi = row.get("open_interest")
-    if pd.isna(oi):
-        return True
+    # 已有有效 OI（>0 且非 NaN）则不再补
+    try:
+        if oi is not None and not (isinstance(oi, float) and pd.isna(oi)) and float(oi) > 0:
+            return False
+    except Exception:
+        pass
     flags = _normalize_flags(row.get("data_quality_flag"))
-    return "missing_oi" in flags
+    return "missing_oi" in flags or pd.isna(oi)
 
 
 def _flags_after_success(value: Any, was_overwritten: bool = False) -> list[str]:

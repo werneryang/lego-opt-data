@@ -2,6 +2,13 @@
 
 This directory (`docs/dev/`) contains technical documentation for developers working on the `opt-data` project.
 
+Documents here主要面向**开发/测试与实验性工作流**，包括：
+- data_test/ 下脚本的使用说明与调优经验；
+- 非生产配置（如 `config/opt-data.test.toml`）的运行说明；
+- 错误处理验证、重试机制等内部实现与 QA 报告。
+
+生产运维与正式调度流程请以 `docs/ops-runbook.md` 及相关正式方案文档为准。
+
 ## Available Guides
 
 ### Implementation Documentation

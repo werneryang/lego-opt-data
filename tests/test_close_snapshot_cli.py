@@ -32,11 +32,14 @@ def test_close_snapshot_uses_last_slot(monkeypatch, tmp_path):
             captured["requested_date"] = td
             return [DummySlot("15:30"), DummySlot("16:00")]
 
-        def run(self, trade_date, slot, symbols, *, force_refresh=False, progress=None):  # type: ignore[no-untyped-def]
+        def run(self, trade_date, slot, symbols, *, universe_path=None, ingest_run_type="intraday", view="intraday", force_refresh=False, progress=None):  # type: ignore[no-untyped-def]
             captured["run"] = {
                 "trade_date": trade_date,
                 "slot_label": slot.label,
                 "symbols": symbols,
+                "universe_path": universe_path,
+                "ingest_run_type": ingest_run_type,
+                "view": view,
             }
             if progress:
                 progress("AAPL", "start", {"rows": 1})
@@ -50,13 +53,14 @@ def test_close_snapshot_uses_last_slot(monkeypatch, tmp_path):
 
     monkeypatch.setattr("opt_data.cli.load_config", lambda path=None: config)
     monkeypatch.setattr("opt_data.cli.SnapshotRunner", DummyRunner)
-    def fake_precheck(cfg, td, symbols, entries_by_symbol, build_missing_cache, prefix):
+    def fake_precheck(cfg, td, symbols, entries_by_symbol, *, universe_path=None, build_missing_cache, prefix):
         precheck_calls.append(
             {
                 "cfg": cfg,
                 "td": td,
                 "symbols": symbols,
                 "entries": entries_by_symbol,
+                "universe_path": universe_path,
                 "build": build_missing_cache,
                 "prefix": prefix,
             }
