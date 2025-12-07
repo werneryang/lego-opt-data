@@ -2,7 +2,7 @@
 
 [ib]
 host = "127.0.0.1"
-port = 7496
+port = 7497
 client_id = 203
 market_data_type = 1
 

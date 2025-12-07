@@ -23,7 +23,7 @@
    - 直接构造 `Option(...)` 集合并使用批量 `qualifyContracts/qualifyContractsAsync` 获取 `conId`。
    - 不得在发现阶段调用 `reqContractDetails`；不得在发现阶段施加应用层限流（改为批量资格化并遵循 IB pacing）。
 
-- IB 连接默认值：`host=127.0.0.1`、`port=7496`、`clientId=101`。
+- IB 连接默认值：`host=127.0.0.1`、`port=7497`、`clientId=101`。
 - 运行环境：Python 3.11；开发时执行 `python3.11 -m venv .venv && pip install -e .[dev]`。
 - 采集窗口：S&P 500 成分股（以 `config/universe.csv` 为准），行权价带 ±30%，标准月度/季度合约。
 - 调度基于 `America/New_York` 时区，交易日 17:00 ET 运行每日更新。

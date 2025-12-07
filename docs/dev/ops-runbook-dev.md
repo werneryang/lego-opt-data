@@ -3,7 +3,7 @@
 > 适用范围：本地/沙箱环境的调试与实验脚本（`data_test/*`），不用于生产调度。生产运维请参阅 `docs/ops-runbook.md`。
 
 ## 基本约定
-- 环境：TWS/Gateway 已启动，默认 `host=127.0.0.1`，`port=7496/7497`，`clientId` 自行选择避免冲突。
+- 环境：TWS/Gateway 已启动，默认 `host=127.0.0.1`，`port=7497`，`clientId` 自行选择避免冲突（如本机配置不同按实际调整）。
 - 配置：建议复制 `config/opt-data.toml` 为测试版（如 `config/opt-data.test.toml`），并将数据/状态目录指向 `data_test/`、`state_test/`。
 - 行情类型：除特殊说明外，盘后/收盘实验请设 `IB_MARKET_DATA_TYPE=2`（Frozen），盘中/实时请设 `1`。
 

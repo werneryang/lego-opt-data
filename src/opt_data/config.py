@@ -441,7 +441,7 @@ def load_config(file: Optional[Path] = None) -> AppConfig:
 
     ib = IBConfig(
         host=g("ib", "host", "127.0.0.1"),
-        port=g("ib", "port", 7496),
+        port=g("ib", "port", 7497),
         client_id=g("ib", "client_id", 101),
         market_data_type=g("ib", "market_data_type", 2),
     )

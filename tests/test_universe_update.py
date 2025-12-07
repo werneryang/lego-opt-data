@@ -17,7 +17,7 @@ def _dummy_cfg(tmp_path: Path):
     cfg = Dummy()
     cfg.ib = Dummy()
     cfg.ib.host = "127.0.0.1"
-    cfg.ib.port = 7496
+    cfg.ib.port = 7497
     cfg.ib.client_id = 101
     cfg.ib.market_data_type = 1
     cfg.paths = Dummy()

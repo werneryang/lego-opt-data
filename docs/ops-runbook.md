@@ -3,7 +3,7 @@
 > 本手册面向**生产环境运维与调度**：描述 `opt_data.cli` 相关命令在正式配置上的使用方式与故障排查流程。开发/测试脚本（`data_test/*`）与实验性配置请参阅 `docs/dev/ops-runbook-dev.md`。
 
 ## 运行前准备
-1. 启动 IB Gateway/TWS（默认：`127.0.0.1:7496`），确认登录账号具备美股期权**实时行情**权限；若仅有延迟权限，允许自动降级。
+1. 启动 IB Gateway/TWS（默认：`127.0.0.1:7497`），确认登录账号具备美股期权**实时行情**权限；若仅有延迟权限，允许自动降级。
 2. 推荐使用项目专用虚拟环境（避免污染 base Conda 并触发 NumPy 升级冲突）：
    - venv 路径：`python3.11 -m venv .venv && .venv/bin/pip install --upgrade pip && .venv/bin/pip install -e '.[dev]'`
    - 或 Conda 隔离：`conda create -n opt-data python=3.11 && conda activate opt-data && pip install -e '.[dev]'`
@@ -21,7 +21,7 @@
    - CLI 可临时覆盖：`python -m opt_data.cli snapshot --exchange CBOE --fallback-exchanges CBOEOPT --strikes 2 --ticks 100,233 --timeout 15 --poll-interval 0.5`。
 5. 配置 `.env` / 环境变量：
    - `IB_HOST`（默认 `127.0.0.1`）
-   - `IB_PORT`（默认 `7496`）
+   - `IB_PORT`（默认 `7497`）
    - `IB_CLIENT_ID`（默认 `101`）
    - `IB_MARKET_DATA_TYPE=1`（盘中默认实时；如需强制延迟改为 `3/4`）
    - **收盘快照**：运行前将 `IB_MARKET_DATA_TYPE=2`（盘后/回放模式），命令内部也会强制 `reqMarketDataType(2)` 以读取当日收盘数据
@@ -77,6 +77,7 @@
 4. 模拟无实时权限：临时设置 `market_data_type=3` 再采集一槽，确认输出标记 `delayed_fallback`。
 5. 收盘后运行 `python -m opt_data.cli rollup --date today --config ...`，验证 `rollup_source_slot=13`（或 fallback）与 `rollup_strategy` 字段。
 6. 查看 `state_test/run_logs/` 的 snapshot/rollup 日志，确保记录槽位、回退、延迟等信息。
+7. **历史数据验证**：执行 `python -m opt_data.cli history --symbols AAPL --days 5 --config config/opt-data.test.toml --force-refresh`，确认 `data_test/clean/ib/chain/ib/history` 下生成 JSON 文件。
 
 ## 收盘快照独立 View 与双 Universe 配置
 
@@ -307,7 +308,7 @@ python -m opt_data.cli rollup --date 2025-12-05 --config config/opt-data.toml
 
 **核心配置**
 - 端口与会话
-  - TWS：`7497=Paper`，`7496=Live`（IB Gateway 常见为 `4002=Paper`，`4001=Live`）。以 TWS 配置为准。
+  - TWS：默认统一使用 `7497` 端口（原纸交易端口）；如本地 TWS 配置不同，请按实际调整（IB Gateway 常见为 `4002=Paper`，`4001=Live`）。
   - 连接后以账户号快速自检：`DU*` 多为纸盘，`U*` 多为实盘。
 - 行情类型优先级
   - `marketDataType=1`（实时）优先；若无实时权限，IB 会自动回退到延迟（3/4）。即使显式设置 3/4，只要有实时权限仍可能返回 `1`。

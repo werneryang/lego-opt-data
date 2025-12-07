@@ -112,3 +112,11 @@ If you encounter `No contracts found for <SYMBOL>`, it is likely due to the mone
 ### "HMDS query returned no data"
 This error (Error 162) is common for illiquid option contracts when requesting `MIDPOINT` data. It means no trades or quotes occurred during the requested period. This is expected behavior for deep OTM or far-expiry options.
 
+## Verification
+The `history` command has been verified in a test environment (Paper Trading) using the following procedure:
+1.  **Command**: `python -m opt_data.cli history --symbols AAPL --days 5 --config config/opt-data.test.toml --force-refresh`
+2.  **Result**: Successfully discovered contracts and fetched 5 days of aggregated daily history.
+3.  **Output**: Data files generated in `data_test/clean/ib/chain/ib/history/AAPL/<DATE>/<CONID>.json`.
+4.  **Note**: "HMDS query returned no data" errors were observed for illiquid contracts, which is expected.
+
+
