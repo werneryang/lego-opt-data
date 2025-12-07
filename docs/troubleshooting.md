@@ -233,6 +233,24 @@ Common flags in `data_quality_flag` column:
 
 ---
 
+### 8. Historical Data Errors (Error 162)
+
+**Symptom**: Requesting daily historical data for options fails
+
+```
+Error 162: No data of type EODChart is available for the exchange 'BEST' and the security type 'Option'
+```
+
+**Causes**:
+- IBKR does not support `1 day` bar size for options history
+- Requesting unsupported data types (e.g., `ADJUSTED_LAST`)
+
+**Solutions**:
+- Use **8-hour bars** (`barSizeSetting='8 hours'`) as a workaround for daily data.
+- See the detailed guide: [docs/ibkr-historical-data-guide.md](ibkr-historical-data-guide.md)
+
+---
+
 ## Getting Help
 
 ### Log Files

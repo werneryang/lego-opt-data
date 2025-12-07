@@ -120,6 +120,20 @@ fallback_slot = 12                  # 15:30 槽位（备选）
 allow_intraday_fallback = false     # close view 缺失时是否回退到 intraday
 ```
 
+### Compare 配置与验证
+
+- 目的：在不污染主测试目录的前提下，对收盘快照使用全量 universe + `reqtickers` 进行对比测试。
+- 配置：`config/opt-data.test.compare.toml`，paths 指向 `data_test_compare/`、`state_test_compare/`，fetch_mode 已设为 `reqtickers`。
+- 运行示例：
+  ```bash
+  rm -rf data_test_compare state_test_compare  # 如需重跑先清理
+  python -m opt_data.cli close-snapshot --date today \
+    --config config/opt-data.test.compare.toml \
+    --universe config/universe.csv
+  ```
+- 验证要点：检查 `data_test_compare/clean/ib/chain/view=close/date=YYYY-MM-DD` 标的覆盖与行数；查看 `state_test_compare/run_logs/errors_*` 是否存在 `reference_price_failed` / `snapshot_error`。
+- 使用范围：仅供对比/实验，不计入正式 QA，正式结果仍以 `data_test/` 或生产目录为准。
+
 ---
 
 ## Usage Guide
