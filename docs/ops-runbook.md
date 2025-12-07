@@ -59,10 +59,10 @@
 - OI 回补：`python -m opt_data.cli enrichment --date 2025-09-29 --fields open_interest --config config/opt-data.test.toml`（T+1 通过 `reqMktData` + tick `101` 读取上一交易日收盘 OI；**注意**：enrichment 需要 `market_data_type=1`（实时数据）才能成功获取 OI，否则 tick-101 方法会失败并降级到历史数据方法，而历史数据方法会被 IBKR 拒绝）
 - 历史数据（日线）：`python -m opt_data.cli history --symbols AAPL --days 30 --config config/opt-data.toml`（使用 8-hour bar 聚合获取日线数据，支持 `--force-refresh` 强制刷新合约缓存）
 - 存储维护：`make compact`（周度合并）、`python -m opt_data.cli retention --view intraday --older-than 60`
-- **Console UI（Web 控制台）**：`streamlit run src/opt_data/dashboard/app.py` 或 `.venv/bin/streamlit run src/opt_data/dashboard/app.py`
-  - 在浏览器访问 http://localhost:8501
-  - **Overview 标签**：查看系统指标、快照活动趋势、延迟分布、最近错误
-  - **Console 标签**：数据状态面板、盘中快照控制、EOD 操作（收盘快照、Rollup、Enrichment）、错误日志查看
+- **Console UI（Web 控制台）**：`streamlit run src/opt_data/dashboard/app.py`
+  - **Overview**: 系统状态监控（快照速率、错误率、延迟分布）。
+  - **Operations**: 生产操作面板（快照、Rollup、Enrichment）。
+  - **History**: 日线历史数据获取与可视化（支持 8-hour bar 聚合）。
   - **注意**：Console UI 使用独立的 client ID (200-250 范围)，不会与 CLI 进程冲突；UI 操作为同步执行，长时间操作会阻塞界面
 
 > 若 CLI 尚未提供对应子命令，可调用等价脚本；命令命名需与实现同步。

@@ -13,6 +13,13 @@ from pathlib import Path
 from datetime import datetime, timedelta
 import pytz
 import pyarrow.dataset as ds
+import asyncio
+
+# Fix for ib_insync/eventkit in Streamlit thread
+try:
+    asyncio.get_event_loop()
+except RuntimeError:
+    asyncio.set_event_loop(asyncio.new_event_loop())
 
 # Opt-Data Imports
 from opt_data.config import load_config
@@ -21,6 +28,7 @@ from opt_data.util.calendar import to_et_date, is_trading_day, get_trading_sessi
 from opt_data.pipeline.snapshot import SnapshotRunner
 from opt_data.pipeline.rollup import RollupRunner
 from opt_data.pipeline.enrichment import EnrichmentRunner
+from opt_data.pipeline.history import HistoryRunner
 from opt_data.ib.session import IBSession
 from opt_data.storage.layout import partition_for
 
@@ -191,8 +199,142 @@ def render_overview_tab(df):
     else:
         st.info("No recent errors logged in metrics.")
 
-def render_console_tab():
-    st.header("🛠 Console & Controls")
+def load_history_data(base_path: Path, symbol: str, date_str: str) -> pd.DataFrame:
+    """Load history JSON files for a symbol and date."""
+    target_dir = base_path / symbol / date_str
+    if not target_dir.exists():
+        return pd.DataFrame()
+    
+    data = []
+    for f in target_dir.glob("*.json"):
+        try:
+            content = json.loads(f.read_text())
+            # content is a list of bars
+            for bar in content:
+                bar['conid'] = f.stem
+                data.append(bar)
+        except:
+            pass
+            
+    if not data:
+        return pd.DataFrame()
+        
+    df = pd.DataFrame(data)
+    if 'date' in df.columns:
+        df['date'] = pd.to_datetime(df['date'])
+    return df
+
+def render_history_tab(cfg, universe):
+    st.header("📜 Daily Option History")
+    
+    if not cfg:
+        st.error("Config not loaded.")
+        return
+
+    # 1. Fetch Controls
+    with st.expander("Fetch History", expanded=True):
+        c1, c2, c3, c4 = st.columns([2, 1, 1, 1])
+        
+        with c1:
+            # Symbol selection
+            univ_symbols = [u.symbol for u in universe] if universe else []
+            selected_symbols = st.multiselect("Symbols", univ_symbols, default=["AAPL"])
+            
+        with c2:
+            days = st.number_input("Days", min_value=1, max_value=365, value=30)
+            
+        with c3:
+            force_refresh = st.checkbox("Force Refresh Cache", value=False)
+            
+        with c4:
+            st.write("")
+            st.write("")
+            if st.button("Fetch History", type="primary"):
+                st_hist = st.empty()
+                st_hist.info("Fetching history...")
+                try:
+                    runner = HistoryRunner(cfg)
+                    res = runner.run(
+                        symbols=selected_symbols,
+                        days=days,
+                        force_refresh=force_refresh
+                    )
+                    st_hist.success(f"History Fetch Complete. Processed: {res.get('processed')} symbols.")
+                    if res.get('errors', 0) > 0:
+                        st.warning(f"Errors encountered: {res.get('errors')}")
+                except Exception as e:
+                    st_hist.error(f"Failed: {e}")
+
+    st.divider()
+    
+    # 2. Data Viewer
+    st.subheader("📊 History Viewer")
+    
+    # Path resolution
+    history_base = Path(cfg.paths.clean) / "ib" / "history"
+    
+    if not history_base.exists():
+        st.info("No history data found yet.")
+        return
+        
+    # List available symbols
+    avail_symbols = [d.name for d in history_base.iterdir() if d.is_dir()]
+    if not avail_symbols:
+        st.info("No symbols in history directory.")
+        return
+        
+    v1, v2 = st.columns([1, 3])
+    
+    with v1:
+        view_symbol = st.selectbox("Select Symbol", sorted(avail_symbols))
+        
+        # List dates for symbol
+        sym_dir = history_base / view_symbol
+        avail_dates = sorted([d.name for d in sym_dir.iterdir() if d.is_dir()], reverse=True)
+        
+        if not avail_dates:
+            st.warning("No dates found for symbol.")
+            view_date = None
+        else:
+            view_date = st.selectbox("Select Run Date", avail_dates)
+            
+    with v2:
+        if view_symbol and view_date:
+            df = load_history_data(history_base, view_symbol, view_date)
+            
+            if df.empty:
+                st.warning("No data found in files.")
+            else:
+                st.caption(f"Loaded {len(df)} records (bars) for {view_symbol} on {view_date}")
+                
+                # Metrics
+                m1, m2, m3 = st.columns(3)
+                m1.metric("Total Bars", len(df))
+                m2.metric("Unique Contracts", df['conid'].nunique())
+                
+                # Charting - Close Price of Underlying (if available) or aggregated stats
+                # Since these are option bars, plotting them all is messy.
+                # Let's plot the distribution of Close prices or Volume.
+                
+                tab_data, tab_chart = st.tabs(["Data Table", "Visualization"])
+                
+                with tab_data:
+                    st.dataframe(df, use_container_width=True)
+                    
+                with tab_chart:
+                    # Simple scatter of Strike vs Volume (if strike available in data? No, data is OHLCV)
+                    # We only have conid. We'd need to join with contract info to get strike.
+                    # For now, just plot Volume distribution.
+                    
+                    c = alt.Chart(df).mark_bar().encode(
+                        x=alt.X('close', bin=True, title='Close Price'),
+                        y='count()',
+                        tooltip=['count()']
+                    ).properties(title="Close Price Distribution")
+                    st.altair_chart(c, use_container_width=True)
+
+def render_operations_tab():
+    st.header("🛠 Operations & Controls")
     
     # 1. Top Bar: Context & Date
     col_cfg, col_date, col_date_btn = st.columns([2, 1, 2])
@@ -620,7 +762,7 @@ def main():
         time.sleep(5)
         st.rerun()
 
-    tab1, tab2 = st.tabs(["Overview", "Console"])
+    tab1, tab2, tab3 = st.tabs(["Overview", "Operations", "History"])
     
     # Load metrics for Overview
     df_metrics = load_metrics(2000)
@@ -629,7 +771,17 @@ def main():
         render_overview_tab(df_metrics)
         
     with tab2:
-        render_console_tab()
+        render_operations_tab()
+        
+    with tab3:
+        # Load config for history tab
+        # We need to pick a config. Default to main config for now or let user select inside tab?
+        # render_operations_tab has its own config selector.
+        # Let's reuse the logic or just load default.
+        # Better: Move config selection to sidebar or top level?
+        # For now, load default config for History tab to keep it simple.
+        cfg_hist, univ_hist = load_universe_data("config/opt-data.toml")
+        render_history_tab(cfg_hist, univ_hist)
 
 if __name__ == "__main__":
     main()
