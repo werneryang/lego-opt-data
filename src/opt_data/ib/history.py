@@ -33,6 +33,7 @@ def fetch_daily(
     *,
     what_to_show: str = "TRADES",
     duration: str = "30 D",
+    bar_size: str = "1 day",
     end_date_time: str = "",
     use_rth: bool = True,
     throttle: Throttle | None = None,
@@ -45,13 +46,103 @@ def fetch_daily(
         contract,
         endDateTime=end_date_time,
         durationStr=duration,
-        barSizeSetting="1 day",
+        barSizeSetting=bar_size,
         whatToShow=what_to_show,
         useRTH=use_rth,
         formatDate=2,
         keepUpToDate=False,
     )
-    return list(bars)
+    return list(bars) if bars else []
+
+
+def fetch_option_daily_aggregated(
+    ib: "IB",
+    contract: "Contract",
+    *,
+    what_to_show: str = "MIDPOINT",
+    duration: str = "30 D",
+    end_date_time: str = "",
+    use_rth: bool = True,
+    throttle: Throttle | None = None,
+) -> list[dict[str, Any]]:
+    """
+    Fetch daily bars for options by aggregating 8-hour bars.
+    
+    Workaround for IBKR Error 162 (No data of type EODChart).
+    Requests 8-hour bars and aggregates them into single daily bars.
+    """
+    bars = fetch_daily(
+        ib,
+        contract,
+        what_to_show=what_to_show,
+        duration=duration,
+        bar_size="8 hours",
+        end_date_time=end_date_time,
+        use_rth=use_rth,
+        throttle=throttle,
+    )
+    
+    if not bars:
+        return []
+
+    daily_bars: list[dict[str, Any]] = []
+    current_day = None
+    
+    # Initialize accumulators
+    day_open = 0.0
+    day_high = 0.0
+    day_low = 0.0
+    day_close = 0.0
+    day_volume = 0
+    day_count = 0
+    
+    for b in bars:
+        # b.date is typically datetime.date or datetime.datetime
+        # Ensure we get a date object
+        b_date = b.date.date() if hasattr(b.date, "date") else b.date
+        
+        if b_date != current_day:
+            # Commit previous day
+            if current_day is not None:
+                daily_bars.append({
+                    "date": current_day.isoformat(),
+                    "open": day_open,
+                    "high": day_high,
+                    "low": day_low,
+                    "close": day_close,
+                    "volume": day_volume,
+                    "barCount": day_count,
+                })
+            
+            # Start new day
+            current_day = b_date
+            day_open = b.open
+            day_high = b.high
+            day_low = b.low
+            day_close = b.close
+            day_volume = getattr(b, "volume", 0)
+            day_count = getattr(b, "barCount", 0)
+        else:
+            # Aggregate into current day
+            day_high = max(day_high, b.high)
+            day_low = min(day_low, b.low)
+            day_close = b.close  # Close is always the last bar's close
+            day_volume += getattr(b, "volume", 0)
+            day_count += getattr(b, "barCount", 0)
+            
+    # Commit last day
+    if current_day is not None:
+        daily_bars.append({
+            "date": current_day.isoformat(),
+            "open": day_open,
+            "high": day_high,
+            "low": day_low,
+            "close": day_close,
+            "volume": day_volume,
+            "barCount": day_count,
+        })
+        
+    return daily_bars
 
 
 def fetch_option_open_interest(

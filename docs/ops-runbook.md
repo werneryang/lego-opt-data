@@ -57,6 +57,7 @@
     - `python -m opt_data.cli schedule --simulate --config config/opt-data.test.toml --symbols AAPL,MSFT`
 - 日终归档：`python -m opt_data.cli rollup --date 2025-09-29 --config config/opt-data.test.toml`
 - OI 回补：`python -m opt_data.cli enrichment --date 2025-09-29 --fields open_interest --config config/opt-data.test.toml`（T+1 通过 `reqMktData` + tick `101` 读取上一交易日收盘 OI；**注意**：enrichment 需要 `market_data_type=1`（实时数据）才能成功获取 OI，否则 tick-101 方法会失败并降级到历史数据方法，而历史数据方法会被 IBKR 拒绝）
+- 历史数据（日线）：`python -m opt_data.cli history --symbols AAPL --days 30 --config config/opt-data.toml`（使用 8-hour bar 聚合获取日线数据，支持 `--force-refresh` 强制刷新合约缓存）
 - 存储维护：`make compact`（周度合并）、`python -m opt_data.cli retention --view intraday --older-than 60`
 - **Console UI（Web 控制台）**：`streamlit run src/opt_data/dashboard/app.py` 或 `.venv/bin/streamlit run src/opt_data/dashboard/app.py`
   - 在浏览器访问 http://localhost:8501
@@ -106,6 +107,11 @@ fallback_slot = 12                  # 15:30 备用槽位
 allow_intraday_fallback = false     # close view 缺失时是否回退到 intraday
 ```
 
+**Snapshot 默认参数**：
+- fetch_mode 默认 `reqtickers`（生产/compare 配置）；测试配置如未指定，请补 `fetch_mode=reqtickers` 以对齐。
+- strikes_per_side：生产模板 50，测试模板如为 0 代表不截取行权价。
+- 收盘 `close-snapshot` 强制 `market_data_type=2`；盘中按配置 `ib.market_data_type`。
+
 ### 存储路径
 
 ```
@@ -139,6 +145,23 @@ python -m opt_data.cli close-snapshot --date 2025-12-05 --config config/opt-data
 
 # 覆盖默认 universe（临时使用全量清单采集盘中）
 python -m opt_data.cli snapshot --date today --slot now --universe config/universe.csv
+
+# compare 配置（独立目录，便于对比）
+python -m opt_data.cli close-snapshot --date today --config config/opt-data.test.compare.toml --universe config/universe.csv
+
+# 清理并重跑 compare（需要先删除 compare 目录）
+rm -rf data_test_compare state_test_compare
+python -m opt_data.cli close-snapshot --date today --config config/opt-data.test.compare.toml --universe config/universe.csv
+
+### 运行时参数回显
+
+`snapshot` / `close-snapshot` 在执行前会打印 `[snapshot:params]` / `[close-snapshot:params]`，展示实际生效的配置与路径：config、universe、view、slot、symbols、fetch_mode、strikes_per_side、generic_ticks、market_data_type、paths.raw/clean/state/run_logs，便于核对是否使用了预期的清单与模式。
+
+### 参考价获取与重试
+
+- 参考价获取使用 `fetch_underlying_close`（`reqMktData` snapshot），收盘/盘后默认 `market_data_type=2`。若首次返回 None/NaN，会等待 1 秒再重试一次，并尝试 last/close/bid/ask 回退。
+- 若仍失败，日志中会出现 `reference_price_failed`，该标的会被跳过。可单独重跑：  
+  `python -m opt_data.cli close-snapshot --date <date> --symbols SPY,QQQ --config ...`
 
 # Rollup（优先读取 view=close）
 python -m opt_data.cli rollup --date 2025-12-05 --config config/opt-data.toml

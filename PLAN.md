@@ -91,6 +91,7 @@
 - 重试与日志/性能监控基础设施落地：实现通用 `retry_with_backoff`、性能计时与日志上下文工具，并在 `snapshot`、`rollup`、`enrichment` 等关键路径启用；开发文档见 `docs/dev/retry_and_logging_implementation.md` 与 `docs/dev/retry_usage_guide.md`。
 - 初步可观测性能力上线：新增基于 SQLite 的指标采集器（`MetricsCollector`）、告警接口（`AlertManager`）与 Streamlit Dashboard（`src/opt_data/dashboard/app.py`），rollup 已开始写入基础运行指标。
 - 整理未来改进方向：在 `docs/dev/roadmap.md` 中按短期/中期/长期分类整理后续改进清单，为后续纳入 `PLAN.md`/`TODO.now.md` 提供来源。
+- 新增历史 bars 探针需求：计划利用周五 contracts cache 采样少量合约，调用 IB historical API（TRADES/OI）做可行性验证，输出仅限日志/summary。
 
 ## 本周目标（2025-11-03 当周）
 - **M1 · 槽位与调度（早收盘感知）**

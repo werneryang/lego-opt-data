@@ -14,6 +14,7 @@ from .history import (
     fetch_daily,
     fetch_option_open_interest,
     fetch_midpoint_daily,
+    fetch_option_daily_aggregated,
     bars_to_dicts,
 )
 
@@ -31,5 +32,6 @@ __all__ = [
     "fetch_daily",
     "fetch_option_open_interest",
     "fetch_midpoint_daily",
+    "fetch_option_daily_aggregated",
     "bars_to_dicts",
 ]

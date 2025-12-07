@@ -293,6 +293,7 @@ def discover_contracts_for_symbol(
     # 1) Fetch SecDef params and pick the richest SMART chain (qualifyContracts only, no reqContractDetails)
     try:
         params = _fetch_sec_def_opt_params(ib, symbol, underlying_conid or 0)
+        logger.info(f"SecDef params fetched for {symbol}: {len(params)} chains")
     except Exception as exc:
         logger.error(
             "Failed to fetch SecDefOptParams after retries",
@@ -319,7 +320,10 @@ def discover_contracts_for_symbol(
         secdef = best_overall
     # No debug prints; selection is deterministic based on richest chain.
     if secdef is None:
+        logger.warning(f"No suitable SecDef chain found for {symbol}")
         return []
+
+    logger.info(f"Selected SecDef chain: exchange={secdef.exchange} tradingClass={secdef.tradingClass} strikes={len(secdef.strikes or [])} expirations={len(secdef.expirations or [])}")
 
     # 2) Build candidate grid (expiry x strike), apply scope filters (moneyness/expiry window)
     strikes_all = sorted(float(s) for s in secdef.strikes if s is not None)
@@ -389,7 +393,11 @@ def discover_contracts_for_symbol(
         filtered_expiries = _select_expirations_spy_style(expirations, trade_date)
     else:
         filtered_expiries = sorted(expirations)
+    
+    logger.info(f"Expirations after filtering: {len(filtered_expiries)} (from {len(expirations)})")
+
     if not filtered_expiries or not strikes_all:
+        logger.warning("No expirations or strikes left after filtering")
         return []
     strike_candidates = _select_strikes(
         strikes_all,
@@ -397,7 +405,11 @@ def discover_contracts_for_symbol(
         moneyness_pct=cfg.filters.moneyness_pct,
         max_strikes_per_expiry=max_strikes_per_expiry,
     )
+    
+    logger.info(f"Strike candidates: {len(strike_candidates)} (from {len(strikes_all)})")
+
     if not strike_candidates:
+        logger.warning("No strike candidates found")
         return []
 
     candidates: List[Dict[str, Any]] = []
@@ -436,8 +448,9 @@ def discover_contracts_for_symbol(
         scoped_candidates = candidates
 
     if not scoped_candidates:
+        logger.warning("No scoped candidates found")
         return []
-
+    
     # 3) Build Option list (C/P) and batch-qualify; no per-contract details calls
     options: List[Any] = []
     for cand in scoped_candidates:

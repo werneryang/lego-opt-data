@@ -1,6 +1,7 @@
 # 本周任务（滚动更新）
 
 ## 待办
+- [ ] 历史数据探针：用周五 contracts cache 采样少量合约，调用 IB historical API（TRADES/OI）验证权限与 bars 返回，仅输出日志/summary 文件不落盘数据。
 - [ ] 行权价过滤收敛：将 moneyness 下调（如 0.20），恢复 `strikes_per_side`=2–3 或 `max_strikes_per_expiry`=6–10，重建 AAPL/MSFT 缓存，避免半档/远档引发 Error 200。
 - [ ] 补齐 2025-11-21 全天槽位：在收敛配置下跑满 snapshot → rollup → enrichment（AAPL+MSFT），确保 slot 覆盖率 ≥90%、OI 补齐率达标。
 - [ ] QA 验证：跑 `selfcheck`/`logscan`（2025-11-21），确认 PASS 后再推进 Stage 1；如仍 FAIL，记录槽位缺失/错误来源。

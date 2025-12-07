@@ -137,7 +137,9 @@ class AcquisitionConfig:
     use_rth: bool
     max_strikes_per_expiry: int
     fill_missing_greeks_with_zero: bool
+    fill_missing_greeks_with_zero: bool
     historical_timeout: float
+    throttle_sec: float
 
 
 @dataclass
@@ -606,6 +608,7 @@ def load_config(file: Optional[Path] = None) -> AppConfig:
             g("acquisition", "fill_missing_greeks_with_zero", False)
         ),
         historical_timeout=float(g("acquisition", "historical_timeout", 30.0)),
+        throttle_sec=float(g("acquisition", "throttle_sec", 0.35)),
     )
 
     rollup = RollupConfig(

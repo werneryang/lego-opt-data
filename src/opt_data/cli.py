@@ -22,6 +22,7 @@ from .pipeline.backfill import fetch_underlying_close
 from .pipeline.snapshot import SnapshotRunner
 from .pipeline.rollup import RollupRunner
 from .pipeline.enrichment import EnrichmentRunner
+from .pipeline.history import HistoryRunner
 from .pipeline.scheduler import ScheduleRunner
 from .pipeline.qa import QAMetricsCalculator
 from .util.calendar import to_et_date, is_trading_day
@@ -717,6 +718,40 @@ def update(
     )
 
     typer.echo(f"[update] processed={processed} symbols_processed={len(processed_rows)}")
+
+
+@app.command()
+def history(
+    symbols: Optional[str] = typer.Option(
+        None, help="Comma separated list of symbols (defaults to universe)"
+    ),
+    config: Optional[str] = typer.Option(None, help="Path to config TOML"),
+    days: int = typer.Option(30, help="Number of days of history to fetch"),
+    output: Optional[str] = typer.Option(None, help="Output directory (default: data/clean/ib/history)"),
+    what: str = typer.Option("MIDPOINT", help="Data type (MIDPOINT, TRADES, etc.)"),
+    use_rth: bool = typer.Option(True, help="Use Regular Trading Hours"),
+    force_refresh: bool = typer.Option(False, help="Force refresh contract cache"),
+) -> None:
+    """Fetch daily historical data for options (using 8-hour bar aggregation)."""
+    cfg = load_config(Path(config) if config else None)
+    
+    symbol_list = [s.strip().upper() for s in symbols.split(",")] if symbols else None
+    
+    runner = HistoryRunner(cfg)
+    
+    typer.echo(f"[history] fetching {days} days of {what} data for {symbol_list or 'universe'}")
+    
+    results = runner.run(
+        symbols=symbol_list,
+        days=days,
+        output_dir=Path(output) if output else None,
+        what_to_show=what,
+        use_rth=use_rth,
+    )
+    
+    typer.echo(f"[history] complete. processed={results['processed']} errors={results['errors']}")
+    for sym, stats in results["symbols"].items():
+        typer.echo(f"  {sym}: contracts={stats['contracts']} bars={stats['bars']} errors={stats['errors']}")
 
 
 @app.command()
