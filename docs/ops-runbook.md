@@ -22,7 +22,7 @@
 5. 配置 `.env` / 环境变量：
    - `IB_HOST`（默认 `127.0.0.1`）
    - `IB_PORT`（默认 `7497`）
-   - `IB_CLIENT_ID`（默认 `101`）
+   - `IB_CLIENT_ID`（留空/未设时，按 `client_id_pool` 自动分配；默认范围：prod 0-99，remote 100-199，test 200-250；显式设置则固定使用该值）
    - `IB_MARKET_DATA_TYPE=1`（盘中默认实时；如需强制延迟改为 `3/4`）
    - **收盘快照**：运行前将 `IB_MARKET_DATA_TYPE=2`（盘后/回放模式），命令内部也会强制 `reqMarketDataType(2)` 以读取当日收盘数据
    - `TZ=America/New_York`（统一调度时区）

@@ -4,6 +4,7 @@ from dataclasses import dataclass
 from datetime import date, datetime, time, timedelta
 from typing import Any, Dict, Iterable, List, Sequence
 from zoneinfo import ZoneInfo
+from pathlib import Path
 
 try:
     from apscheduler.schedulers.background import BackgroundScheduler
@@ -252,10 +253,16 @@ class ScheduleRunner:
         slot_label = str(payload["slot_label"])
         symbols = payload.get("symbols")
         slot_obj = self._snapshot_runner.resolve_slot(trade_date, slot_label)
+        universe_path = (
+            self.cfg.universe.intraday_file
+            if self.cfg.universe.intraday_file and Path(self.cfg.universe.intraday_file).exists()
+            else self.cfg.universe.file
+        )
         self._snapshot_runner.run(
             trade_date,
             slot_obj,
             symbols,
+            universe_path=universe_path,
             progress=progress,
         )
 

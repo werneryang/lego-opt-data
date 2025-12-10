@@ -19,11 +19,21 @@ except Exception:  # pragma: no cover - optional at runtime
 
 
 @dataclass
+class IBClientIdPoolConfig:
+    role: str
+    range: tuple[int, int]
+    randomize: bool
+    state_dir: Path
+    lock_ttl_seconds: int
+
+
+@dataclass
 class IBConfig:
     host: str
     port: int
-    client_id: int
+    client_id: int | None
     market_data_type: int
+    client_id_pool: IBClientIdPoolConfig | None = None
 
 
 @dataclass
@@ -139,7 +149,7 @@ class AcquisitionConfig:
     fill_missing_greeks_with_zero: bool
     fill_missing_greeks_with_zero: bool
     historical_timeout: float
-    throttle_sec: float
+    throttle_sec: float = 0.35
 
 
 @dataclass
@@ -196,8 +206,20 @@ class AppConfig:
         if not (1024 <= self.ib.port <= 65535):
             errors.append(f"Invalid IB port: {self.ib.port} (must be 1024-65535)")
         
-        if self.ib.client_id < 0:
+        if self.ib.client_id is not None and self.ib.client_id < 0:
             errors.append(f"Invalid IB client_id: {self.ib.client_id} (must be >= 0)")
+
+        if self.ib.client_id_pool is not None:
+            pool = self.ib.client_id_pool
+            pool_min, pool_max = pool.range
+            if pool_min < 0 or pool_max < 0 or pool_min > pool_max:
+                errors.append(
+                    f"Invalid ib.client_id_pool.range: {pool.range} (must be non-negative and min<=max)"
+                )
+            if pool.lock_ttl_seconds <= 0:
+                errors.append(
+                    f"Invalid ib.client_id_pool.lock_ttl_seconds: {pool.lock_ttl_seconds} (must be > 0)"
+                )
         
         if self.ib.market_data_type not in {1, 2, 3, 4}:
             errors.append(
@@ -439,12 +461,53 @@ def load_config(file: Optional[Path] = None) -> AppConfig:
                 break
         return sec.get(key, default) if isinstance(sec, dict) else default
 
+    def _pool_range(role: str, range_raw: Any) -> tuple[int, int]:
+        default_ranges = {
+            "prod": (0, 99),
+            "remote": (100, 199),
+            "test": (200, 250),
+        }
+        default_range = default_ranges.get(role, default_ranges["prod"])
+        values: list[int] = []
+        if isinstance(range_raw, str):
+            values = [int(tok.strip()) for tok in range_raw.split(",") if tok.strip()]
+        elif isinstance(range_raw, (list, tuple)):
+            values = [int(x) for x in list(range_raw)]
+        if len(values) >= 2:
+            return values[0], values[1]
+        return default_range
+
+    pool_role = str(g("ib.client_id_pool", "role", "prod")).strip().lower() or "prod"
+    pool_range_raw = g("ib.client_id_pool", "range", None)
+    pool_range = _pool_range(pool_role, pool_range_raw)
+    pool_randomize = bool(g("ib.client_id_pool", "randomize", True))
+    pool_state_dir = _as_path(g("ib.client_id_pool", "state_dir", "state/client_ids"))
+    pool_lock_ttl = int(g("ib.client_id_pool", "lock_ttl_seconds", 7200))
+
+    client_id_pool = IBClientIdPoolConfig(
+        role=pool_role,
+        range=pool_range,
+        randomize=pool_randomize,
+        state_dir=pool_state_dir,
+        lock_ttl_seconds=pool_lock_ttl,
+    )
+
     ib = IBConfig(
         host=g("ib", "host", "127.0.0.1"),
-        port=g("ib", "port", 7497),
-        client_id=g("ib", "client_id", 101),
+        port=g("ib", "port", 4001),
+        client_id=None,  # set below after normalizing
         market_data_type=g("ib", "market_data_type", 2),
+        client_id_pool=client_id_pool,
     )
+    client_id_raw = g("ib", "client_id", 101)
+    normalized_client_id: int | None
+    if isinstance(client_id_raw, str) and client_id_raw.strip().lower() in {"auto", "none", "null"}:
+        normalized_client_id = None
+    elif isinstance(client_id_raw, int) and client_id_raw < 0:
+        normalized_client_id = None
+    else:
+        normalized_client_id = int(client_id_raw) if client_id_raw is not None else None
+    ib.client_id = normalized_client_id
 
     tz = TimezoneConfig(
         name=g("timezone", "name", "America/New_York"),

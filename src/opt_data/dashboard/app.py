@@ -9,6 +9,7 @@ import time
 import json
 import altair as alt
 import os
+from typing import Any
 from pathlib import Path
 from datetime import datetime, timedelta
 import pytz
@@ -22,7 +23,7 @@ except RuntimeError:
     asyncio.set_event_loop(asyncio.new_event_loop())
 
 # Opt-Data Imports
-from opt_data.config import load_config
+from opt_data.config import load_config, IBClientIdPoolConfig
 from opt_data.universe import load_universe
 from opt_data.util.calendar import to_et_date, is_trading_day, get_trading_session
 from opt_data.pipeline.snapshot import SnapshotRunner
@@ -70,6 +71,30 @@ def load_universe_data(config_path):
         return cfg, univ
     except Exception as e:
         return None, []
+
+
+def _ui_client_id_pool(cfg):
+    """Use test pool (200-250) with locking to avoid UI collisions."""
+    pool = cfg.ib.client_id_pool
+    return IBClientIdPoolConfig(
+        role="test",
+        range=(200, 250),
+        randomize=pool.randomize if pool else True,
+        state_dir=pool.state_dir if pool else Path("state/client_ids"),
+        lock_ttl_seconds=pool.lock_ttl_seconds if pool else 7200,
+    )
+
+
+def _ui_session_factory(cfg, *, market_data_type=None):
+    pool = _ui_client_id_pool(cfg)
+    md_type = market_data_type if market_data_type is not None else cfg.ib.market_data_type
+    return lambda: IBSession(
+        host=cfg.ib.host,
+        port=cfg.ib.port,
+        client_id=None,  # use pool allocator
+        client_id_pool=pool,
+        market_data_type=md_type,
+    )
 
 def get_recent_errors(limit=50):
     """Load recent errors from jsonl logs."""
@@ -429,17 +454,8 @@ def render_operations_tab():
             # Re-init runner with fresh config just in case
             run_cfg = load_config(Path(selected_config))
             
-            # Use unique client ID for dashboard (200+) to avoid conflicts
-            import random
-            unique_client_id = 200 + random.randint(0, 50)
-            
             def dashboard_session_factory():
-                return IBSession(
-                    host=run_cfg.ib.host,
-                    port=run_cfg.ib.port,
-                    client_id=unique_client_id,
-                    market_data_type=run_cfg.ib.market_data_type
-                )
+                return _ui_session_factory(run_cfg, market_data_type=run_cfg.ib.market_data_type)()
             
             sn_runner = SnapshotRunner(run_cfg, snapshot_grace_seconds=run_cfg.cli.snapshot_grace_seconds, session_factory=dashboard_session_factory)
             
@@ -475,21 +491,14 @@ def render_operations_tab():
         if st.button("Run Close Snapshot"):
             st_eod = st.empty()
             st_eod.info("Running Close Snapshot...")
+            progress_box = st.empty()
+            progress_lines: list[str] = []
             try:
                 run_cfg = load_config(Path(selected_config))
                 
-                # Use unique client ID for dashboard (200+) to avoid conflicts
-                import random
-                unique_client_id = 200 + random.randint(0, 50)
-                
                 # Factory for market_data_type=2 (Frozen)
                 def frozen_session_factory():
-                    return IBSession(
-                        host=run_cfg.ib.host,
-                        port=run_cfg.ib.port,
-                        client_id=unique_client_id,
-                        market_data_type=2
-                    )
+                    return _ui_session_factory(run_cfg, market_data_type=2)()
                 
                 sn_runner = SnapshotRunner(run_cfg, snapshot_grace_seconds=run_cfg.cli.snapshot_grace_seconds, session_factory=frozen_session_factory)
                 
@@ -499,7 +508,24 @@ def render_operations_tab():
                     raise ValueError("No slots found for date")
                 close_slot = slots[-1]
                 
-                res = sn_runner.run(selected_date, close_slot, symbols=symbols_arg)
+                def progress_cb(symbol: str, status: str, extra: dict[str, Any]) -> None:
+                    parts = [status]
+                    if symbol:
+                        parts.append(symbol)
+                    if extra:
+                        parts.append(", ".join(f"{k}={v}" for k, v in extra.items()))
+                    progress_lines.append(" ".join(parts))
+                    # Show the last few updates to avoid flooding the UI
+                    progress_box.markdown("\n".join(progress_lines[-8:]))
+
+                res = sn_runner.run(
+                    selected_date,
+                    close_slot,
+                    symbols=symbols_arg,
+                    ingest_run_type="close_snapshot",
+                    view="close",
+                    progress=progress_cb,
+                )
                 st_eod.success(f"Close Snapshot Done. Rows: {res.rows_written}")
             except Exception as e:
                 st_eod.error(f"Failed: {e}")
@@ -542,24 +568,49 @@ def render_operations_tab():
         
         if st.button("Run Enrichment"):
             st_enr = st.empty()
+            progress_box = st.empty()
+            progress_lines: list[str] = []
             st_enr.info(f"Running Enrichment (Overwrite={allow_overwrite})...")
             try:
                 run_cfg = load_config(Path(selected_config))
                 
-                # Use unique client ID for dashboard (200+) to avoid conflicts
-                import random
-                unique_client_id = 200 + random.randint(0, 50)
-                
                 def dashboard_session_factory():
-                    return IBSession(
-                        host=run_cfg.ib.host,
-                        port=run_cfg.ib.port,
-                        client_id=unique_client_id,
-                        market_data_type=run_cfg.ib.market_data_type
-                    )
+                    return _ui_session_factory(run_cfg, market_data_type=run_cfg.ib.market_data_type)()
+
+                def progress_cb(symbol: str, status: str, extra: dict[str, Any]) -> None:
+                    # Build a readable progress line with totals and symbol info
+                    done = extra.get("done")
+                    total = extra.get("total")
+                    symbols_done = extra.get("symbols_done")
+                    symbols_total = extra.get("symbols_total")
+
+                    pieces = [status]
+                    if symbol:
+                        pieces.append(f"symbol={symbol}")
+                    if done is not None and total is not None:
+                        pieces.append(f"{done}/{total}")
+                    if symbols_done is not None and symbols_total is not None:
+                        pieces.append(f"symbols {symbols_done}/{symbols_total}")
+
+                    # Append any remaining fields for debugging
+                    remaining = {
+                        k: v
+                        for k, v in extra.items()
+                        if k not in {"done", "total", "symbols_done", "symbols_total"}
+                    }
+                    if remaining:
+                        pieces.append(", ".join(f"{k}={v}" for k, v in remaining.items()))
+
+                    progress_lines.append(" ".join(pieces))
+                    progress_box.markdown("\n".join(progress_lines[-8:]))
                 
                 enr_runner = EnrichmentRunner(run_cfg, session_factory=dashboard_session_factory)
-                res = enr_runner.run(selected_date, symbols=symbols_arg, force_overwrite=allow_overwrite)
+                res = enr_runner.run(
+                    selected_date,
+                    symbols=symbols_arg,
+                    force_overwrite=allow_overwrite,
+                    progress=progress_cb,
+                )
                 
                 st_enr.success(f"Enrichment Done. Updated: {res.rows_updated}")
                 

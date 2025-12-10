@@ -3,9 +3,16 @@
 
 [ib]
 host = "127.0.0.1"
-port = 7497          # TWS 默认端口；如使用其他端口请在此调整
-client_id = 101
-market_data_type = 1 # 1=实时（推荐用于 enrichment）, 2=冻结, 3=延迟, 4=延迟冻结
+port = 4001          # 实盘:7496, 仿真:7497, IBGateway: 实盘4001, 仿真4002   
+client_id = -1       # 设为 -1 或 "auto" 则使用 client_id_pool 自动分配；设为整数则固定使用该值
+market_data_type = 1 # 1=实时（推荐用于 enrichment）, 2=冻结（盘后/close 用）, 3=延迟, 4=延迟冻结
+
+[ib.client_id_pool]
+role = "prod"             # prod|remote|test
+range = []                # 为空则按 role 使用默认范围：prod 0-99；remote 100-199；test 200-250
+randomize = true          # 是否打散尝试顺序
+state_dir = "state/client_ids"   # 本地锁文件目录，用于避免同机重复 clientId
+lock_ttl_seconds = 7200    # 锁过期时间，避免异常退出后长时间占用
 
 [timezone]
 name = "America/New_York"
@@ -20,7 +27,7 @@ run_logs = "state/run_logs"
 
 [universe]
 file = "config/universe.csv"              # 默认全量标的清单（Symbol,conid）
-intraday_file = "config/universe.intraday.csv"  # 盘中快照精简版（可选）
+intraday_file = "config/universe.csv"  # 盘中快照精简版（可选）
 close_file = ""                           # 收盘快照专用（为空则使用 file）
 refresh_days = 30                         # 可选：多少天后提醒更新成分
 

@@ -4,7 +4,7 @@ import json
 import logging
 from datetime import date
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any, Callable, Dict, List, Optional
 
 from ib_insync import IB
 
@@ -31,6 +31,9 @@ class HistoryRunner:
         what_to_show: str = "MIDPOINT",
         use_rth: bool = True,
         force_refresh: bool = False,
+        incremental: bool = False,
+        bar_size: str = "8 hours",
+        progress_callback: Optional[Callable[[int, int, str, Dict[str, Any]], None]] = None,
     ) -> Dict[str, Any]:
         """
         Run history collection for specified symbols.
@@ -44,6 +47,9 @@ class HistoryRunner:
             what_to_show: Data type (MIDPOINT, TRADES, etc.)
             use_rth: Whether to use Regular Trading Hours
             force_refresh: Force refresh contract cache
+            incremental: If True, only fetch missing days based on existing data
+            bar_size: Bar size to use (default "8 hours")
+            progress_callback: Callback(current, total, status, details)
         """
         if not output_dir:
             output_dir = self.cfg.paths.clean / "ib" / "history"
@@ -55,9 +61,6 @@ class HistoryRunner:
             universe = load_universe(Path(self.cfg.universe.file))
             symbols = [u.symbol for u in universe]
             
-        # Default duration string
-        duration_str = f"{days} D" if days else "30 D"
-        
         # Use today as reference date if not provided
         ref_date = end_date or date.today()
         
@@ -71,17 +74,51 @@ class HistoryRunner:
             host=self.cfg.ib.host,
             port=self.cfg.ib.port,
             client_id=self.cfg.ib.client_id,
+            client_id_pool=self.cfg.ib.client_id_pool,
             market_data_type=self.cfg.ib.market_data_type,
         )
 
+        total_symbols = len(symbols)
+        
         with session as sess:
             ib = sess.ensure_connected()
             
-            for symbol in symbols:
+            for i, symbol in enumerate(symbols):
                 logger.info(f"Processing history for {symbol}...")
                 symbol_stats = {"contracts": 0, "bars": 0, "errors": 0}
                 
+                # Report progress start
+                if progress_callback:
+                    progress_callback(i, total_symbols, f"Starting {symbol}", {})
+
                 try:
+                    # Determine duration based on incremental logic
+                    duration_str = f"{days or 30} D"
+                    
+                    if incremental:
+                        # Check existing data
+                        symbol_dir = output_dir / symbol
+                        if symbol_dir.exists():
+                            # Find max date folder
+                            existing_dates = sorted([d.name for d in symbol_dir.iterdir() if d.is_dir()])
+                            if existing_dates:
+                                last_date_str = existing_dates[-1]
+                                try:
+                                    last_date = date.fromisoformat(last_date_str)
+                                    # Calculate gap
+                                    gap_days = (ref_date - last_date).days
+                                    if gap_days <= 0:
+                                        logger.info(f"Skipping {symbol}: Up to date (last: {last_date})")
+                                        if progress_callback:
+                                            progress_callback(i + 1, total_symbols, f"Skipped {symbol} (Up to date)", {})
+                                        continue
+                                    
+                                    # Fetch gap + buffer (e.g. 1 day)
+                                    duration_str = f"{gap_days} D"
+                                    logger.info(f"Incremental fetch for {symbol}: {duration_str} (last: {last_date})")
+                                except ValueError:
+                                    pass
+
                     # 1. Resolve underlying conid
                     from ib_insync import Stock, Index
                     
@@ -100,9 +137,6 @@ class HistoryRunner:
                     underlying_conid = qualified[0].conId
                     logger.info(f"Resolved {symbol} to conid {underlying_conid}")
 
-                    underlying_conid = qualified[0].conId
-                    logger.info(f"Resolved {symbol} to conid {underlying_conid}")
-
                     # 2. Fetch reference price for filtering
                     # We need a price to filter strikes. 
                     # If ref_date is today, we could use live price, but historical close is safer/consistent.
@@ -111,15 +145,6 @@ class HistoryRunner:
                     
                     # We need to construct a Contract for the underlying
                     underlying_contract = qualified[0]
-                    
-                    # Fetch 1 day of history ending at ref_date (or slightly after to ensure coverage)
-                    # If ref_date is today, we might get yesterday's close if market is open, or today's if closed.
-                    # To be safe, let's ask for 2 days ending today/ref_date.
-                    
-                    # Actually, fetch_daily expects a Contract.
-                    # And it returns a DataFrame or list of bars.
-                    # Let's use a simple reqHistoricalData for 1 day ending now if ref_date is today,
-                    # or ending at ref_date if it's historical.
                     
                     end_dt = ""
                     if ref_date:
@@ -163,10 +188,18 @@ class HistoryRunner:
                         continue
                         
                     # 2. Fetch history for each contract
-                    symbol_dir = output_dir / symbol / ref_date.isoformat()
-                    symbol_dir.mkdir(parents=True, exist_ok=True)
+                    # Use ref_date for directory structure, even if incremental
+                    # Ideally we should store by date of data, but here we store by run date/ref date
+                    # If incremental, we might want to append to existing? 
+                    # The current structure is history/SYMBOL/DATE/conid.json
+                    # If we run incremental for today, we create a new DATE folder.
+                    # This is fine.
                     
-                    for contract_dict in contracts:
+                    current_run_dir = output_dir / symbol / ref_date.isoformat()
+                    current_run_dir.mkdir(parents=True, exist_ok=True)
+                    
+                    total_contracts = len(contracts)
+                    for c_idx, contract_dict in enumerate(contracts):
                         try:
                             # Reconstruct Contract object
                             # Note: discover_contracts_for_symbol returns dicts
@@ -186,31 +219,80 @@ class HistoryRunner:
                             contract.conId = int(c.get("conid", 0))
                             contract.includeExpired = True
                             
-                            bars = fetch_option_daily_aggregated(
-                                ib,
-                                contract,
-                                what_to_show=what_to_show,
-                                duration=duration_str,
-                                use_rth=use_rth,
-                                throttle=self.throttle
-                            )
+                            # Use fetch_option_daily_aggregated which handles 8-hour aggregation
+                            # If bar_size is not 8 hours, we might need direct fetch?
+                            # But fetch_option_daily_aggregated is hardcoded for 8 hours logic.
+                            # If user asks for '1 hour', we should use standard fetch?
+                            # For now, assume bar_size="8 hours" uses the aggregator, others use standard (if supported)
+                            
+                            if bar_size == "8 hours":
+                                bars = fetch_option_daily_aggregated(
+                                    ib,
+                                    contract,
+                                    what_to_show=what_to_show,
+                                    duration=duration_str,
+                                    use_rth=use_rth,
+                                    throttle=self.throttle
+                                )
+                            else:
+                                # Fallback to standard fetch (might fail for 1 day)
+                                # But useful for 1 hour etc.
+                                bars = ib.reqHistoricalData(
+                                    contract,
+                                    endDateTime=end_dt,
+                                    durationStr=duration_str,
+                                    barSizeSetting=bar_size,
+                                    whatToShow=what_to_show,
+                                    useRTH=use_rth,
+                                    formatDate=1,
+                                    keepUpToDate=False
+                                )
+                                # Convert objects to dicts
+                                if bars:
+                                    bars = [
+                                        {
+                                            "date": b.date.isoformat() if hasattr(b.date, "isoformat") else str(b.date),
+                                            "open": b.open,
+                                            "high": b.high,
+                                            "low": b.low,
+                                            "close": b.close,
+                                            "volume": b.volume,
+                                            "barCount": b.barCount,
+                                            "average": b.average
+                                        }
+                                        for b in bars
+                                    ]
                             
                             if bars:
                                 # Save to file
-                                out_file = symbol_dir / f"{contract.conId}.json"
+                                out_file = current_run_dir / f"{contract.conId}.json"
                                 out_file.write_text(json.dumps(bars), encoding="utf-8")
                                 symbol_stats["contracts"] += 1
                                 symbol_stats["bars"] += len(bars)
                             
+                            # Update progress periodically
+                            if progress_callback and c_idx % 10 == 0:
+                                progress_callback(
+                                    i, total_symbols, 
+                                    f"Fetching {symbol}: {c_idx}/{total_contracts}", 
+                                    {"contracts_done": c_idx}
+                                )
+                            
                         except Exception as exc:
-                            logger.error(f"Failed to fetch history for {symbol} conid={c.get('conid')}: {exc}")
+                            # Log but don't spam
+                            # logger.error(f"Failed to fetch history for {symbol} conid={c.get('conid')}: {exc}")
                             symbol_stats["errors"] += 1
                             
                     results["symbols"][symbol] = symbol_stats
                     results["processed"] += 1
                     
+                    if progress_callback:
+                        progress_callback(i + 1, total_symbols, f"Completed {symbol}", symbol_stats)
+                    
                 except Exception as exc:
                     logger.error(f"Failed to process symbol {symbol}: {exc}")
                     results["errors"] += 1
+                    if progress_callback:
+                        progress_callback(i + 1, total_symbols, f"Failed {symbol}: {exc}", {"error": str(exc)})
                     
         return results

@@ -11,11 +11,11 @@ from typing import Any, Dict, Iterable, Sequence
 
 import math
 import pandas as pd
+import time
 
 from ..config import AppConfig
 from ..storage.layout import partition_for
 from ..storage.writer import ParquetWriter
-from ..util.ratelimit import TokenBucket
 from ..util.performance import log_performance
 from .cleaning import CleaningPipeline
 from ..ib.session import IBSession
@@ -43,6 +43,7 @@ def _default_session_factory(cfg: AppConfig) -> IBSession:
         host=cfg.ib.host,
         port=cfg.ib.port,
         client_id=cfg.ib.client_id,
+        client_id_pool=cfg.ib.client_id_pool,
         market_data_type=cfg.ib.market_data_type,
     )
 
@@ -64,16 +65,12 @@ class EnrichmentRunner:
     ) -> None:
         self.cfg = cfg
         self._session_factory = session_factory or (lambda: _default_session_factory(cfg))
-        self._oi_fetcher = oi_fetcher or self._fetch_open_interest
+        self._oi_fetcher = oi_fetcher  # Optional single-row fetcher for tests/overrides
         self._writer = writer or ParquetWriter(cfg)
         self._cleaner = cleaner or CleaningPipeline.create(cfg)
         self._now_fn = now_fn or datetime.utcnow
         self._oi_duration = oi_duration or cfg.enrichment.oi_duration
         self._oi_use_rth = oi_use_rth if oi_use_rth is not None else cfg.enrichment.oi_use_rth
-        self._limiter = TokenBucket.create(
-            capacity=cfg.rate_limits.historical.burst,
-            refill_per_minute=cfg.rate_limits.historical.per_minute,
-        )
 
     @log_performance(logger, "enrichment")
     def run(
@@ -118,16 +115,80 @@ class EnrichmentRunner:
         wanted = {sym.upper() for sym in symbols} if symbols else None
         update_timestamp = self._now_fn()
 
-        total_considered = 0
+        grand_total = 0  # total contracts to consider across all symbols
         total_updated = 0
+        total_processed = 0  # counts successes + misses for progress reporting
+        symbols_total = 0
+        symbols_done = 0
+        symbol_targets: dict[str, int] = defaultdict(int)  # symbol -> contracts needing OI
+        remaining_per_symbol: dict[str, int] = {}
+        completed_symbols: set[str] = set()
+        total_considered = 0
         symbols_touched: set[str] = set()
 
         session = self._session_factory()
         error_file = Path(self.cfg.paths.run_logs) / "errors" / f"errors_{trade_date:%Y%m%d}.log"
 
+        part_paths = sorted(target_dir.rglob("part-000.parquet"))
+        if not part_paths:
+            return EnrichmentResult(
+                ingest_id=ingest_id,
+                trade_date=trade_date,
+                symbols_processed=0,
+                rows_considered=0,
+                rows_updated=0,
+                daily_clean_paths=daily_clean_paths,
+                daily_adjusted_paths=daily_adjusted_paths,
+                enrichment_paths=enrichment_paths,
+                errors=errors,
+            )
+
+        # Prescan to compute total work (additional read, but gives fixed totals for UI)
+        for part_path in part_paths:
+            try:
+                df = pd.read_parquet(part_path)
+            except Exception:
+                continue  # actual run will log errors; skip for prescan
+            if df.empty:
+                continue
+            underlying = str(df.get("underlying", pd.Series([""])).iloc[0]).upper()
+            if wanted and underlying not in wanted:
+                continue
+            mask = df.apply(lambda r: _needs_open_interest(r, force_overwrite=force_overwrite), axis=1)
+            considered = int(mask.sum())
+            if considered == 0:
+                continue
+            symbol_targets[underlying] += considered
+            grand_total += considered
+
+        total_considered = grand_total
+        symbols_total = len(symbol_targets)
+        remaining_per_symbol = dict(symbol_targets)
+
+        if progress and grand_total > 0:
+            progress("", "init_total", {"total": grand_total, "symbols_total": symbols_total})
+
+        if grand_total == 0:
+            return EnrichmentResult(
+                ingest_id=ingest_id,
+                trade_date=trade_date,
+                symbols_processed=0,
+                rows_considered=0,
+                rows_updated=0,
+                daily_clean_paths=daily_clean_paths,
+                daily_adjusted_paths=daily_adjusted_paths,
+                enrichment_paths=enrichment_paths,
+                errors=errors,
+            )
+
         with session as sess:
             ib = sess.ensure_connected()
-            for part_path in sorted(target_dir.rglob("part-000.parquet")):
+            # Enforce live market data for tick-101 path
+            try:
+                ib.reqMarketDataType(1)
+            except Exception:
+                pass
+            for part_path in part_paths:
                 try:
                     df = pd.read_parquet(part_path)
                 except Exception as exc:
@@ -154,16 +215,41 @@ class EnrichmentRunner:
                 if considered == 0:
                     continue
 
-                total_considered += considered
                 updated_here = 0
-
-                for idx, row in df.loc[mask].iterrows():
-                    conid = int(row["conid"])
-                    fetch_result = self._fetch_with_limits(
+                rows_to_fetch = df.loc[mask]
+                use_custom_fetcher = self._oi_fetcher is not None
+                batch_results: dict[int, tuple[int | float, date]] = {}
+                if not use_custom_fetcher:
+                    batch_results = self._fetch_batch_tick101(
                         ib,
-                        row,
+                        rows_to_fetch,
                         trade_date,
+                        timeout=8.0,
+                        poll=0.25,
+                        batch_size=50,
                     )
+
+                for idx, row in rows_to_fetch.iterrows():
+                    conid = int(row["conid"])
+                    fetch_result: tuple[int | float, date] | None = None
+                    fetch_error: Exception | None = None
+
+                    if use_custom_fetcher:
+                        try:
+                            fetch_result = self._oi_fetcher(  # type: ignore[misc]
+                                ib,
+                                row,
+                                trade_date,
+                                duration=self._oi_duration,
+                                use_rth=self._oi_use_rth,
+                            )
+                        except Exception as exc:  # pragma: no cover - passthrough for tests
+                            fetch_error = exc
+                    else:
+                        fetch_result = batch_results.get(conid)
+
+                    total_processed += 1
+
                     if fetch_result is None:
                         payload = {
                             "component": "enrichment",
@@ -171,7 +257,9 @@ class EnrichmentRunner:
                             "symbol": underlying,
                             "exchange": exchange,
                             "conid": conid,
-                            "message": "No open interest data returned",
+                            "message": "No open interest data returned"
+                            if fetch_error is None
+                            else str(fetch_error),
                         }
                         errors.append(payload)
                         _write_error_line(error_file, payload)
@@ -179,7 +267,14 @@ class EnrichmentRunner:
                             progress(
                                 underlying,
                                 "open_interest_missing",
-                                {"conid": conid},
+                                {
+                                    "conid": conid,
+                                    "done": total_processed,
+                                    "total": grand_total,
+                                    "symbol": underlying,
+                                    "symbols_done": symbols_done,
+                                    "symbols_total": symbols_total,
+                                },
                             )
                         continue
 
@@ -243,8 +338,35 @@ class EnrichmentRunner:
                         progress(
                             underlying,
                             "open_interest_updated",
-                            {"conid": conid, "open_interest": oi_value},
+                            {
+                                "conid": conid,
+                                "open_interest": oi_value,
+                                "done": total_processed,
+                                "total": grand_total,
+                                "symbol": underlying,
+                                "symbols_done": symbols_done,
+                                "symbols_total": symbols_total,
+                            },
                         )
+
+                    # Track symbol completion based on prescan counts
+                    if underlying in remaining_per_symbol:
+                        remaining_per_symbol[underlying] -= 1
+                        if remaining_per_symbol[underlying] <= 0 and underlying not in completed_symbols:
+                            completed_symbols.add(underlying)
+                            symbols_done += 1
+                            if progress:
+                                progress(
+                                    underlying,
+                                    "symbol_done",
+                                    {
+                                        "done": total_processed,
+                                        "total": grand_total,
+                                        "symbol": underlying,
+                                        "symbols_done": symbols_done,
+                                        "symbols_total": symbols_total,
+                                    },
+                                )
 
                 if updated_here == 0:
                     continue
@@ -343,165 +465,58 @@ class EnrichmentRunner:
         if unsupported:
             raise ValueError(f"Unsupported enrichment fields: {sorted(unsupported)}")
 
-    def _fetch_with_limits(
+    def _fetch_batch_tick101(
         self,
         ib: Any,
-        row: pd.Series,
-        trade_date: date,
-    ) -> tuple[int | float, date] | None:
-        while not self._limiter.try_acquire():
-            # Simple sleep to avoid busy waiting
-            import time
-
-            time.sleep(0.1)
-        return self._oi_fetcher(
-            ib,
-            row,
-            trade_date,
-            duration=self._oi_duration,
-            use_rth=self._oi_use_rth,
-        )
-
-    def _fetch_open_interest(
-        self,
-        ib: Any,
-        row: pd.Series,
+        rows: pd.DataFrame,
         trade_date: date,
         *,
-        duration: str | None = None,
-        use_rth: bool | None = None,
-    ) -> tuple[int | float, date] | None:
-        """
-        双模式获取前一日 EOD Open Interest（优先快，保底准）
-
-        1. 首选：tick-101 实时流（要求 live 订阅，极快，80~90% 成功率）
-        2. 降级：historical OPTION_OPEN_INTEREST 1D bar（100% 可靠，pacing 宽松）
-
-        2025 年实测：AAPL、SPY、TSLA、NVDA 等全部稳拿。
-        """
-
-        conid = int(row["conid"])
-        underlying = str(row.get("underlying") or row.get("symbol", "")).upper()
-        right = str(row.get("right") or "").upper().startswith("C") and "C" or "P"
-
-        # ————————————————————
-        # 1. 快速路径：tick-101（实时订阅下 0.5~3 秒返回）
-        # ————————————————————
-        if self.cfg.ib.market_data_type == 1:  # 只有 live 才值得尝试
-            try:
-                oi = self._fetch_via_tick101(ib, row, trade_date, timeout=8.0)
-                if oi is not None:
-                    logger.debug("OI tick-101 success | %s %s conId=%s OI=%.0f", underlying, right, conid, oi)
-                    return oi, trade_date
-                else:
-                    logger.info("OI tick-101 empty | %s %s conId=%s → fallback historical", underlying, right, conid)
-            except Exception as e:
-                logger.debug("OI tick-101 exception | %s conId=%s | %s", underlying, conid, e)
-
-        # ————————————————————
-        # 2. 保底路径：historical OPTION_OPEN_INTEREST（任何订阅等级都行）
-        # ————————————————————
-        try:
-            oi = self._fetch_via_historical_oi_bar(ib, row, trade_date, timeout=20.0)
-            if oi is not None:
-                logger.debug("OI historical success | %s %s conId=%s OI=%.0f", underlying, right, conid, oi)
-                return oi, trade_date
-            else:
-                logger.warning("OI both methods failed | %s %s conId=%s", underlying, right, conid)
-        except Exception as e:
-            logger.error("OI historical exception | %s conId=%s | %s", underlying, conid, e, exc_info=True)
-
-        return None
-
-    # ———————————————————— 子函数 ————————————————————
-
-    def _fetch_via_tick101(self, ib, row: pd.Series, trade_date: date, *, timeout: float = 8.0):
-        from ib_insync import Contract
-        import asyncio
-
-        contract = Contract(conId=int(row["conid"]), secType="OPT", exchange="SMART")
-        try:
-            ib.qualifyContracts(contract)
-        except:
-            return None
-
-        def _extract(ticker):
-            # 1. Select the correct OI field based on option direction
-            right = row.get("right", "").upper()
-            field_name = "callOpenInterest" if right.startswith("C") else "putOpenInterest"
-            val = getattr(ticker, field_name, None)
-            
-            # 2. If primary field is invalid, try generic openInterest field
-            if val is None or val <= 0 or math.isnan(val):
-                val = getattr(ticker, "openInterest", None)
-            
-            # 3. Strict validation: must exist, be >0, and not NaN
-            if val is not None and val > 0 and not math.isnan(val):
-                return float(val)
-            
-            return None
-
-        ticker = ib.reqMktData(contract, "101", snapshot=False, regulatorySnapshot=False)
-        done = asyncio.Event()
-        captured = None
-
-        def on_update(t):
-            nonlocal captured
-            if captured is None:
-                captured = _extract(t)
-                if captured is not None:
-                    logger.debug(
-                        "OI tick-101 received | conId=%s right=%s value=%.0f",
-                        row["conid"], row.get("right", "?"), captured
-                    )
-                    done.set()
-
-        ticker.updateEvent += on_update
-        try:
-            oi = ib.run(asyncio.wait_for(done.wait(), timeout=timeout))
-            return captured
-        except asyncio.TimeoutError:
-            logger.debug(
-                "OI tick-101 timeout | conId=%s after %.1fs (will fallback)",
-                row["conid"], timeout
-            )
-            return None
-        finally:
-            ticker.updateEvent -= on_update
-            ib.cancelMktData(contract)
-
-    def _fetch_via_historical_oi_bar(self, ib, row: pd.Series, trade_date: date, *, timeout: float = 20.0):
+        timeout: float = 15.0,
+        poll: float = 0.25,
+        batch_size: int = 50,
+    ) -> dict[int, tuple[int | float, date]]:
         from ib_insync import Option
-        import datetime as dt
 
-        # Fix: Explicitly set exchange to SMART to avoid "Please enter exchange" error
-        exchange = row.get("exchange") or "SMART"
-        contract = Option(conId=int(row["conid"]), exchange=exchange)
+        results: dict[int, tuple[int | float, date]] = {}
+        if rows.empty:
+            return results
 
-        # T+1 的 00:00 作为结束时间，确保拿到前一交易日的收盘 OI
-        end_dt = dt.datetime.combine(trade_date + dt.timedelta(days=1), dt.time(0, 0))
+        # Prepare contracts
+        contracts: list[Option] = []
+        for _, row in rows.iterrows():
+            conid = int(row["conid"])
+            exchange = row.get("exchange") or "SMART"
+            contracts.append(Option(conId=conid, exchange=exchange))
 
-        bars = ib.reqHistoricalData(
-            contract,
-            endDateTime=end_dt,
-            durationStr="1 D",           # 收窄窗口，降低开销
-            barSizeSetting="1 day",
-            whatToShow="OPTION_OPEN_INTEREST",
-            useRTH=True,
-            formatDate=1,
-            keepUpToDate=False,
-            timeout=timeout,
-        )
+        # Process in batches to avoid pacing issues
+        for i in range(0, len(contracts), batch_size):
+            batch = contracts[i : i + batch_size]
+            tickers = [ib.reqMktData(c, "101", snapshot=False, regulatorySnapshot=False) for c in batch]
+            deadline = time.time() + timeout
 
-        if not bars:
-            return None
+            while time.time() < deadline:
+                all_ready = True
+                for t in tickers:
+                    conid = t.contract.conId if t.contract else None
+                    if conid is None or conid in results:
+                        continue
+                    val = _extract_tick_oi(t, rows)
+                    if val is not None and val > 0 and not math.isnan(val):
+                        results[conid] = (float(val), trade_date)
+                    else:
+                        all_ready = False
+                if all_ready:
+                    break
+                time.sleep(poll)
 
-        # 倒数第一根有数据的 bar（有时会有空 bar）
-        for bar in reversed(bars):
-            if bar.close > 0 and not math.isnan(bar.close):
-                return float(bar.close), trade_date
+            # Cleanup
+            for c in batch:
+                try:
+                    ib.cancelMktData(c)
+                except Exception:
+                    pass
 
-        return None
+        return results
 
 
 def _needs_open_interest(row: pd.Series, force_overwrite: bool = False) -> bool:
@@ -516,6 +531,29 @@ def _needs_open_interest(row: pd.Series, force_overwrite: bool = False) -> bool:
         pass
     flags = _normalize_flags(row.get("data_quality_flag"))
     return "missing_oi" in flags or pd.isna(oi)
+
+
+def _extract_tick_oi(ticker: Any, rows: pd.DataFrame) -> float | None:
+    """
+    Extract OI from ticker based on right; falls back to openInterest if needed.
+    """
+    if not ticker or not ticker.contract:
+        return None
+    conid = ticker.contract.conId
+    row = rows.loc[rows["conid"] == conid].iloc[0]
+    right = str(row.get("right", "")).upper()
+    field_name = "callOpenInterest" if right.startswith("C") else "putOpenInterest"
+    val = getattr(ticker, field_name, None)
+    if val is None or (isinstance(val, float) and math.isnan(val)) or val <= 0:
+        val = getattr(ticker, "openInterest", None)
+    if val is None:
+        return None
+    try:
+        if math.isnan(float(val)) or float(val) <= 0:
+            return None
+    except Exception:
+        return None
+    return float(val)
 
 
 def _flags_after_success(value: Any, was_overwritten: bool = False) -> list[str]:

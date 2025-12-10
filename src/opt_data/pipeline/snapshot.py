@@ -136,6 +136,7 @@ def _default_session_factory(cfg: AppConfig) -> IBSession:
         host=cfg.ib.host,
         port=cfg.ib.port,
         client_id=cfg.ib.client_id,
+        client_id_pool=cfg.ib.client_id_pool,
         market_data_type=cfg.ib.market_data_type,
     )
 

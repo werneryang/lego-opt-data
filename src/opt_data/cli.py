@@ -129,6 +129,7 @@ def _precheck_contract_caches(
             host=cfg.ib.host,
             port=cfg.ib.port,
             client_id=cfg.ib.client_id,
+            client_id_pool=cfg.ib.client_id_pool,
             market_data_type=cfg.ib.market_data_type,
         )
         with session as sess:
@@ -171,6 +172,7 @@ def _precheck_contract_caches(
             host=cfg.ib.host,
             port=cfg.ib.port,
             client_id=cfg.ib.client_id,
+            client_id_pool=cfg.ib.client_id_pool,
             market_data_type=cfg.ib.market_data_type,
         )
         with session as sess:
@@ -446,6 +448,7 @@ def ib_smoke(
         host=cfg.ib.host,
         port=cfg.ib.port,
         client_id=cfg.ib.client_id,
+        client_id_pool=cfg.ib.client_id_pool,
         market_data_type=cfg.ib.market_data_type,
     )
 
@@ -731,8 +734,10 @@ def history(
     what: str = typer.Option("MIDPOINT", help="Data type (MIDPOINT, TRADES, etc.)"),
     use_rth: bool = typer.Option(True, help="Use Regular Trading Hours"),
     force_refresh: bool = typer.Option(False, help="Force refresh contract cache"),
+    incremental: bool = typer.Option(False, help="Only fetch missing days based on existing data"),
+    bar_size: str = typer.Option("8 hours", help="Bar size (e.g. '8 hours', '1 day', '1 hour')"),
 ) -> None:
-    """Fetch daily historical data for options (using 8-hour bar aggregation)."""
+    """Fetch daily historical data for options (using 8-hour bar aggregation by default)."""
     cfg = load_config(Path(config) if config else None)
     
     symbol_list = [s.strip().upper() for s in symbols.split(",")] if symbols else None
@@ -740,13 +745,24 @@ def history(
     runner = HistoryRunner(cfg)
     
     typer.echo(f"[history] fetching {days} days of {what} data for {symbol_list or 'universe'}")
+    if incremental:
+        typer.echo("[history] incremental mode enabled")
     
+    def progress_cb(current: int, total: int, status: str, details: Dict[str, Any]) -> None:
+        # Simple CLI progress
+        pct = (current / total) * 100 if total > 0 else 0
+        typer.echo(f"[history] {pct:.1f}% - {status}")
+
     results = runner.run(
         symbols=symbol_list,
         days=days,
         output_dir=Path(output) if output else None,
         what_to_show=what,
         use_rth=use_rth,
+        force_refresh=force_refresh,
+        incremental=incremental,
+        bar_size=bar_size,
+        progress_callback=progress_cb,
     )
     
     typer.echo(f"[history] complete. processed={results['processed']} errors={results['errors']}")
@@ -779,6 +795,7 @@ def inspect(
             host=cfg.ib.host,
             port=cfg.ib.port,
             client_id=cfg.ib.client_id,
+            client_id_pool=cfg.ib.client_id_pool,
             market_data_type=cfg.ib.market_data_type,
         )
         try:
@@ -1009,6 +1026,7 @@ def close_snapshot(
         host=cfg.ib.host,
         port=cfg.ib.port,
         client_id=cfg.ib.client_id,
+        client_id_pool=cfg.ib.client_id_pool,
         market_data_type=2,
     )
 
@@ -1127,6 +1145,7 @@ def oi_probe(
         host=cfg.ib.host,
         port=cfg.ib.port,
         client_id=cfg.ib.client_id,
+        client_id_pool=cfg.ib.client_id_pool,
         market_data_type=cfg.ib.market_data_type,
     )
 
@@ -1364,7 +1383,12 @@ def schedule(
         raise typer.Exit(code=2)
 
     symbols_for_run: list[str] = []
-    universe_entries = load_universe(cfg.universe.file) if snapshots else []
+    effective_universe = (
+        cfg.universe.intraday_file
+        if cfg.universe.intraday_file and cfg.universe.intraday_file.exists()
+        else cfg.universe.file
+    )
+    universe_entries = load_universe(effective_universe) if snapshots else []
     entries_by_symbol = {e.symbol: e for e in universe_entries}
     if snapshots:
         if symbol_list:
@@ -1382,7 +1406,7 @@ def schedule(
             trade_date,
             symbols_for_run,
             entries_by_symbol,
-            universe_path=Path(cfg.universe.file),
+            universe_path=Path(effective_universe),
             build_missing_cache=build_missing_cache,
             prefix="schedule",
         )
