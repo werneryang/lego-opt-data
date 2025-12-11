@@ -43,3 +43,9 @@
 ## 参考
 - ADR：`docs/ADR-0002-SPY-snapshot-batch-concurrency.md`（背景、决策与后续行动）。
 - 生产运维：`docs/ops-runbook.md`。 
+
+## 开发/调试脚本（手工工具）
+- `scripts/debug_parquet.py`：快速检查/打印 parquet 内容，辅助数据问题定位。
+- `scripts/verify_dashboard_data.py`：核对观测面板相关数据汇总。
+- `scripts/verify_et_time.py`：ET 时间/时区换算验证。
+- `scripts/verify_overwrite.py`：验证写入覆盖/幂等行为的简单检查脚本。
