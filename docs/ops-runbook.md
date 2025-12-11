@@ -172,8 +172,8 @@ python -m opt_data.cli rollup --date 2025-12-05 --config config/opt-data.toml
 
 1. **正常流程**：
    - 盘中：调度器按 30 分钟间隔执行 `snapshot`（精简清单）
-   - 16:00 后：执行 `close-snapshot`（全量清单，写入 `view=close`）
-   - 17:00：执行 `rollup`（优先读取 `view=close`）
+   - 17:30：执行 `close-snapshot`（全量清单，写入 `view=close`）
+   - 17:30 后：执行 `rollup`（优先读取 `view=close`，紧随 close-snapshot 完成后）
 
 2. **收盘快照缺失处理**：
    - **推荐**：重跑 `close-snapshot` 补数据
@@ -192,27 +192,43 @@ python -m opt_data.cli rollup --date 2025-12-05 --config config/opt-data.toml
 - 注册任务：
   - `discover_contracts`：09:25 ET。
   - `snapshot_job`：cron `minute=0,30`、`hour=9-15`；根据早收盘表动态裁剪。
-  - `rollup_job`：17:00 ET。
-  - `oi_enrichment_job`：次日 07:30 ET（周二至周五；周一处理上周五）。
+  - `close_snapshot_job`：17:30 ET（收盘后）运行 `close-snapshot`。
+  - `rollup_job`：17:30 ET 完成 close-snapshot 后运行 `rollup`。
+  - `oi_enrichment_job`：次日 04:30 ET（周二至周五；周一处理上周五）。
 - 在 scheduler 启动时预计算当日槽列表（考虑早收盘），并写入 `state/run_logs/apscheduler/*.jsonl`。
+- 生产建议直接使用 `python -m opt_data.cli schedule --live --config config/opt-data.toml`，遵循上述时间表。
 
 ### launchd（macOS）
 - `com.optdata.snapshot.plist`：`StartCalendarInterval` 覆盖 09:30–16:00 每 30 分钟，调用 `python -m opt_data.cli snapshot --run-once --config ...`。
-- `com.optdata.rollup.plist`：17:00 执行 rollup。
-- `com.optdata.oi-enrichment.plist`（可选）：次日 07:30 执行 enrichment。
+
+### 每日例行检查与调度（生产，ET 时区）
+- 调度顺序与时间：  
+  - 09:30–16:00：盘中 `snapshot`（30 分钟节奏）  
+  - **17:30**：自动运行 `close-snapshot`（全量清单），完成后立即运行 `rollup`  
+  - 次日 **04:30**：运行 `enrichment`（OI 回补等慢字段）  
+  - enrichment 结束后执行自检/日志扫描
+- 自检/日志命令（示例）：  
+  - `python -m opt_data.cli selfcheck --date <trade_date> --log-max-total 1`（允许少量参考价 ERROR，其他 fatal 仍 0 容忍）  
+  - `python -m opt_data.cli logscan --date <trade_date> --max-total 1`  
+  - 确认生成 `state/run_logs/selfcheck/selfcheck_YYYYMMDD.json`、`state/run_logs/errors/summary_YYYYMMDD.json`、`state/run_logs/metrics/metrics_YYYYMMDD.json`。
+- 若 selfcheck FAIL：  
+  - QA 指标失败 → 补采/重跑对应环节；  
+  - 仅日志超阈值（如参考价单条 ERROR）→ 记录原因后可放宽 `--log-max-total` 临时通过，但需在运行日志备注。
+- `com.optdata.rollup.plist`：17:30 执行 rollup（或由 close-snapshot 后链式触发）。
+- `com.optdata.oi-enrichment.plist`（可选）：次日 04:30 执行 enrichment。
 - 在 plist `EnvironmentVariables` 中设置 `TZ`, `IB_*`, `PATH`（包含虚拟环境）。
 - 日志输出重定向到 `state/run_logs/launchd/*.log`。
 
 ### systemd（Linux）
 - 使用 systemd ≥249，支持 `Timezone=`。三个 timer：
   - `opt-data-snapshot.timer`: `OnCalendar=Mon-Fri 09:30:00..16:00:00/00:30`, `Timezone=America/New_York`。
-  - `opt-data-rollup.timer`: `OnCalendar=Mon-Fri 17:00`, `Timezone=America/New_York`。
-  - `opt-data-enrichment.timer`: `OnCalendar=Tue-Fri 07:30`, `Timezone=America/New_York`。
+  - `opt-data-rollup.timer`: `OnCalendar=Mon-Fri 17:30`, `Timezone=America/New_York`。
+  - `opt-data-enrichment.timer`: `OnCalendar=Tue-Fri 04:30`, `Timezone=America/New_York`。
 - 对应 service 调用虚拟环境脚本，并将 stdout/stderr 写入 `state/run_logs/systemd/`。
 - 早收盘：timer 触发脚本需检查日历并自行跳过闭市后的槽位。
 
 ## 限速与重试
-- 令牌桶配置：`rate_limits.snapshot.per_minute=30`、`max_concurrent_snapshots=10`（放量后调优）。
+- 令牌桶配置：当前 Stage 1 生产运行 `rate_limits.snapshot.per_minute=30`、`max_concurrent_snapshots=14`（提升至 45/12 需额外评审与监控）。
   - *注*：发现阶段（Discovery）不再施加应用层限速，完全依赖 IB Pacing。
 - Pacing violation 处理：
   - 首次等待 30s，随后指数退避 `60s → 120s → 240s`；

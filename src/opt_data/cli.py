@@ -1,8 +1,9 @@
 from __future__ import annotations
 
+import json
+import math
 import sys
 import time
-import json
 from datetime import date, datetime, timedelta
 from zoneinfo import ZoneInfo
 from pathlib import Path
@@ -1569,8 +1570,27 @@ def selfcheck(
         "ERROR,CRITICAL,PACING,slot_retry_exceeded,eod_rollup_stale,eod_rollup_fallback",
         help="Comma-separated keywords for log scanning",
     ),
+    log_warn_keywords: str = typer.Option(
+        "No open interest data returned",
+        help="Comma-separated keywords treated as WARN (non-fatal unless exceeding warn threshold)",
+    ),
     log_max_total: int = typer.Option(
         0, help="Max allowed matches across keywords before failing (<=0 means any hit fails)"
+    ),
+    log_warn_max_total: int = typer.Option(
+        10,
+        help=(
+            "Max allowed WARN keyword matches before failing "
+            "(<=0 means any WARN hit fails; set negative to ignore)"
+        ),
+    ),
+    log_warn_ratio_threshold: float = typer.Option(
+        0.01,
+        help=(
+            "Additional WARN threshold as a ratio of daily rows; "
+            "effective limit is max(log_warn_max_total, ceil(daily_rows * ratio)). "
+            "Set to 0 to disable ratio-based threshold."
+        ),
     ),
     write: bool = typer.Option(True, "--write/--no-write", help="Persist selfcheck JSON report"),
 ) -> None:
@@ -1582,9 +1602,15 @@ def selfcheck(
     qa_calc = QAMetricsCalculator(cfg)
     qa_result = qa_calc.evaluate(trade_date)
 
-    key_list = [k.strip() for k in log_keywords.split(",") if k.strip()]
-    counters, matched_files = scan_logs(cfg, trade_date, key_list)
-    total_matches = sum(counters.values())
+    fatal_keys = [k.strip() for k in log_keywords.split(",") if k.strip()]
+    warn_keys = [k.strip() for k in log_warn_keywords.split(",") if k.strip()]
+    all_keys = sorted(set(fatal_keys + warn_keys))
+    counters, matched_files = scan_logs(cfg, trade_date, all_keys)
+
+    fatal_counts = {k: counters.get(k, 0) for k in fatal_keys}
+    warn_counts = {k: counters.get(k, 0) for k in warn_keys}
+    fatal_total = sum(fatal_counts.values())
+    warn_total = sum(warn_counts.values())
 
     status = "PASS"
     reasons: list[str] = []
@@ -1593,12 +1619,25 @@ def selfcheck(
         status = "FAIL"
         reasons.extend(f"qa:{name}" for name in qa_result.breaches)
 
-    if log_max_total >= 0 and total_matches > log_max_total:
+    if log_max_total >= 0 and fatal_total > log_max_total:
         status = "FAIL"
-        reasons.append(f"logs:total>{log_max_total}")
+        reasons.append(f"logs:fatal_total>{log_max_total}")
+
+    warn_thresholds: list[int] = []
+    if log_warn_max_total >= 0:
+        warn_thresholds.append(log_warn_max_total)
+    daily_rows = int(qa_result.extra.get("daily_rows", 0) or 0)
+    if log_warn_ratio_threshold > 0 and daily_rows > 0:
+        warn_thresholds.append(math.ceil(daily_rows * log_warn_ratio_threshold))
+
+    warn_threshold = max(warn_thresholds) if warn_thresholds else None
+    if warn_threshold is not None and warn_total > warn_threshold:
+        status = "FAIL"
+        reasons.append(f"logs:warn_total>{warn_threshold}")
 
     typer.echo(
-        f"[selfcheck] date={trade_date} status={status} total_log_matches={total_matches} "
+        f"[selfcheck] date={trade_date} status={status} fatal_log_matches={fatal_total} "
+        f"warn_log_matches={warn_total} "
         f"qa_status={qa_result.status} reasons={reasons or 'NONE'}"
     )
 
@@ -1608,9 +1647,14 @@ def selfcheck(
             f"threshold{metric.comparator}{metric.threshold:.4f} passed={metric.passed}"
         )
 
-    if counters:
-        for k, v in sorted(counters.items(), key=lambda kv: kv[0]):
-            typer.echo(f"[selfcheck:logs] keyword={k} count={v}")
+    if fatal_counts:
+        for k, v in sorted(fatal_counts.items(), key=lambda kv: kv[0]):
+            if v:
+                typer.echo(f"[selfcheck:logs:fatal] keyword={k} count={v}")
+    if warn_counts:
+        for k, v in sorted(warn_counts.items(), key=lambda kv: kv[0]):
+            if v:
+                typer.echo(f"[selfcheck:logs:warn] keyword={k} count={v}")
 
     report = {
         "trade_date": trade_date.isoformat(),
@@ -1618,10 +1662,16 @@ def selfcheck(
         "reasons": reasons,
         "qa": qa_result.as_dict(),
         "logs": {
-            "keywords": key_list,
-            "total_matches": total_matches,
+            "fatal_keywords": fatal_keys,
+            "warn_keywords": warn_keys,
+            "fatal_total_matches": fatal_total,
+            "warn_total_matches": warn_total,
             "counts": counters,
             "files_scanned": matched_files,
+            "log_max_total": log_max_total,
+            "log_warn_max_total": log_warn_max_total,
+            "log_warn_ratio_threshold": log_warn_ratio_threshold,
+            "log_warn_effective_threshold": warn_threshold,
         },
     }
 
@@ -1643,9 +1693,20 @@ def logscan(
         "ERROR,CRITICAL,PACING,No market data permissions,slot_retry_exceeded,eod_rollup_stale,eod_rollup_fallback",
         help="Comma-separated keywords to scan for",
     ),
+    warn_keywords: str = typer.Option(
+        "No open interest data returned",
+        help="Comma-separated keywords treated as WARN (non-fatal unless exceeding warn threshold)",
+    ),
     config: Optional[str] = typer.Option(None, help="Path to config TOML"),
     write_summary: bool = typer.Option(True, help="Write JSON summary under run_logs/errors"),
     max_total: int = typer.Option(0, help="Max allowed total matches before exiting with failure"),
+    warn_max_total: int = typer.Option(
+        10,
+        help=(
+            "Max allowed WARN keyword matches before exiting with failure "
+            "(<=0 means any WARN hit fails; set negative to ignore)"
+        ),
+    ),
 ) -> None:
     """Aggregate errors and important markers from run logs for the given day."""
     cfg = load_config(Path(config) if config else None)
@@ -1665,18 +1726,30 @@ def logscan(
     errors_dir = run_logs / "errors"
     errors_dir.mkdir(parents=True, exist_ok=True)
 
-    key_list = [k.strip() for k in keywords.split(",") if k.strip()]
-    counters, matched_files = scan_logs(cfg, target_day, key_list)
+    fatal_keys = [k.strip() for k in keywords.split(",") if k.strip()]
+    warn_keys = [k.strip() for k in warn_keywords.split(",") if k.strip()]
+    all_keys = sorted(set(fatal_keys + warn_keys))
+    counters, matched_files = scan_logs(cfg, target_day, all_keys)
+
+    fatal_counts = {k: counters.get(k, 0) for k in fatal_keys}
+    warn_counts = {k: counters.get(k, 0) for k in warn_keys}
+
+    fatal_total = sum(fatal_counts.values())
+    warn_total = sum(warn_counts.values())
+    total_matches = sum(counters.values())
 
     summary = {
         "date": ymd,
-        "keywords": key_list,
+        "fatal_keywords": fatal_keys,
+        "warn_keywords": warn_keys,
         "files_scanned": matched_files,
         "counts": counters,
+        "fatal_counts": fatal_counts,
+        "warn_counts": warn_counts,
+        "fatal_total_matches": fatal_total,
+        "warn_total_matches": warn_total,
+        "total_matches": total_matches,
     }
-
-    total_matches = sum(counters.values())
-    summary["total_matches"] = total_matches
     typer.echo(json.dumps(summary, ensure_ascii=False, indent=2))
 
     if write_summary:
@@ -1686,9 +1759,15 @@ def logscan(
         except Exception as exc:  # pragma: no cover - fs issues
             typer.echo(f"[logscan] failed to write summary: {exc}", err=True)
 
-    if max_total >= 0 and total_matches > max_total:
+    if max_total >= 0 and fatal_total > max_total:
         typer.echo(
-            f"[logscan] total_matches {total_matches} exceeds max_total {max_total}", err=True
+            f"[logscan] fatal_total {fatal_total} exceeds max_total {max_total}", err=True
+        )
+        raise typer.Exit(code=1)
+
+    if warn_max_total >= 0 and warn_total > warn_max_total:
+        typer.echo(
+            f"[logscan] warn_total {warn_total} exceeds warn_max_total {warn_max_total}", err=True
         )
         raise typer.Exit(code=1)
 

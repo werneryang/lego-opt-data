@@ -226,7 +226,9 @@ class EnrichmentRunner:
                         trade_date,
                         timeout=8.0,
                         poll=0.25,
-                        batch_size=50,
+                        batch_size=30,
+                        progress=progress,
+                        symbol=underlying,
                     )
 
                 for idx, row in rows_to_fetch.iterrows():
@@ -474,6 +476,8 @@ class EnrichmentRunner:
         timeout: float = 15.0,
         poll: float = 0.25,
         batch_size: int = 50,
+        progress: callable[[str, str, dict[str, Any]], None] | None = None,
+        symbol: str | None = None,
     ) -> dict[int, tuple[int | float, date]]:
         from ib_insync import Option
 
@@ -481,40 +485,47 @@ class EnrichmentRunner:
         if rows.empty:
             return results
 
-        # Prepare contracts
+        # Prepare contracts; no intra-batch concurrency to avoid pacing hits
         contracts: list[Option] = []
         for _, row in rows.iterrows():
             conid = int(row["conid"])
             exchange = row.get("exchange") or "SMART"
             contracts.append(Option(conId=conid, exchange=exchange))
 
-        # Process in batches to avoid pacing issues
+        total_batches = math.ceil(len(contracts) / batch_size)
+        # Process strictly sequentially: one batch after another, and inside each batch
+        # request each contract serially before moving on.
         for i in range(0, len(contracts), batch_size):
             batch = contracts[i : i + batch_size]
-            tickers = [ib.reqMktData(c, "101", snapshot=False, regulatorySnapshot=False) for c in batch]
-            deadline = time.time() + timeout
-
-            while time.time() < deadline:
-                all_ready = True
-                for t in tickers:
-                    conid = t.contract.conId if t.contract else None
-                    if conid is None or conid in results:
-                        continue
-                    val = _extract_tick_oi(t, rows)
-                    if val is not None and val > 0 and not math.isnan(val):
-                        results[conid] = (float(val), trade_date)
-                    else:
-                        all_ready = False
-                if all_ready:
-                    break
-                time.sleep(poll)
-
-            # Cleanup
+            before = len(results)
             for c in batch:
+                ticker = ib.reqMktData(c, "101", snapshot=False, regulatorySnapshot=False)
+                deadline = time.time() + timeout
+                while time.time() < deadline:
+                    conid = ticker.contract.conId if ticker.contract else None
+                    if conid is not None and conid not in results:
+                        val = _extract_tick_oi(ticker, rows)
+                        if val is not None and val > 0 and not math.isnan(val):
+                            results[conid] = (float(val), trade_date)
+                            break
+                    # Use ib.sleep to allow the event loop to process incoming ticks
+                    ib.sleep(poll)
                 try:
                     ib.cancelMktData(c)
                 except Exception:
                     pass
+
+            if progress and symbol is not None:
+                progress(
+                    symbol,
+                    "batch_done",
+                    {
+                        "batch_index": i // batch_size + 1,
+                        "batches_total": total_batches,
+                        "batch_size": len(batch),
+                        "results_in_batch": len(results) - before,
+                    },
+                )
 
         return results
 

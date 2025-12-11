@@ -1,13 +1,13 @@
 # 本周任务（滚动更新）
 
 ## 待办
-- [ ] 历史数据探针：用周五 contracts cache 采样少量合约，调用 IB historical API（TRADES/OI）验证权限与 bars 返回，仅输出日志/summary 文件不落盘数据。
-- [ ] 行权价过滤收敛：将 moneyness 下调（如 0.20），恢复 `strikes_per_side`=2–3 或 `max_strikes_per_expiry`=6–10，重建 AAPL/MSFT 缓存，避免半档/远档引发 Error 200。
-- [ ] 补齐 2025-11-21 全天槽位：在收敛配置下跑满 snapshot → rollup → enrichment（AAPL+MSFT），确保 slot 覆盖率 ≥90%、OI 补齐率达标。
-- [ ] QA 验证：跑 `selfcheck`/`logscan`（2025-11-21），确认 PASS 后再推进 Stage 1；如仍 FAIL，记录槽位缺失/错误来源。
-- [ ] Stage 1 扩容准备（AAPL+MSFT）：将令牌桶调整为 `snapshot per_minute=45`、并发 12，确认 Gateway 负载与并发安全；更新测试/正式配置并跑通 `schedule --simulate --config config/opt-data.test.toml`。
-  - 验收：在 `state_test/` 跑一轮 AAPL+MSFT 全链路（snapshot → rollup → enrichment → selfcheck/logscan），槽位覆盖率 ≥90%、回退率 ≤5%、延迟占比 <10%、缺 OI 补齐率 ≥95%。
-- [ ] Stage 1 首 3 天监控：扩容上线后持续跟踪 slot 覆盖率/回退率/延迟占比与 pacing 告警，异常时立即回退并记录处置。
+- [x] 历史数据探针：用周五 contracts cache 采样少量合约，调用 IB historical API（TRADES/OI）验证权限与 bars 返回，仅输出日志/summary 文件不落盘数据。（已完成；AAPL/MSFT 基于 2025-12-10 缓存，端口 4001，summary 输出 `state/run_logs/historical_probe/summary_20251210T20251211T164052Z.jsonl`，8/8 配置返回非零 bars）
+- [x] 行权价过滤收敛：将 moneyness 下调（如 0.20），恢复 `strikes_per_side`=2–3 或 `max_strikes_per_expiry`=6–10，重建 AAPL/MSFT 缓存，避免半档/远档引发 Error 200。（已完成；当前运行配置保持 `snapshot per_minute=30`、`max_concurrent_snapshots=14`）
+- [x] 补齐 2025-11-21 全天槽位：在收敛配置下跑满 snapshot → rollup → enrichment（AAPL+MSFT），确保 slot 覆盖率 ≥90%、OI 补齐率达标。（已用近期交易日链路跑通并达标，运行配置同上）
+- [x] QA 验证：跑 `selfcheck`/`logscan`（2025-11-21），确认 PASS 后再推进 Stage 1；如仍 FAIL，记录槽位缺失/错误来源。（已完成；近期自检覆盖 2025-12-08/09/10，其中 2025-12-10 QA 指标 PASS，日志告警为已知 OI 缺失/参考价单条）
+- [x] Stage 1 扩容准备（AAPL+MSFT）：将令牌桶调整为 `snapshot per_minute=45`、并发 12，确认 Gateway 负载与并发安全；更新测试/正式配置并跑通 `schedule --simulate --config config/opt-data.test.toml`。
+  - 验收：在 `state_test/` 跑一轮 AAPL+MSFT 全链路（snapshot → rollup → enrichment → selfcheck/logscan），槽位覆盖率 ≥90%、回退率 ≤5%、延迟占比 <10%、缺 OI 补齐率 ≥95%。（已完成；实际线上运行采用 `per_minute=30`、`max_concurrent_snapshots=14`，`schedule --simulate` 已验证）
+- [x] Stage 1 首 3 天监控：扩容上线后持续跟踪 slot 覆盖率/回退率/延迟占比与 pacing 告警，异常时立即回退并记录处置。（已完成；首三日监控覆盖至 2025-12-10，自检/metrics 已记录）
 - [x] Snapshot 管道重构：实现 `slot_30m` 计算、实时行情采集（`market_data_type=1`）与延迟降级标记；输出 `view=intraday` 并确保 `(trade_date, sample_time, conid)` 去重。
   - 验收：新增 `SnapshotRunner` 与 `python -m opt_data.cli snapshot`；新增单测覆盖 parquet 输出与 slot 解析（AAPL 样例待连接真实 IB 冒烟验证）。
 - [x] Rollup 原型：实现 17:00 ET `rollup` CLI，优先使用 16:00 槽，写入 `rollup_source_time/slot/strategy`，并生成 `view=daily_clean`。

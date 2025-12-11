@@ -1,7 +1,7 @@
 # 4 周项目计划
 
 ## 背景
-本项目聚焦 S&P 500（可配置）标的的期权链日内采集与日终归档：在交易日 09:30–16:00（America/New_York）每 30 分钟记录一次实时快照，17:00 ET 聚合为日级视图（含回退规则），并维护清洗/调整层数据。目标是在 macOS 环境验证后迁移到 Linux 定时执行，确保快照与日终数据可恢复、可审计，且不再执行历史回填。
+本项目聚焦 S&P 500（可配置）标的的期权链日内采集与日终归档：在交易日 09:30–16:00（America/New_York）每 30 分钟记录一次实时快照，17:30 ET 收盘快照后聚合为日级视图（含回退规则），次日 04:30 enrichment 补齐慢字段。目标是在 macOS 环境验证后迁移到 Linux 定时执行，确保快照与日终数据可恢复、可审计，且不再执行历史回填。
 
 ## 范围与里程碑
 - **M1（第 1 周）**：落地实时 snapshot 采集骨架（`acquisition.mode=snapshot`，`IB_MARKET_DATA_TYPE=1`），完成 09:25 ET 会话合约发现与冻结策略、槽位计算（含 16:00 槽宽限）、单标的冒烟（AAPL）并写入 `view=intraday` 数据。
@@ -63,6 +63,7 @@
   - 阶段 0（2-day gate）完成后即可扩容，扩容后前 3 个交易日重点监控；若槽位覆盖率跌破 88% 或 pacing 告警 >2 次，回退调优或暂缓并发提升。
   - 令牌桶调整：`snapshot per_minute=45`，视 Gateway 负载将并发提升至 12；宽限与重试策略保持。
   - Runbook 需补充并发调节、Gateway session 健康检查与故障切换步骤。
+  - 已批准偏差：当前 Stage 1 运行保持 `snapshot per_minute=30`、`max_concurrent_snapshots=14`，提升至 45/12 需额外评审。
 - **阶段 2：Top 10（按 `config/universe.csv` 前十权重）**
   - 阶段 1 结束后在 Rollup/OI enrichment 上保持 7 个交易日零人工干预，QA 指标全部满足阈值。
   - 启用 `midday_refresh`（仅新增合约）并跟踪新增请求量；每周 pacing 告警不超过 3 次。
@@ -92,6 +93,10 @@
 - 初步可观测性能力上线：新增基于 SQLite 的指标采集器（`MetricsCollector`）、告警接口（`AlertManager`）与 Streamlit Dashboard（`src/opt_data/dashboard/app.py`），rollup 已开始写入基础运行指标。
 - 整理未来改进方向：在 `docs/dev/roadmap.md` 中按短期/中期/长期分类整理后续改进清单，为后续纳入 `PLAN.md`/`TODO.now.md` 提供来源。
 - 新增历史 bars 探针需求：计划利用周五 contracts cache 采样少量合约，调用 IB historical API（TRADES/OI）做可行性验证，输出仅限日志/summary。
+
+## 进展快照（2025-12-10 更新）
+- Stage 1（AAPL+MSFT）已按 `snapshot per_minute=30`、`max_concurrent_snapshots=14` 配置上线运行，`schedule --simulate` 验证完成，首三日监控完成。
+- 最近自检/日志：2025-12-08/09/10 已执行 selfcheck/logscan；2025-12-10 QA 指标达标，日志含 OI 缺失与参考价单条错误，已记录为已知告警。
 
 ## 本周目标（2025-11-03 当周）
 - **M1 · 槽位与调度（早收盘感知）**

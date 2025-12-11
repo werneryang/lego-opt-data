@@ -26,7 +26,8 @@
 - IB 连接默认值：`host=127.0.0.1`、`port=7497`，`clientId` 默认按角色池自动分配（prod 0-99，remote 100-199，test 200-250；如需固定可显式指定）。
 - 运行环境：Python 3.11；开发时执行 `python3.11 -m venv .venv && pip install -e .[dev]`。
 - 采集窗口：S&P 500 成分股（以 `config/universe.csv` 为准），行权价带 ±30%，标准月度/季度合约。
-- 调度基于 `America/New_York` 时区，交易日 17:00 ET 运行每日更新。
+- 调度基于 `America/New_York` 时区：17:30 ET `close-snapshot` → `rollup`，次日 04:30 ET `enrichment`；盘中 09:30–16:00 每 30 分钟 `snapshot`。
+- 当前 Stage 1（AAPL+MSFT）生产限速为 `snapshot per_minute=30`、`max_concurrent_snapshots=14`（45/12 为后续调优目标）。
 - 存储：Parquet 分区 `date/underlying/exchange`，热数据（默认 14 天）使用 Snappy，冷数据使用 ZSTD；周度合并。
 
 ## 目录结构（摘要）
