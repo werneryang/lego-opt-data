@@ -88,7 +88,7 @@ class EnrichmentRunner:
         daily_clean_paths: list[Path] = []
         daily_adjusted_paths: list[Path] = []
         enrichment_paths: list[Path] = []
-        
+
         # Stats for overwrite comparison
         oi_stats = {"filled_from_missing": 0, "same": 0, "changed": 0}
         oi_diffs: list[dict[str, Any]] = []
@@ -154,7 +154,9 @@ class EnrichmentRunner:
             underlying = str(df.get("underlying", pd.Series([""])).iloc[0]).upper()
             if wanted and underlying not in wanted:
                 continue
-            mask = df.apply(lambda r: _needs_open_interest(r, force_overwrite=force_overwrite), axis=1)
+            mask = df.apply(
+                lambda r: _needs_open_interest(r, force_overwrite=force_overwrite), axis=1
+            )
             considered = int(mask.sum())
             if considered == 0:
                 continue
@@ -210,7 +212,9 @@ class EnrichmentRunner:
                 if wanted and underlying not in wanted:
                     continue
 
-                mask = df.apply(lambda r: _needs_open_interest(r, force_overwrite=force_overwrite), axis=1)
+                mask = df.apply(
+                    lambda r: _needs_open_interest(r, force_overwrite=force_overwrite), axis=1
+                )
                 considered = int(mask.sum())
                 if considered == 0:
                     continue
@@ -281,7 +285,7 @@ class EnrichmentRunner:
                         continue
 
                     oi_value, asof_date = fetch_result
-                    
+
                     # Comparison logic
                     old_oi = row.get("open_interest")
                     if pd.isna(old_oi):
@@ -294,17 +298,19 @@ class EnrichmentRunner:
                             else:
                                 oi_stats["changed"] += 1
                                 if len(oi_diffs) < 100:  # Limit diffs size
-                                    oi_diffs.append({
-                                        "underlying": underlying,
-                                        "conid": conid,
-                                        "expiry": row.get("expiry"),
-                                        "right": row.get("right"),
-                                        "strike": row.get("strike"),
-                                        "old_oi": old_oi,
-                                        "new_oi": oi_value,
-                                        "old_asof": row.get("oi_asof_date"),
-                                        "new_asof": asof_date,
-                                    })
+                                    oi_diffs.append(
+                                        {
+                                            "underlying": underlying,
+                                            "conid": conid,
+                                            "expiry": row.get("expiry"),
+                                            "right": row.get("right"),
+                                            "strike": row.get("strike"),
+                                            "old_oi": old_oi,
+                                            "new_oi": oi_value,
+                                            "old_asof": row.get("oi_asof_date"),
+                                            "new_asof": asof_date,
+                                        }
+                                    )
                         except Exception:
                             # Fallback if conversion fails
                             oi_stats["changed"] += 1
@@ -315,7 +321,7 @@ class EnrichmentRunner:
                     df.at[idx, "ingest_run_type"] = "enrichment"
                     df.at[idx, "data_quality_flag"] = _flags_after_success(
                         row.get("data_quality_flag"),
-                        was_overwritten=force_overwrite and pd.notna(row.get("open_interest"))
+                        was_overwritten=force_overwrite and pd.notna(row.get("open_interest")),
                     )
                     updated_here += 1
                     total_updated += 1
@@ -354,7 +360,10 @@ class EnrichmentRunner:
                     # Track symbol completion based on prescan counts
                     if underlying in remaining_per_symbol:
                         remaining_per_symbol[underlying] -= 1
-                        if remaining_per_symbol[underlying] <= 0 and underlying not in completed_symbols:
+                        if (
+                            remaining_per_symbol[underlying] <= 0
+                            and underlying not in completed_symbols
+                        ):
                             completed_symbols.add(underlying)
                             symbols_done += 1
                             if progress:

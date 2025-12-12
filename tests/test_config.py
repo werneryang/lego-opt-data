@@ -141,9 +141,7 @@ def test_config_validation_rejects_invalid_acquisition_mode(tmp_path: Path) -> N
     cfg_file = tmp_path / "opt-data.toml"
     cfg_file.write_text(content.strip(), encoding="utf-8")
 
-    with pytest.raises(
-        ValueError, match=r"Invalid acquisition\.mode: invalid_mode.*Valid modes"
-    ):
+    with pytest.raises(ValueError, match=r"Invalid acquisition\.mode: invalid_mode.*Valid modes"):
         load_config(cfg_file)
 
 
@@ -172,4 +170,3 @@ def test_config_validation_rejects_invalid_compaction_size(tmp_path: Path) -> No
 
     with pytest.raises(ValueError, match=r"compaction\.max_file_size_mb.*must be.*min"):
         load_config(cfg_file)
-

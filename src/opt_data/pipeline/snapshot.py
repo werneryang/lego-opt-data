@@ -215,7 +215,7 @@ class SnapshotRunner:
                 refill_per_minute=cfg.rate_limits.snapshot.per_minute,
             ),
         }
-        
+
         # Observability
         self.metrics = MetricsCollector(cfg.observability.metrics_db_path)
         self.alerts = AlertManager(cfg.observability.webhook_url)
@@ -225,7 +225,7 @@ class SnapshotRunner:
         now = self._now_fn()
         if trade_date is None:
             trade_date = now.date()
-        
+
         try:
             session = get_trading_session(trade_date)
             # Consider after-hours if past market close
@@ -651,6 +651,7 @@ class SnapshotRunner:
         deduped = df.drop_duplicates(subset=["conid", "sample_time"], keep="last")
         # Ensure data_quality_flag remains list-typed
         if "data_quality_flag" in deduped.columns:
+
             def _coerce_flags(value: Any) -> list[str]:
                 if isinstance(value, list):
                     return value
@@ -670,9 +671,7 @@ class SnapshotRunner:
                     pass
                 return [str(value)]
 
-            deduped.loc[:, "data_quality_flag"] = deduped["data_quality_flag"].apply(
-                _coerce_flags
-            )
+            deduped.loc[:, "data_quality_flag"] = deduped["data_quality_flag"].apply(_coerce_flags)
         return deduped
 
     def _merge_and_write_partition(

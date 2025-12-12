@@ -3,7 +3,7 @@ Anomaly detection checks for option market data.
 """
 
 import logging
-from typing import List, Dict, Any
+from typing import List
 import pandas as pd
 import numpy as np
 
@@ -13,7 +13,7 @@ logger = logging.getLogger(__name__)
 def detect_anomalies(df: pd.DataFrame) -> pd.Series:
     """
     Detect anomalies in market data rows.
-    
+
     Returns:
         Series of lists, where each list contains string flags for anomalies found in that row.
         e.g. ["crossed_market", "iv_too_high"]
@@ -24,15 +24,15 @@ def detect_anomalies(df: pd.DataFrame) -> pd.Series:
     # Initialize with empty lists
     # Note: Using a list comprehension is often faster/cleaner for object series init than apply
     flags = [[] for _ in range(len(df))]
-    
+
     # We'll use boolean masks for vectorized checks
-    
+
     # 1. Crossed Market: Bid > Ask
     if "bid" in df.columns and "ask" in df.columns:
         mask_crossed = (df["bid"] > df["ask"]) & df["bid"].notna() & df["ask"].notna()
         if mask_crossed.any():
             _add_flag(flags, mask_crossed, "crossed_market")
-            
+
     # 2. Zero Price ITM (Simplified heuristic)
     # If delta is high (>0.9 or <-0.9) but price is very low, suspicious
     if "delta" in df.columns and "bid" in df.columns and "ask" in df.columns:

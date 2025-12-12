@@ -52,9 +52,11 @@ class RollupRunner:
         self._cleaner = cleaner or CleaningPipeline.create(cfg)
         # Use config values, with parameter overrides for backward compatibility
         self._close_slot = close_slot if close_slot is not None else cfg.rollup.close_slot
-        self._fallback_slot = fallback_slot if fallback_slot is not None else cfg.rollup.fallback_slot
+        self._fallback_slot = (
+            fallback_slot if fallback_slot is not None else cfg.rollup.fallback_slot
+        )
         self._allow_intraday_fallback = cfg.rollup.allow_intraday_fallback
-        
+
         # Observability
         self.metrics = MetricsCollector(cfg.observability.metrics_db_path)
         self.alerts = AlertManager(cfg.observability.webhook_url)
@@ -80,7 +82,7 @@ class RollupRunner:
         # Try to load from view=close first (preferred source for EOD data)
         source_df, read_errors = self._load_close(trade_date)
         source_view = "close"
-        
+
         if source_df.empty:
             # No close data found - check if intraday fallback is allowed
             if not self._allow_intraday_fallback:
@@ -91,7 +93,9 @@ class RollupRunner:
                 }
                 errors.append(payload)
                 _write_error_line(error_file, payload)
-                logger.error(f"No close snapshot data for {trade_date}; set rollup.allow_intraday_fallback=true to use intraday data")
+                logger.error(
+                    f"No close snapshot data for {trade_date}; set rollup.allow_intraday_fallback=true to use intraday data"
+                )
                 return RollupResult(
                     ingest_id=ingest_id,
                     trade_date=trade_date,
@@ -102,13 +106,13 @@ class RollupRunner:
                     daily_adjusted_paths=daily_adjusted_paths,
                     errors=errors,
                 )
-            
+
             # Fallback to intraday data with warning
             logger.warning(f"No close snapshot for {trade_date}, falling back to intraday data")
             source_df, read_errors = self._load_intraday(trade_date)
             source_view = "intraday"
             using_intraday_fallback = True
-        
+
         for err in read_errors:
             payload = {
                 "component": "rollup",
@@ -129,14 +133,14 @@ class RollupRunner:
                 daily_adjusted_paths=daily_adjusted_paths,
                 errors=errors,
             )
-        
+
         # Rename for consistency with rest of method
         intraday_df = source_df
 
         # Ensure underlying column exists (backfill produces 'symbol')
         if "symbol" in intraday_df.columns and "underlying" not in intraday_df.columns:
             intraday_df["underlying"] = intraday_df["symbol"]
-        
+
         if "underlying" not in intraday_df.columns:
             # If we still don't have 'underlying', we can't proceed
             logger.error("Missing 'underlying' column in intraday data")
@@ -217,11 +221,13 @@ class RollupRunner:
 
         selected["data_quality_flag"] = selected["data_quality_flag"].apply(_ensure_flags)
         selected["data_quality_flag"] = selected["data_quality_flag"].apply(list)
-        
+
         # Add fallback_intraday flag if using intraday data as fallback
         if using_intraday_fallback:
             selected["data_quality_flag"] = selected["data_quality_flag"].apply(
-                lambda flags: flags + ["fallback_intraday"] if "fallback_intraday" not in flags else flags
+                lambda flags: flags + ["fallback_intraday"]
+                if "fallback_intraday" not in flags
+                else flags
             )
             logger.info(f"Added 'fallback_intraday' flag to {len(selected)} rows")
         selected["asof_ts"] = pd.to_datetime(
@@ -230,17 +236,17 @@ class RollupRunner:
 
         # --- Data Quality Checks ---
         logger.info("Running data quality checks...")
-        
+
         # 1. Anomaly Detection
         anomaly_flags = detect_anomalies(selected)
-        
+
         # Merge new flags with existing flags
         # Both are lists of strings
         selected["data_quality_flag"] = [
             list(set(existing + new))
             for existing, new in zip(selected["data_quality_flag"], anomaly_flags)
         ]
-        
+
         # 2. Schema Validation
         schema_errors = []
         try:
@@ -249,7 +255,9 @@ class RollupRunner:
             logger.warning(f"Schema validation failed with {len(err.failure_cases)} errors")
             # Convert failure cases to readable strings
             for _, row in err.failure_cases.head(10).iterrows():
-                schema_errors.append(f"{row['column']}: {row['check']} failed for value {row['failure_case']}")
+                schema_errors.append(
+                    f"{row['column']}: {row['check']} failed for value {row['failure_case']}"
+                )
             if len(err.failure_cases) > 10:
                 schema_errors.append(f"... and {len(err.failure_cases) - 10} more")
         except Exception as e:
@@ -291,7 +299,7 @@ class RollupRunner:
                 progress(underlying, "write_daily_adjusted", {"rows": len(group)})
 
         symbols_processed = cleaned["underlying"].nunique()
-        
+
         # Record metrics
         self.metrics.count("rollup.run.total", 1)
         self.metrics.count("rollup.rows_written", rows_written)
@@ -299,9 +307,9 @@ class RollupRunner:
         if errors:
             self.metrics.count("rollup.errors", len(errors))
             self.alerts.send_alert(
-                "Rollup Errors", 
-                f"Rollup encountered {len(errors)} errors for {trade_date}", 
-                level="warning"
+                "Rollup Errors",
+                f"Rollup encountered {len(errors)} errors for {trade_date}",
+                level="warning",
             )
 
         return RollupResult(
@@ -336,10 +344,10 @@ class RollupRunner:
         if not frames:
             return pd.DataFrame(), errors
         df = pd.concat(frames, ignore_index=True)
-        
+
         # Optimize memory usage by downcasting data types
         df = optimize_dataframe_dtypes(df, verbose=False)
-        
+
         return df, errors
 
     def _load_close(self, trade_date: date) -> tuple[pd.DataFrame, list[dict[str, Any]]]:
@@ -364,10 +372,10 @@ class RollupRunner:
         if not frames:
             return pd.DataFrame(), errors
         df = pd.concat(frames, ignore_index=True)
-        
+
         # Optimize memory usage by downcasting data types
         df = optimize_dataframe_dtypes(df, verbose=False)
-        
+
         return df, errors
 
     def _select_rows(self, df: pd.DataFrame) -> tuple[pd.DataFrame, Counter[str]]:

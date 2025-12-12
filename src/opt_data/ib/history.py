@@ -67,7 +67,7 @@ def fetch_option_daily_aggregated(
 ) -> list[dict[str, Any]]:
     """
     Fetch daily bars for options by aggregating 8-hour bars.
-    
+
     Workaround for IBKR Error 162 (No data of type EODChart).
     Requests 8-hour bars and aggregates them into single daily bars.
     """
@@ -81,67 +81,109 @@ def fetch_option_daily_aggregated(
         use_rth=use_rth,
         throttle=throttle,
     )
-    
+
     if not bars:
         return []
 
+    def _get_wap(bar: Any) -> float | None:
+        """Best-effort read of weighted average price from BarData."""
+        for attr in ("wap", "average"):
+            val = getattr(bar, attr, None)
+            if val is None:
+                continue
+            try:
+                return float(val)
+            except Exception:
+                continue
+        return None
+
+    def _nonneg(value: Any) -> float:
+        """Coerce volume/barCount to non-negative floats (quote bars use -1/-2)."""
+        try:
+            v = float(value)
+        except Exception:
+            return 0.0
+        return v if v > 0 else 0.0
+
     daily_bars: list[dict[str, Any]] = []
     current_day = None
-    
+
     # Initialize accumulators
     day_open = 0.0
     day_high = 0.0
     day_low = 0.0
     day_close = 0.0
-    day_volume = 0
-    day_count = 0
-    
+    day_volume = 0.0
+    day_count = 0.0
+    day_wap_num = 0.0
+    day_wap_den = 0.0
+
     for b in bars:
         # b.date is typically datetime.date or datetime.datetime
         # Ensure we get a date object
         b_date = b.date.date() if hasattr(b.date, "date") else b.date
-        
+
         if b_date != current_day:
             # Commit previous day
             if current_day is not None:
-                daily_bars.append({
-                    "date": current_day.isoformat(),
-                    "open": day_open,
-                    "high": day_high,
-                    "low": day_low,
-                    "close": day_close,
-                    "volume": day_volume,
-                    "barCount": day_count,
-                })
-            
+                daily_bars.append(
+                    {
+                        "date": current_day.isoformat(),
+                        "open": day_open,
+                        "high": day_high,
+                        "low": day_low,
+                        "close": day_close,
+                        "volume": day_volume,
+                        "barCount": int(day_count),
+                        "wap": (day_wap_num / day_wap_den) if day_wap_den > 0 else None,
+                    }
+                )
+
             # Start new day
             current_day = b_date
             day_open = b.open
             day_high = b.high
             day_low = b.low
             day_close = b.close
-            day_volume = getattr(b, "volume", 0)
-            day_count = getattr(b, "barCount", 0)
+            day_volume = _nonneg(getattr(b, "volume", 0))
+            day_count = _nonneg(getattr(b, "barCount", 0))
+            day_wap_num = 0.0
+            day_wap_den = 0.0
+            wap = _get_wap(b)
+            if wap is not None:
+                weight = day_volume or day_count or 1.0
+                day_wap_num = wap * weight
+                day_wap_den = weight
         else:
             # Aggregate into current day
             day_high = max(day_high, b.high)
             day_low = min(day_low, b.low)
             day_close = b.close  # Close is always the last bar's close
-            day_volume += getattr(b, "volume", 0)
-            day_count += getattr(b, "barCount", 0)
-            
+            bar_volume = _nonneg(getattr(b, "volume", 0))
+            bar_count = _nonneg(getattr(b, "barCount", 0))
+            day_volume += bar_volume
+            day_count += bar_count
+            wap = _get_wap(b)
+            if wap is not None:
+                weight = bar_volume or bar_count or 1.0
+                day_wap_num += wap * weight
+                day_wap_den += weight
+
     # Commit last day
     if current_day is not None:
-        daily_bars.append({
-            "date": current_day.isoformat(),
-            "open": day_open,
-            "high": day_high,
-            "low": day_low,
-            "close": day_close,
-            "volume": day_volume,
-            "barCount": day_count,
-        })
-        
+        daily_bars.append(
+            {
+                "date": current_day.isoformat(),
+                "open": day_open,
+                "high": day_high,
+                "low": day_low,
+                "close": day_close,
+                "volume": day_volume,
+                "barCount": int(day_count),
+                "wap": (day_wap_num / day_wap_den) if day_wap_den > 0 else None,
+            }
+        )
+
     return daily_bars
 
 

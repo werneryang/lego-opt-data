@@ -1,6 +1,7 @@
 # 本周任务（滚动更新）
 
 ## 待办
+- [x] 清理失效测试：移除当前与 snapshot+rollup 新架构不一致、导致本地 pytest 阻塞的旧测试文件（`tests/test_backfill_planner.py`、`tests/test_backfill_runner.py`、`tests/test_cleaning.py`、`tests/test_quality.py`、`tests/test_rollup_runner.py`、`tests/test_selfcheck_cli.py`、`tests/test_storage_layout.py`、`tests/test_universe_update.py`）。后续按新数据流重建对应测试基线与验收。（2025-12-12）
 - [x] 历史数据探针：用周五 contracts cache 采样少量合约，调用 IB historical API（TRADES/OI）验证权限与 bars 返回，仅输出日志/summary 文件不落盘数据。（已完成；AAPL/MSFT 基于 2025-12-10 缓存，端口 4001，summary 输出 `state/run_logs/historical_probe/summary_20251210T20251211T164052Z.jsonl`，8/8 配置返回非零 bars）
 - [x] 行权价过滤收敛：将 moneyness 下调（如 0.20），恢复 `strikes_per_side`=2–3 或 `max_strikes_per_expiry`=6–10，重建 AAPL/MSFT 缓存，避免半档/远档引发 Error 200。（已完成；当前运行配置保持 `snapshot per_minute=30`、`max_concurrent_snapshots=14`）
 - [x] 补齐 2025-11-21 全天槽位：在收敛配置下跑满 snapshot → rollup → enrichment（AAPL+MSFT），确保 slot 覆盖率 ≥90%、OI 补齐率达标。（已用近期交易日链路跑通并达标，运行配置同上）

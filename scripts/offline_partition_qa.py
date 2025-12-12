@@ -1,5 +1,3 @@
-from __future__ import annotations
-
 """
 Offline QA for close vs intraday partitions.
 
@@ -9,12 +7,14 @@ Checks:
 - Row alignment between close (or daily_clean fallback) and intraday
 """
 
+from __future__ import annotations
+
 import argparse
 import json
 import sys
 from datetime import date, datetime
 from pathlib import Path
-from typing import Iterable, Sequence
+from typing import Sequence
 import warnings
 
 import pandas as pd
@@ -131,9 +131,7 @@ def read_parquet_tree(root: Path) -> pd.DataFrame | None:
             continue
         if df is not None:
             frames.append(df)
-    frames = [
-        f for f in frames if not f.empty and not f.isna().all(axis=None)
-    ]
+    frames = [f for f in frames if not f.empty and not f.isna().all(axis=None)]
     if not frames:
         return pd.DataFrame()
     if len(frames) == 1:
@@ -144,8 +142,7 @@ def read_parquet_tree(root: Path) -> pd.DataFrame | None:
         warnings.filterwarnings(
             "ignore",
             message=(
-                "The behavior of DataFrame concatenation with empty or all-NA entries "
-                "is deprecated"
+                "The behavior of DataFrame concatenation with empty or all-NA entries is deprecated"
             ),
             category=FutureWarning,
         )
@@ -204,9 +201,7 @@ def latest_intraday_rows(df: pd.DataFrame) -> pd.DataFrame:
     return ordered.drop_duplicates(subset=["conid"], keep="last")
 
 
-def compute_alignment(
-    intraday_df: pd.DataFrame | None, close_df: pd.DataFrame | None
-) -> dict:
+def compute_alignment(intraday_df: pd.DataFrame | None, close_df: pd.DataFrame | None) -> dict:
     if intraday_df is None or intraday_df.empty:
         return {"status": "skipped", "reason": "intraday missing or empty"}
     if close_df is None or close_df.empty:
@@ -225,16 +220,9 @@ def compute_alignment(
     missing = sorted(intra_conids - close_conids)
     extra = sorted(close_conids - intra_conids)
 
-    intra_counts = (
-        intraday_latest.groupby("underlying")["conid"].nunique().rename("intraday")
-    )
+    intra_counts = intraday_latest.groupby("underlying")["conid"].nunique().rename("intraday")
     close_counts = close_unique.groupby("underlying")["conid"].nunique().rename("close")
-    combined = (
-        pd.concat([intra_counts, close_counts], axis=1)
-        .fillna(0)
-        .astype(int)
-        .sort_index()
-    )
+    combined = pd.concat([intra_counts, close_counts], axis=1).fillna(0).astype(int).sort_index()
     mismatches = []
     for idx, row in combined.iterrows():
         if row["intraday"] != row["close"]:
@@ -293,7 +281,9 @@ def render_markdown(report: dict) -> str:
     lines.append(
         "| Date | Intraday Conids | Close Conids | Missing in Close | Extra in Close | Underlying mismatches |"
     )
-    lines.append("|------|-----------------|--------------|------------------|----------------|-----------------------|")
+    lines.append(
+        "|------|-----------------|--------------|------------------|----------------|-----------------------|"
+    )
     for entry in report["per_date"]:
         align = entry.get("alignment", {})
         if align.get("status") == "ok":
@@ -366,11 +356,17 @@ def main() -> None:
         if close_stats.get("status") != "ok":
             issues.append(f"{trade_date}: close partition missing or unreadable")
         if intra_stats.get("pk_duplicates"):
-            issues.append(f"{trade_date}: intraday primary-key duplicates={intra_stats['pk_duplicates']}")
+            issues.append(
+                f"{trade_date}: intraday primary-key duplicates={intra_stats['pk_duplicates']}"
+            )
         if close_stats.get("pk_duplicates"):
-            issues.append(f"{trade_date}: close primary-key duplicates={close_stats['pk_duplicates']}")
+            issues.append(
+                f"{trade_date}: close primary-key duplicates={close_stats['pk_duplicates']}"
+            )
         if intra_stats.get("missing_columns"):
-            issues.append(f"{trade_date}: intraday missing columns {intra_stats['missing_columns']}")
+            issues.append(
+                f"{trade_date}: intraday missing columns {intra_stats['missing_columns']}"
+            )
         if close_stats.get("missing_columns"):
             issues.append(f"{trade_date}: close missing columns {close_stats['missing_columns']}")
         if alignment.get("status") != "ok":
@@ -394,7 +390,9 @@ def main() -> None:
         "issues": issues,
     }
 
-    output_dir = Path(args.output_dir) if args.output_dir else Path(cfg.paths.clean) / "reports/offline_qa"
+    output_dir = (
+        Path(args.output_dir) if args.output_dir else Path(cfg.paths.clean) / "reports/offline_qa"
+    )
     output_dir.mkdir(parents=True, exist_ok=True)
     timestamp = datetime.utcnow().strftime("%Y%m%dT%H%M%SZ")
     base = output_dir / f"offline_qa_{timestamp}"

@@ -8,9 +8,7 @@ This test suite validates that:
 4. Partial successes are handled gracefully
 """
 
-from pathlib import Path
-from unittest.mock import Mock, patch, AsyncMock
-import asyncio
+from unittest.mock import Mock
 import pytest
 
 from opt_data.ib.snapshot import collect_option_snapshots
@@ -22,18 +20,39 @@ class TestSnapshotErrorHandling:
     def test_error_row_expected_structure(self):
         """Test that error rows have the expected structure."""
         expected_fields = {
-            "bid", "ask", "mid", "last", "open", "high", "low", "close",
-            "bid_size", "ask_size", "last_size", "volume", "vwap",
-            "iv", "delta", "gamma", "theta", "vega",
-            "market_data_type", "asof", "open_interest",
-            "price_ready", "greeks_ready", "snapshot_timed_out",
-            "snapshot_error", "error_type", "error_message"
+            "bid",
+            "ask",
+            "mid",
+            "last",
+            "open",
+            "high",
+            "low",
+            "close",
+            "bid_size",
+            "ask_size",
+            "last_size",
+            "volume",
+            "vwap",
+            "iv",
+            "delta",
+            "gamma",
+            "theta",
+            "vega",
+            "market_data_type",
+            "asof",
+            "open_interest",
+            "price_ready",
+            "greeks_ready",
+            "snapshot_timed_out",
+            "snapshot_error",
+            "error_type",
+            "error_message",
         }
-        
+
         # This is the expected structure - verify in integration test
-        assert all(field in expected_fields for field in [
-            "snapshot_error", "error_type", "error_message"
-        ])
+        assert all(
+            field in expected_fields for field in ["snapshot_error", "error_type", "error_message"]
+        )
 
     @pytest.mark.asyncio
     async def test_subscription_failure_scenario(self):
@@ -41,25 +60,27 @@ class TestSnapshotErrorHandling:
         # collect_option_snapshots is synchronous but uses ib.run internally
         # We'll test that errors propagate correctly
         mock_ib = Mock()
-        
+
         # Mock reqMktData to succeed but return empty ticker
         mock_ticker = Mock()
         mock_ticker.bid = None
         mock_ticker.ask = None
         mock_ib.reqMktData.return_value = mock_ticker
-        
+
         # Mock sleep to avoid delays
         mock_ib.sleep = Mock()
-        
-        contracts = [{
-            "symbol": "AAPL",
-            "strike": 150.0,
-            "right": "C",
-            "expiry": "20251231",
-            "conid": 12345,
-            "exchange": "SMART",
-        }]
-        
+
+        contracts = [
+            {
+                "symbol": "AAPL",
+                "strike": 150.0,
+                "right": "C",
+                "expiry": "20251231",
+                "conid": 12345,
+                "exchange": "SMART",
+            }
+        ]
+
         # The function should handle this gracefully and return rows
         # (possibly with timeout or error flags)
         try:
@@ -91,7 +112,7 @@ class TestSnapshotErrorHandling:
         mock_ib = Mock()
         mock_ticker = Mock()
         mock_ib.reqMktData.return_value = mock_ticker
-        
+
         # This test verifies that cancelMktData is called in finally block
         # Implementation would require accessing the fetch_one function
         pass  # Implement when ready for integration testing

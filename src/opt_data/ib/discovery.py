@@ -316,14 +316,18 @@ def discover_contracts_for_symbol(
             break
     if secdef is None or (best_tc and len(best_tc.strikes or []) > len(secdef.strikes or [])):
         secdef = best_tc
-    if secdef is None or (best_overall and len(best_overall.strikes or []) > len(secdef.strikes or [])):
+    if secdef is None or (
+        best_overall and len(best_overall.strikes or []) > len(secdef.strikes or [])
+    ):
         secdef = best_overall
     # No debug prints; selection is deterministic based on richest chain.
     if secdef is None:
         logger.warning(f"No suitable SecDef chain found for {symbol}")
         return []
 
-    logger.info(f"Selected SecDef chain: exchange={secdef.exchange} tradingClass={secdef.tradingClass} strikes={len(secdef.strikes or [])} expirations={len(secdef.expirations or [])}")
+    logger.info(
+        f"Selected SecDef chain: exchange={secdef.exchange} tradingClass={secdef.tradingClass} strikes={len(secdef.strikes or [])} expirations={len(secdef.expirations or [])}"
+    )
 
     # 2) Build candidate grid (expiry x strike), apply scope filters (moneyness/expiry window)
     strikes_all = sorted(float(s) for s in secdef.strikes if s is not None)
@@ -393,7 +397,7 @@ def discover_contracts_for_symbol(
         filtered_expiries = _select_expirations_spy_style(expirations, trade_date)
     else:
         filtered_expiries = sorted(expirations)
-    
+
     logger.info(f"Expirations after filtering: {len(filtered_expiries)} (from {len(expirations)})")
 
     if not filtered_expiries or not strikes_all:
@@ -405,7 +409,7 @@ def discover_contracts_for_symbol(
         moneyness_pct=cfg.filters.moneyness_pct,
         max_strikes_per_expiry=max_strikes_per_expiry,
     )
-    
+
     logger.info(f"Strike candidates: {len(strike_candidates)} (from {len(strikes_all)})")
 
     if not strike_candidates:
@@ -450,7 +454,7 @@ def discover_contracts_for_symbol(
     if not scoped_candidates:
         logger.warning("No scoped candidates found")
         return []
-    
+
     # 3) Build Option list (C/P) and batch-qualify; no per-contract details calls
     options: List[Any] = []
     for cand in scoped_candidates:
@@ -470,7 +474,7 @@ def discover_contracts_for_symbol(
 
     # Batch qualify; no per-candidate reqContractDetails
     qualified: List[Any] = []
-    
+
     # Adaptive batch size based on total contract count
     # Smaller batches for small sets, larger for medium, capped for very large
     total_contracts = len(options)
@@ -482,12 +486,12 @@ def discover_contracts_for_symbol(
         CHUNK = 75  # Larger batches for medium sets
     else:
         CHUNK = 100  # Cap at 100 for very large sets to avoid timeouts
-    
+
     logger.debug(
         f"Qualifying {total_contracts} contracts with batch size {CHUNK}",
-        extra={"symbol": symbol, "total": total_contracts, "batch_size": CHUNK}
+        extra={"symbol": symbol, "total": total_contracts, "batch_size": CHUNK},
     )
-    
+
     for i in range(0, len(options), CHUNK):
         chunk = options[i : i + CHUNK]
         try:
@@ -497,7 +501,9 @@ def discover_contracts_for_symbol(
             qualified.extend(_qualify_contracts_chunk(ib, chunk))
         except Exception as exc:  # pragma: no cover - network failures
             logger.warning(
-                "qualifyContracts chunk failed after retries", extra={"size": len(chunk)}, exc_info=exc
+                "qualifyContracts chunk failed after retries",
+                extra={"size": len(chunk)},
+                exc_info=exc,
             )
             continue
 

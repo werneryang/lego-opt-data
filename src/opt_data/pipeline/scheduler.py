@@ -144,17 +144,13 @@ class ScheduleRunner:
         for job in jobs:
             try:
                 if job.kind == "snapshot":
-                    self._run_snapshot_job(
-                        trade_date, job.payload, progress=snapshot_progress
-                    )
+                    self._run_snapshot_job(trade_date, job.payload, progress=snapshot_progress)
                     summary.snapshots += 1
                 elif job.kind == "rollup":
                     self._run_rollup_job(trade_date, job.payload, progress=rollup_progress)
                     summary.rollups += 1
                 elif job.kind == "enrichment":
-                    self._run_enrichment_job(
-                        trade_date, job.payload, progress=enrichment_progress
-                    )
+                    self._run_enrichment_job(trade_date, job.payload, progress=enrichment_progress)
                     summary.enrichments += 1
             except Exception as exc:  # pragma: no cover - surfaced in summary
                 error = {

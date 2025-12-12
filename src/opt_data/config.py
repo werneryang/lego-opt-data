@@ -53,10 +53,10 @@ class PathsConfig:
 
 @dataclass
 class UniverseConfig:
-    file: Path                      # Default full universe (backward compatible)
+    file: Path  # Default full universe (backward compatible)
     refresh_days: int
     intraday_file: Path | None = None  # Optional: smaller set for intraday snapshots
-    close_file: Path | None = None     # Optional: close-specific (defaults to file)
+    close_file: Path | None = None  # Optional: close-specific (defaults to file)
 
 
 @dataclass
@@ -115,7 +115,6 @@ class ObservabilityConfig:
     webhook_url: str | None = None
 
 
-
 @dataclass
 class CLIConfig:
     default_generic_ticks: str
@@ -169,9 +168,9 @@ class QAConfig:
 
 @dataclass
 class RollupConfig:
-    close_slot: int = 13                    # 16:00 slot (default close)
-    fallback_slot: int = 12                 # 15:30 slot (backup)
-    allow_intraday_fallback: bool = False   # If True, fallback to intraday when close view empty
+    close_slot: int = 13  # 16:00 slot (default close)
+    fallback_slot: int = 12  # 15:30 slot (backup)
+    allow_intraday_fallback: bool = False  # If True, fallback to intraday when close view empty
 
 
 @dataclass
@@ -196,7 +195,7 @@ class AppConfig:
 
     def validate(self) -> List[str]:
         """Validate configuration and return list of errors.
-        
+
         Returns:
             List of validation error messages. Empty list means valid config.
         """
@@ -205,7 +204,7 @@ class AppConfig:
         # Validate IB configuration
         if not (1024 <= self.ib.port <= 65535):
             errors.append(f"Invalid IB port: {self.ib.port} (must be 1024-65535)")
-        
+
         if self.ib.client_id is not None and self.ib.client_id < 0:
             errors.append(f"Invalid IB client_id: {self.ib.client_id} (must be >= 0)")
 
@@ -220,7 +219,7 @@ class AppConfig:
                 errors.append(
                     f"Invalid ib.client_id_pool.lock_ttl_seconds: {pool.lock_ttl_seconds} (must be > 0)"
                 )
-        
+
         if self.ib.market_data_type not in {1, 2, 3, 4}:
             errors.append(
                 f"Invalid IB market_data_type: {self.ib.market_data_type} "
@@ -232,7 +231,7 @@ class AppConfig:
 
         # Note: Universe file will be checked at runtime when actually needed
         # (tests may not have it, and it can be created/updated dynamically)
-        
+
         if self.universe.refresh_days < 0:
             errors.append(
                 f"Invalid universe.refresh_days: {self.universe.refresh_days} (must be >= 0)"
@@ -244,13 +243,12 @@ class AppConfig:
                 f"Invalid filters.moneyness_pct: {self.filters.moneyness_pct} "
                 "(must be > 0 and <= 1.0)"
             )
-        
+
         valid_expiry_types = {"monthly", "quarterly", "weekly"}
         invalid_types = set(self.filters.expiry_types) - valid_expiry_types
         if invalid_types:
             errors.append(
-                f"Invalid expiry types: {invalid_types}. "
-                f"Valid types are: {valid_expiry_types}"
+                f"Invalid expiry types: {invalid_types}. Valid types are: {valid_expiry_types}"
             )
 
         # Validate rate limits
@@ -264,13 +262,12 @@ class AppConfig:
                     f"Invalid rate_limits.{rl_name}.per_minute: {rl_config.per_minute} "
                     "(must be > 0)"
                 )
-            
+
             if rl_config.burst <= 0:
                 errors.append(
-                    f"Invalid rate_limits.{rl_name}.burst: {rl_config.burst} "
-                    "(must be > 0)"
+                    f"Invalid rate_limits.{rl_name}.burst: {rl_config.burst} (must be > 0)"
                 )
-            
+
             if rl_config.max_concurrent is not None and rl_config.max_concurrent <= 0:
                 errors.append(
                     f"Invalid rate_limits.{rl_name}.max_concurrent: {rl_config.max_concurrent} "
@@ -280,14 +277,13 @@ class AppConfig:
         # Validate storage configuration
         if self.storage.hot_days < 0:
             errors.append(f"Invalid storage.hot_days: {self.storage.hot_days} (must be >= 0)")
-        
+
         valid_codecs = {"snappy", "gzip", "zstd", "lz4", "brotli", "none"}
         if self.storage.hot_codec not in valid_codecs:
             errors.append(
-                f"Invalid storage.hot_codec: {self.storage.hot_codec}. "
-                f"Valid codecs: {valid_codecs}"
+                f"Invalid storage.hot_codec: {self.storage.hot_codec}. Valid codecs: {valid_codecs}"
             )
-        
+
         if self.storage.cold_codec not in valid_codecs:
             errors.append(
                 f"Invalid storage.cold_codec: {self.storage.cold_codec}. "
@@ -300,13 +296,13 @@ class AppConfig:
                 f"Invalid compaction.min_file_size_mb: {self.compaction.min_file_size_mb} "
                 "(must be > 0)"
             )
-        
+
         if self.compaction.max_file_size_mb <= 0:
             errors.append(
                 f"Invalid compaction.max_file_size_mb: {self.compaction.max_file_size_mb} "
                 "(must be > 0)"
             )
-        
+
         if self.compaction.max_file_size_mb < self.compaction.min_file_size_mb:
             errors.append(
                 f"compaction.max_file_size_mb ({self.compaction.max_file_size_mb}) must be "
@@ -321,9 +317,7 @@ class AppConfig:
             ("oi_enrichment_threshold", self.qa.oi_enrichment_threshold),
         ]:
             if not (0 <= qa_value <= 1):
-                errors.append(
-                    f"Invalid qa.{qa_name}: {qa_value} (must be between 0.0 and 1.0)"
-                )
+                errors.append(f"Invalid qa.{qa_name}: {qa_value} (must be between 0.0 and 1.0)")
 
         # Validate snapshot configuration
         if self.snapshot.strikes_per_side < 0:
@@ -331,30 +325,28 @@ class AppConfig:
                 f"Invalid snapshot.strikes_per_side: {self.snapshot.strikes_per_side} "
                 "(must be >= 0)"
             )
-        
+
         if self.snapshot.subscription_timeout <= 0:
             errors.append(
                 f"Invalid snapshot.subscription_timeout: {self.snapshot.subscription_timeout} "
                 "(must be > 0)"
             )
-        
+
         if self.snapshot.subscription_poll_interval <= 0:
             errors.append(
                 f"Invalid snapshot.subscription_poll_interval: "
                 f"{self.snapshot.subscription_poll_interval} (must be > 0)"
             )
-        
+
         valid_fetch_modes = {"streaming", "snapshot", "reqtickers"}
         if self.snapshot.fetch_mode not in valid_fetch_modes:
             errors.append(
                 f"Invalid snapshot.fetch_mode: {self.snapshot.fetch_mode}. "
                 f"Valid modes: {valid_fetch_modes}"
             )
-        
+
         if self.snapshot.batch_size <= 0:
-            errors.append(
-                f"Invalid snapshot.batch_size: {self.snapshot.batch_size} (must be > 0)"
-            )
+            errors.append(f"Invalid snapshot.batch_size: {self.snapshot.batch_size} (must be > 0)")
 
         # Validate CLI configuration
         if self.cli.snapshot_grace_seconds < 0:
@@ -362,33 +354,30 @@ class AppConfig:
                 f"Invalid cli.snapshot_grace_seconds: {self.cli.snapshot_grace_seconds} "
                 "(must be >= 0)"
             )
-        
+
         if not (0 <= self.cli.rollup_close_slot <= 13):
             errors.append(
-                f"Invalid cli.rollup_close_slot: {self.cli.rollup_close_slot} "
-                "(must be 0-13)"
+                f"Invalid cli.rollup_close_slot: {self.cli.rollup_close_slot} (must be 0-13)"
             )
-        
+
         if not (0 <= self.cli.rollup_fallback_slot <= 13):
             errors.append(
-                f"Invalid cli.rollup_fallback_slot: {self.cli.rollup_fallback_slot} "
-                "(must be 0-13)"
+                f"Invalid cli.rollup_fallback_slot: {self.cli.rollup_fallback_slot} (must be 0-13)"
             )
 
         # Validate acquisition configuration
         valid_modes = {"snapshot", "historical"}
         if self.acquisition.mode not in valid_modes:
             errors.append(
-                f"Invalid acquisition.mode: {self.acquisition.mode}. "
-                f"Valid modes: {valid_modes}"
+                f"Invalid acquisition.mode: {self.acquisition.mode}. Valid modes: {valid_modes}"
             )
-        
+
         if self.acquisition.max_strikes_per_expiry < 0:
             errors.append(
                 f"Invalid acquisition.max_strikes_per_expiry: "
                 f"{self.acquisition.max_strikes_per_expiry} (must be >= 0)"
             )
-        
+
         if self.acquisition.historical_timeout <= 0:
             errors.append(
                 f"Invalid acquisition.historical_timeout: {self.acquisition.historical_timeout} "
@@ -399,8 +388,7 @@ class AppConfig:
         valid_log_levels = {"DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"}
         if self.logging.level.upper() not in valid_log_levels:
             errors.append(
-                f"Invalid logging.level: {self.logging.level}. "
-                f"Valid levels: {valid_log_levels}"
+                f"Invalid logging.level: {self.logging.level}. Valid levels: {valid_log_levels}"
             )
 
         return errors

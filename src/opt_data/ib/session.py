@@ -55,7 +55,7 @@ class IBSession:
         """Connect to IB Gateway/TWS with automatic retry on connection failures."""
         _ensure_thread_event_loop()
         IB = _get_ib_class()
-        
+
         if self.ib is None:
             self.ib = IB()
         if not getattr(self.ib, "isConnected", lambda: False)():
@@ -90,7 +90,9 @@ class IBSession:
 
     def _connect_with_client_id(self) -> int:
         if self.client_id is not None:
-            logger.info(f"Connecting to IB Gateway at {self.host}:{self.port} clientId={self.client_id}")
+            logger.info(
+                f"Connecting to IB Gateway at {self.host}:{self.port} clientId={self.client_id}"
+            )
             self.ib.connect(self.host, self.port, clientId=self.client_id)
             return self.client_id
 

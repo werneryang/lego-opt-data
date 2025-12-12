@@ -6,7 +6,6 @@ import math
 from typing import Any, Callable, Dict, List, Optional, Sequence
 
 from opt_data.util.performance import log_performance
-from opt_data.util.log_context import LogContext
 
 logger = logging.getLogger(__name__)
 
@@ -34,7 +33,7 @@ def collect_option_snapshots(
 ) -> List[Dict[str, Any]]:
     """
     Collect option snapshots concurrently using asyncio.
-    
+
     Args:
         ib: Interactive Brokers connection object
         contracts: Sequence of contract dictionaries to fetch data for
@@ -49,11 +48,11 @@ def collect_option_snapshots(
         batch_size: Number of contracts per batch (for reqtickers mode)
         metrics: Optional MetricsCollector instance for instrumentation
         alerts: Optional AlertManager instance for notifications
-        
+
     Returns:
         List of dictionaries containing market data for each contract.
         Failed contracts will have error information in the result.
-        
+
     Raises:
         ValueError: If concurrency is None (must be explicitly provided)
         RuntimeError: If ib.run() fails catastrophically
@@ -63,26 +62,25 @@ def collect_option_snapshots(
             "concurrency must be explicitly provided. "
             "Use cfg.rate_limits.snapshot.max_concurrent from your config."
         )
-    
+
     # Validate mode
     valid_modes = {"streaming", "snapshot", "reqtickers"}
     if mode not in valid_modes:
-        raise ValueError(
-            f"Invalid mode: {mode}. Valid modes: {valid_modes}"
-        )
-    
+        raise ValueError(f"Invalid mode: {mode}. Valid modes: {valid_modes}")
+
     # Set market data type if specified (e.g., frozen data for after-hours)
     if market_data_type is not None:
         logger.info(f"Setting market data type to {market_data_type}")
         ib.reqMarketDataType(market_data_type)
-    
+
     # Route to appropriate implementation based on mode
     logger.info(f"Using fetch mode: {mode}")
-    
+
     if mode == "streaming":
         # Current implementation: reqMktData with snapshot=False and polling
         return _collect_streaming(
-            ib, contracts,
+            ib,
+            contracts,
             generic_ticks=generic_ticks,
             timeout=timeout,
             poll_interval=poll_interval,
@@ -95,7 +93,8 @@ def collect_option_snapshots(
     elif mode == "snapshot":
         # Event-driven snapshot mode
         return _collect_snapshot_mode(
-            ib, contracts,
+            ib,
+            contracts,
             generic_ticks=generic_ticks,
             timeout=timeout,
             acquire_token=acquire_token,
@@ -107,7 +106,8 @@ def collect_option_snapshots(
     elif mode == "reqtickers":
         # Batch reqTickers mode
         return _collect_reqtickers(
-            ib, contracts,
+            ib,
+            contracts,
             generic_ticks=generic_ticks,
             batch_size=batch_size,
             timeout=timeout,
@@ -151,13 +151,9 @@ def _collect_streaming(
             )
         )
     except Exception as e:
-        logger.exception(
-            f"Critical error in _collect_streaming: {type(e).__name__}: {e}"
-        )
+        logger.exception(f"Critical error in _collect_streaming: {type(e).__name__}: {e}")
         # Re-raise as RuntimeError to signal that the entire collection failed
-        raise RuntimeError(
-            f"Failed to collect option snapshots: {type(e).__name__}: {e}"
-        ) from e
+        raise RuntimeError(f"Failed to collect option snapshots: {type(e).__name__}: {e}") from e
 
 
 def _collect_snapshot_mode(
@@ -188,12 +184,8 @@ def _collect_snapshot_mode(
             )
         )
     except Exception as e:
-        logger.exception(
-            f"Critical error in _collect_snapshot_mode: {type(e).__name__}: {e}"
-        )
-        raise RuntimeError(
-            f"Failed to collect snapshots: {type(e).__name__}: {e}"
-        ) from e
+        logger.exception(f"Critical error in _collect_snapshot_mode: {type(e).__name__}: {e}")
+        raise RuntimeError(f"Failed to collect snapshots: {type(e).__name__}: {e}") from e
 
 
 async def _collect_snapshot_async(
@@ -234,7 +226,7 @@ async def _collect_snapshot_async(
             if info.get("multiplier"):
                 opt.multiplier = str(info["multiplier"])
             opt.includeExpired = True
-        
+
         opt._origin_info = info
         option_objs.append(opt)
 
@@ -249,7 +241,7 @@ async def _collect_snapshot_async(
         start_time = loop.time()
         token_wait_ms = 0.0
         data_wait_ms = 0.0
-        
+
         async with sem:
             try:
                 # Rate limiting
@@ -259,7 +251,11 @@ async def _collect_snapshot_async(
                         acquire_token()
                         token_wait_ms = (loop.time() - token_wait_start) * 1000
                         if metrics:
-                            tags = {"symbol": opt.symbol, "exchange": opt.exchange, "mode": "snapshot"}
+                            tags = {
+                                "symbol": opt.symbol,
+                                "exchange": opt.exchange,
+                                "mode": "snapshot",
+                            }
                             metrics.timing("snapshot.token_wait.duration", token_wait_ms, tags)
                     except Exception as e:
                         logger.warning(f"Rate limit acquisition failed for {opt.symbol}: {e}")
@@ -269,20 +265,22 @@ async def _collect_snapshot_async(
                     ticker = ib.reqMktData(opt, genericTickList=generic_ticks, snapshot=True)
                 except Exception as e:
                     logger.error(f"Failed to subscribe {opt.symbol}: {type(e).__name__}: {e}")
-                    return _build_error_row(opt._origin_info, "subscription_failed", f"{type(e).__name__}: {str(e)}")
+                    return _build_error_row(
+                        opt._origin_info, "subscription_failed", f"{type(e).__name__}: {str(e)}"
+                    )
 
                 # Event-driven wait for data
                 data_wait_start = loop.time()
                 done = asyncio.Event()
-                
+
                 def on_update(t: Ticker):
                     price_ready = _has_price(t)
                     greeks_ready = _has_greeks(t)
                     if price_ready and (not require_greeks or greeks_ready):
                         done.set()
-                
+
                 ticker.updateEvent.connect(on_update)
-                
+
                 try:
                     await asyncio.wait_for(done.wait(), timeout)
                     data_wait_ms = (loop.time() - data_wait_start) * 1000
@@ -291,7 +289,9 @@ async def _collect_snapshot_async(
                         metrics.timing("snapshot.data_wait.duration", data_wait_ms, tags)
                 except asyncio.TimeoutError:
                     logger.warning(f"Timeout for {opt.symbol}")
-                    return _build_error_row(opt._origin_info, "timeout", f"Data not ready after {timeout}s")
+                    return _build_error_row(
+                        opt._origin_info, "timeout", f"Data not ready after {timeout}s"
+                    )
                 finally:
                     ticker.updateEvent.disconnect(on_update)
                     ib.cancelMktData(opt)
@@ -300,13 +300,23 @@ async def _collect_snapshot_async(
                 price_ready = _has_price(ticker)
                 greeks_ready = _has_greeks(ticker)
                 timed_out = not (price_ready and (not require_greeks or greeks_ready))
-                return _build_row(opt._origin_info, ticker, price_ready=price_ready, greeks_ready=greeks_ready, timed_out=timed_out)
-                    
+                return _build_row(
+                    opt._origin_info,
+                    ticker,
+                    price_ready=price_ready,
+                    greeks_ready=greeks_ready,
+                    timed_out=timed_out,
+                )
+
             except Exception as e:
-                logger.exception(f"Unexpected error in fetch_one_snapshot for {opt.symbol}: {type(e).__name__}: {e}")
+                logger.exception(
+                    f"Unexpected error in fetch_one_snapshot for {opt.symbol}: {type(e).__name__}: {e}"
+                )
                 error_occurred = True
-                return _build_error_row(opt._origin_info, "unexpected_error", f"{type(e).__name__}: {str(e)}")
-                
+                return _build_error_row(
+                    opt._origin_info, "unexpected_error", f"{type(e).__name__}: {str(e)}"
+                )
+
             finally:
                 duration = (loop.time() - start_time) * 1000
                 if metrics:
@@ -391,12 +401,8 @@ def _collect_reqtickers(
             )
         )
     except Exception as e:
-        logger.exception(
-            f"Critical error in _collect_reqtickers: {type(e).__name__}: {e}"
-        )
-        raise RuntimeError(
-            f"Failed to collect via reqTickers: {type(e).__name__}: {e}"
-        ) from e
+        logger.exception(f"Critical error in _collect_reqtickers: {type(e).__name__}: {e}")
+        raise RuntimeError(f"Failed to collect via reqTickers: {type(e).__name__}: {e}") from e
 
 
 async def _collect_reqtickers_async(
@@ -437,51 +443,67 @@ async def _collect_reqtickers_async(
             if info.get("multiplier"):
                 opt.multiplier = str(info["multiplier"])
             opt.includeExpired = True
-        
+
         opt._origin_info = info
         option_objs.append(opt)
 
     results: List[Dict[str, Any]] = []
-    
+
     # Qualify contracts first for better accuracy
     logger.info(f"Qualifying {len(option_objs)} contracts...")
     qualified = await ib.qualifyContractsAsync(*option_objs)
     logger.info(f"Qualified {len(qualified)} contracts")
-    
+
     # Process in batches
     for i in range(0, len(qualified), batch_size):
-        batch = qualified[i:i + batch_size]
+        batch = qualified[i : i + batch_size]
         loop = asyncio.get_running_loop()
         batch_start = loop.time()
-        
+
         if acquire_token:
             try:
                 acquire_token()
             except Exception as e:
-                logger.warning(f"Rate limit acquisition failed for batch {i//batch_size}: {e}")
-        
+                logger.warning(f"Rate limit acquisition failed for batch {i // batch_size}: {e}")
+
         try:
-            logger.info(f"Requesting tickers for batch {i//batch_size + 1} ({len(batch)} contracts)...")
+            logger.info(
+                f"Requesting tickers for batch {i // batch_size + 1} ({len(batch)} contracts)..."
+            )
             tickers = await ib.reqTickersAsync(*batch)
-            
+
             for ticker in tickers:
                 info = ticker.contract._origin_info
                 price_ready = _has_price(ticker)
                 greeks_ready = _has_greeks(ticker)
                 timed_out = not (price_ready and (not require_greeks or greeks_ready))
-                row = _build_row(info, ticker, price_ready=price_ready, greeks_ready=greeks_ready, timed_out=timed_out)
+                row = _build_row(
+                    info,
+                    ticker,
+                    price_ready=price_ready,
+                    greeks_ready=greeks_ready,
+                    timed_out=timed_out,
+                )
                 results.append(row)
-            
+
             batch_duration = (loop.time() - batch_start) * 1000
             if metrics:
-                metrics.timing("snapshot.batch.duration", batch_duration, {"mode": "reqtickers", "batch_size": len(batch)})
-                
+                metrics.timing(
+                    "snapshot.batch.duration",
+                    batch_duration,
+                    {"mode": "reqtickers", "batch_size": len(batch)},
+                )
+
         except Exception as e:
-            logger.error(f"Error in batch {i//batch_size}: {type(e).__name__}: {e}")
+            logger.error(f"Error in batch {i // batch_size}: {type(e).__name__}: {e}")
             # Add error rows for failed batch
             for opt in batch:
-                results.append(_build_error_row(opt._origin_info, "batch_error", f"{type(e).__name__}: {str(e)}"))
-    
+                results.append(
+                    _build_error_row(
+                        opt._origin_info, "batch_error", f"{type(e).__name__}: {str(e)}"
+                    )
+                )
+
     return results
 
 
@@ -526,7 +548,7 @@ async def _collect_async(
             if info.get("multiplier"):
                 opt.multiplier = str(info["multiplier"])
             opt.includeExpired = True
-        
+
         # Attach original info to the object for easy retrieval later
         opt._origin_info = info
         option_objs.append(opt)
@@ -579,7 +601,7 @@ async def _collect_async(
         start_time = loop.time()
         token_wait_ms = 0.0
         data_wait_ms = 0.0
-        
+
         async with sem:
             try:
                 # Rate limiting hook - measure wait time separately
@@ -611,44 +633,40 @@ async def _collect_async(
                     return _build_error_row(
                         opt._origin_info,
                         error_type="subscription_failed",
-                        error_message=f"{type(e).__name__}: {str(e)}"
+                        error_message=f"{type(e).__name__}: {str(e)}",
                     )
-                
+
                 # Wait for data with timeout - measure data wait time separately
                 try:
                     data_wait_start = loop.time()
-                    
+
                     while (loop.time() - data_wait_start) < timeout:
                         price_ready = _has_price(ticker)
                         greeks_ready = _has_greeks(ticker)
-                        
+
                         if price_ready and (not require_greeks or greeks_ready):
                             break
-                        
+
                         await asyncio.sleep(poll_interval)
-                    
+
                     # Record data wait time (excludes token wait)
                     data_wait_ms = (loop.time() - data_wait_start) * 1000
                     if metrics:
                         tags = {"symbol": opt.symbol, "exchange": opt.exchange}
                         metrics.timing("snapshot.data_wait.duration", data_wait_ms, tags)
-                    
-                except asyncio.TimeoutError as e:
+
+                except asyncio.TimeoutError:
                     logger.warning(
-                        f"Timeout waiting for data: {opt.symbol} "
-                        f"{opt.strike} {opt.right}"
+                        f"Timeout waiting for data: {opt.symbol} {opt.strike} {opt.right}"
                     )
                     return _build_error_row(
                         opt._origin_info,
                         error_type="timeout",
-                        error_message=f"Data not ready after {timeout}s"
+                        error_message=f"Data not ready after {timeout}s",
                     )
-                    error_occurred = True
-                    return result
                 except asyncio.CancelledError:
                     logger.info(
-                        f"Data collection cancelled for {opt.symbol} "
-                        f"{opt.strike} {opt.right}"
+                        f"Data collection cancelled for {opt.symbol} {opt.strike} {opt.right}"
                     )
                     raise  # Re-raise to allow proper cancellation handling
                 except Exception as e:
@@ -659,7 +677,7 @@ async def _collect_async(
                     return _build_error_row(
                         opt._origin_info,
                         error_type="data_collection_error",
-                        error_message=f"{type(e).__name__}: {str(e)}"
+                        error_message=f"{type(e).__name__}: {str(e)}",
                     )
 
                 # Check final state and build result
@@ -676,7 +694,7 @@ async def _collect_async(
                         timed_out=timed_out,
                     )
                     return row
-                    
+
                 except Exception as e:
                     logger.error(
                         f"Error building result row for {opt.symbol} "
@@ -685,9 +703,9 @@ async def _collect_async(
                     return _build_error_row(
                         opt._origin_info,
                         error_type="row_building_error",
-                        error_message=f"{type(e).__name__}: {str(e)}"
+                        error_message=f"{type(e).__name__}: {str(e)}",
                     )
-                    
+
             except Exception as e:
                 # Catch-all for any unexpected errors
                 logger.exception(
@@ -698,9 +716,9 @@ async def _collect_async(
                 return _build_error_row(
                     opt._origin_info,
                     error_type="unexpected_error",
-                    error_message=f"{type(e).__name__}: {str(e)}"
+                    error_message=f"{type(e).__name__}: {str(e)}",
                 )
-                
+
             finally:
                 duration = (loop.time() - start_time) * 1000
                 if metrics:

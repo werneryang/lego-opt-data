@@ -28,7 +28,7 @@ from .pipeline.scheduler import ScheduleRunner
 from .pipeline.qa import QAMetricsCalculator
 from .util.calendar import to_et_date, is_trading_day
 from .util.logscanner import scan_logs
-from .universe import load_universe
+from .universe import UniverseEntry, load_universe
 from .ib import (
     IBSession,
     sec_def_params,
@@ -123,7 +123,9 @@ def _precheck_contract_caches(
 
     # Phase 1: ensure we have conids for all symbols (persist even if later steps fail)
     symbols_needing_conid = [
-        sym for sym in symbols_for_run if not entries_by_symbol.get(sym) or not entries_by_symbol[sym].conid
+        sym
+        for sym in symbols_for_run
+        if not entries_by_symbol.get(sym) or not entries_by_symbol[sym].conid
     ]
     if symbols_needing_conid:
         session = IBSession(
@@ -688,7 +690,9 @@ def update(
     cfg.acquisition.mode = mode_normalized
 
     target_date = (
-        to_et_date(datetime.now(ZoneInfo("UTC"))) if date_arg == "today" else date.fromisoformat(date_arg)
+        to_et_date(datetime.now(ZoneInfo("UTC")))
+        if date_arg == "today"
+        else date.fromisoformat(date_arg)
     )
 
     symbol_list = [s.strip().upper() for s in symbols.split(",")] if symbols else None
@@ -731,7 +735,9 @@ def history(
     ),
     config: Optional[str] = typer.Option(None, help="Path to config TOML"),
     days: int = typer.Option(30, help="Number of days of history to fetch"),
-    output: Optional[str] = typer.Option(None, help="Output directory (default: data/clean/ib/history)"),
+    output: Optional[str] = typer.Option(
+        None, help="Output directory (default: data/clean/ib/history)"
+    ),
     what: str = typer.Option("MIDPOINT", help="Data type (MIDPOINT, TRADES, etc.)"),
     use_rth: bool = typer.Option(True, help="Use Regular Trading Hours"),
     force_refresh: bool = typer.Option(False, help="Force refresh contract cache"),
@@ -740,15 +746,15 @@ def history(
 ) -> None:
     """Fetch daily historical data for options (using 8-hour bar aggregation by default)."""
     cfg = load_config(Path(config) if config else None)
-    
+
     symbol_list = [s.strip().upper() for s in symbols.split(",")] if symbols else None
-    
+
     runner = HistoryRunner(cfg)
-    
+
     typer.echo(f"[history] fetching {days} days of {what} data for {symbol_list or 'universe'}")
     if incremental:
         typer.echo("[history] incremental mode enabled")
-    
+
     def progress_cb(current: int, total: int, status: str, details: Dict[str, Any]) -> None:
         # Simple CLI progress
         pct = (current / total) * 100 if total > 0 else 0
@@ -765,10 +771,12 @@ def history(
         bar_size=bar_size,
         progress_callback=progress_cb,
     )
-    
+
     typer.echo(f"[history] complete. processed={results['processed']} errors={results['errors']}")
     for sym, stats in results["symbols"].items():
-        typer.echo(f"  {sym}: contracts={stats['contracts']} bars={stats['bars']} errors={stats['errors']}")
+        typer.echo(
+            f"  {sym}: contracts={stats['contracts']} bars={stats['bars']} errors={stats['errors']}"
+        )
 
 
 @app.command()
@@ -886,7 +894,10 @@ def snapshot(
         if snapshot_mode:
             mode_normalized = snapshot_mode.strip().lower()
             if mode_normalized not in {"streaming", "snapshot", "reqtickers"}:
-                typer.echo(f"Invalid --snapshot-mode: {snapshot_mode}. Valid: streaming, snapshot, reqtickers", err=True)
+                typer.echo(
+                    f"Invalid --snapshot-mode: {snapshot_mode}. Valid: streaming, snapshot, reqtickers",
+                    err=True,
+                )
                 raise typer.Exit(code=2)
             snapshot_cfg.fetch_mode = mode_normalized
     elif ticks:
@@ -901,7 +912,9 @@ def snapshot(
         effective_universe = cfg.universe.file
 
     trade_date = (
-        to_et_date(datetime.now(ZoneInfo("UTC"))) if date_str == "today" else date.fromisoformat(date_str)
+        to_et_date(datetime.now(ZoneInfo("UTC")))
+        if date_str == "today"
+        else date.fromisoformat(date_str)
     )
     symbol_list = [s.strip().upper() for s in symbols.split(",") if s.strip()] if symbols else None
 
@@ -988,7 +1001,9 @@ def close_snapshot(
     cfg = load_config(Path(config) if config else None)
     snapshot_cfg = getattr(cfg, "snapshot", None)
     trade_date = (
-        to_et_date(datetime.now(ZoneInfo("UTC"))) if date_str == "today" else date.fromisoformat(date_str)
+        to_et_date(datetime.now(ZoneInfo("UTC")))
+        if date_str == "today"
+        else date.fromisoformat(date_str)
     )
     symbol_list = [s.strip().upper() for s in symbols.split(",") if s.strip()] if symbols else None
 
@@ -1008,7 +1023,8 @@ def close_snapshot(
     else:
         if not universe_entries:
             typer.echo(
-                "[close-snapshot] no symbols available from universe for snapshot precheck", err=True
+                "[close-snapshot] no symbols available from universe for snapshot precheck",
+                err=True,
             )
             raise typer.Exit(code=1)
         symbols_for_run = [u.symbol for u in universe_entries]
@@ -1023,13 +1039,15 @@ def close_snapshot(
         prefix="close-snapshot",
     )
 
-    session_factory = lambda: IBSession(  # force delayed/replay data for EOD capture
-        host=cfg.ib.host,
-        port=cfg.ib.port,
-        client_id=cfg.ib.client_id,
-        client_id_pool=cfg.ib.client_id_pool,
-        market_data_type=2,
-    )
+    # Force delayed/replay data for EOD capture.
+    def session_factory() -> IBSession:
+        return IBSession(
+            host=cfg.ib.host,
+            port=cfg.ib.port,
+            client_id=cfg.ib.client_id,
+            client_id_pool=cfg.ib.client_id_pool,
+            market_data_type=2,
+        )
 
     runner = SnapshotRunner(
         cfg,
@@ -1204,7 +1222,9 @@ def rollup(
 ) -> None:
     cfg = load_config(Path(config) if config else None)
     trade_date = (
-        to_et_date(datetime.now(ZoneInfo("UTC"))) if date_str == "today" else date.fromisoformat(date_str)
+        to_et_date(datetime.now(ZoneInfo("UTC")))
+        if date_str == "today"
+        else date.fromisoformat(date_str)
     )
     symbol_list = [s.strip().upper() for s in symbols.split(",") if s.strip()] if symbols else None
 
@@ -1268,7 +1288,9 @@ def enrichment(
 ) -> None:
     cfg = load_config(Path(config) if config else None)
     trade_date = (
-        to_et_date(datetime.now(ZoneInfo("UTC"))) if date_str == "today" else date.fromisoformat(date_str)
+        to_et_date(datetime.now(ZoneInfo("UTC")))
+        if date_str == "today"
+        else date.fromisoformat(date_str)
     )
     symbol_list = [s.strip().upper() for s in symbols.split(",") if s.strip()] if symbols else None
 
@@ -1370,7 +1392,9 @@ def schedule(
 ) -> None:
     cfg = load_config(Path(config) if config else None)
     trade_date = (
-        to_et_date(datetime.now(ZoneInfo("UTC"))) if date_str == "today" else date.fromisoformat(date_str)
+        to_et_date(datetime.now(ZoneInfo("UTC")))
+        if date_str == "today"
+        else date.fromisoformat(date_str)
     )
     symbol_list = [s.strip().upper() for s in symbols.split(",") if s.strip()] if symbols else None
     fields = (
@@ -1539,7 +1563,9 @@ def qa(
 ) -> None:
     cfg = load_config(Path(config) if config else None)
     trade_date = (
-        to_et_date(datetime.now(ZoneInfo("UTC"))) if date_str == "today" else date.fromisoformat(date_str)
+        to_et_date(datetime.now(ZoneInfo("UTC")))
+        if date_str == "today"
+        else date.fromisoformat(date_str)
     )
 
     calculator = QAMetricsCalculator(cfg)
@@ -1596,7 +1622,9 @@ def selfcheck(
 ) -> None:
     cfg = load_config(Path(config) if config else None)
     trade_date = (
-        to_et_date(datetime.now(ZoneInfo("UTC"))) if date_str == "today" else date.fromisoformat(date_str)
+        to_et_date(datetime.now(ZoneInfo("UTC")))
+        if date_str == "today"
+        else date.fromisoformat(date_str)
     )
 
     qa_calc = QAMetricsCalculator(cfg)
@@ -1760,9 +1788,7 @@ def logscan(
             typer.echo(f"[logscan] failed to write summary: {exc}", err=True)
 
     if max_total >= 0 and fatal_total > max_total:
-        typer.echo(
-            f"[logscan] fatal_total {fatal_total} exceeds max_total {max_total}", err=True
-        )
+        typer.echo(f"[logscan] fatal_total {fatal_total} exceeds max_total {max_total}", err=True)
         raise typer.Exit(code=1)
 
     if warn_max_total >= 0 and warn_total > warn_max_total:

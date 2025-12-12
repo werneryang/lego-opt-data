@@ -104,6 +104,7 @@ def test_snapshot_runner_writes_intraday_partition(tmp_path):
         # capture progress to ensure per-symbol timing is emitted
         cleaner=None,
     )
+
     def progress_cb(symbol: str, status: str, extra: Dict) -> None:
         progress_log.append((symbol, status, extra))
 

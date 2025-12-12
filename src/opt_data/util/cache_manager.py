@@ -37,7 +37,7 @@ class CacheManager:
         """Get cache file path for a symbol and date."""
         key = trade_date.isoformat()
         base_path = self.cache_root / symbol / key
-        
+
         if use_compression:
             return base_path.with_suffix(".pkl.gz")
         return base_path.with_suffix(".json")
@@ -75,11 +75,11 @@ class CacheManager:
                 f"Saved cache for {symbol} {trade_date}: {len(data)} contracts "
                 f"({cache_path.stat().st_size} bytes)"
             )
-            
+
             # Update memory cache
             cache_key = self._cache_key(symbol, trade_date)
             self._memory_cache[cache_key] = data
-            
+
             return cache_path
 
         except Exception as exc:
@@ -125,9 +125,7 @@ class CacheManager:
                 self._memory_cache[cache_key] = data
                 return data
             except Exception as exc:
-                logger.warning(
-                    f"Failed to load compressed cache for {symbol} {trade_date}: {exc}"
-                )
+                logger.warning(f"Failed to load compressed cache for {symbol} {trade_date}: {exc}")
 
         # Fallback to JSON format
         json_path = self._get_path(symbol, trade_date, use_compression=False)
@@ -138,9 +136,7 @@ class CacheManager:
                 self._memory_cache[cache_key] = data
                 return data
             except Exception as exc:
-                logger.warning(
-                    f"Failed to load JSON cache for {symbol} {trade_date}: {exc}"
-                )
+                logger.warning(f"Failed to load JSON cache for {symbol} {trade_date}: {exc}")
 
         logger.debug(f"Cache miss for {symbol} {trade_date}")
         return None
@@ -190,13 +186,13 @@ class CacheManager:
         try:
             # Load from JSON
             data = json.loads(json_path.read_text(encoding="utf-8"))
-            
+
             # Save as compressed
             self.save(symbol, trade_date, data, use_compression=True)
-            
+
             # Optionally delete old JSON file
             # json_path.unlink()  # Uncomment to delete after migration
-            
+
             logger.info(f"Migrated cache for {symbol} {trade_date} to compressed format")
             return True
 

@@ -13,39 +13,39 @@ import logging
 
 
 # Context variable for storing log context across async calls
-_log_context: ContextVar[Dict[str, Any]] = ContextVar('log_context', default={})
+_log_context: ContextVar[Dict[str, Any]] = ContextVar("log_context", default={})
 
 
 class LogContext:
     """
     Context manager for adding structured context to logs.
-    
+
     Useful for adding metadata like trade_date, symbol, operation_id
     that should be included in all log messages within a scope.
-    
+
     Example:
         with LogContext(trade_date="2025-11-26", symbol="AAPL"):
             logger.info("Processing snapshot")  # Will include context
             process_data()
     """
-    
+
     def __init__(self, **context):
         """
         Initialize log context.
-        
+
         Args:
             **context: Key-value pairs to add to log context
         """
         self.context = context
         self.token = None
-    
+
     def __enter__(self):
         # Get current context and add new fields
         current = _log_context.get().copy()
         current.update(self.context)
         self.token = _log_context.set(current)
         return self
-    
+
     def __exit__(self, *args):
         # Restore previous context
         if self.token is not None:
@@ -60,7 +60,7 @@ def get_log_context() -> Dict[str, Any]:
 def set_log_context(**context):
     """
     Set log context fields.
-    
+
     Alternative to using LogContext manager for programmatic setting.
     """
     current = _log_context.get().copy()
@@ -76,10 +76,10 @@ def clear_log_context():
 class ContextFormatter(logging.Formatter):
     """
     Custom formatter that includes log context in messages.
-    
+
     Can be used to add structured context to standard logging output.
     """
-    
+
     def format(self, record: logging.LogRecord) -> str:
         # Add context to record
         context = get_log_context()
@@ -87,11 +87,11 @@ class ContextFormatter(logging.Formatter):
             # Add context as extra fields on the record
             for key, value in context.items():
                 setattr(record, key, value)
-            
+
             # Format context string
             context_str = " ".join(f"{k}={v}" for k, v in context.items())
             record.msg = f"[{context_str}] {record.msg}"
-        
+
         return super().format(record)
 
 
@@ -102,7 +102,7 @@ def configure_contextual_logging(
 ):
     """
     Configure a logger to use contextual formatting.
-    
+
     Args:
         logger: Logger to configure (defaults to root logger)
         level: Logging level
@@ -110,13 +110,13 @@ def configure_contextual_logging(
     """
     if logger is None:
         logger = logging.getLogger()
-    
+
     if format_string is None:
-        format_string = '%(asctime)s - %(name)s - %(levelname)s - %(message)s'
-    
+        format_string = "%(asctime)s - %(name)s - %(levelname)s - %(message)s"
+
     # Create handler with context formatter
     handler = logging.StreamHandler()
     handler.setFormatter(ContextFormatter(format_string))
-    
+
     logger.addHandler(handler)
     logger.setLevel(level)

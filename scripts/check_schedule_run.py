@@ -6,7 +6,7 @@ import json
 from dataclasses import dataclass
 from datetime import date, datetime
 from pathlib import Path
-from typing import Dict, Iterable, List, Sequence, Set
+from typing import Dict, Sequence, Set
 
 import pandas as pd
 
@@ -236,7 +236,9 @@ def _summarize_daily_view(
             if flags_series is not None:
                 normalized = flags_series.apply(_normalize_flags)
                 oi_missing_flag = int(
-                    normalized.apply(lambda flg: "missing_oi" in flg if isinstance(flg, list) else False).sum()
+                    normalized.apply(
+                        lambda flg: "missing_oi" in flg if isinstance(flg, list) else False
+                    ).sum()
                 )
             else:
                 oi_missing_flag = 0
@@ -307,8 +309,7 @@ def _print_partition_summary(
         slot_info = ", ".join(slot_details) or "none"
         time_info = ", ".join(part.slot_times) or "n/a"
         print(
-            f"  symbol={part.symbol} exchange={part.exchange} rows={part.rows} "
-            f"slots=[{slot_info}]"
+            f"  symbol={part.symbol} exchange={part.exchange} rows={part.rows} slots=[{slot_info}]"
         )
         print(f"    first sample per slot: {time_info}")
         print(f"    file: {part.path}")
@@ -399,7 +400,9 @@ def main() -> None:
 
 
 def _print_slot_analysis(
-    expected_slots: Sequence, log_summaries: Sequence[SnapshotLogSummary], partitions: Sequence[PartitionSummary]
+    expected_slots: Sequence,
+    log_summaries: Sequence[SnapshotLogSummary],
+    partitions: Sequence[PartitionSummary],
 ) -> None:
     expected_labels = [slot.label for slot in expected_slots]
     label_count = len(expected_labels) or 1
@@ -428,17 +431,24 @@ def _print_slot_analysis(
         print("  no stored data to analyze.")
 
 
-def _print_daily_summary(label: str, summaries: Sequence[DailySummary], slot_label_lookup: Dict[int, str]) -> None:
+def _print_daily_summary(
+    label: str, summaries: Sequence[DailySummary], slot_label_lookup: Dict[int, str]
+) -> None:
     print(f"\n-- {label} --")
     if not summaries:
         print("  No data found.")
         return
     for summary in summaries:
-        slot_info = ", ".join(
-            f"{slot_label_lookup.get(idx, f'idx={idx}')}:{count}"
-            for idx, count in summary.source_slots.items()
-        ) or "none"
-        strategy_info = ", ".join(f"{name}:{count}" for name, count in summary.strategies.items()) or "n/a"
+        slot_info = (
+            ", ".join(
+                f"{slot_label_lookup.get(idx, f'idx={idx}')}:{count}"
+                for idx, count in summary.source_slots.items()
+            )
+            or "none"
+        )
+        strategy_info = (
+            ", ".join(f"{name}:{count}" for name, count in summary.strategies.items()) or "n/a"
+        )
         print(
             f"  symbol={summary.symbol} exchange={summary.exchange} rows={summary.rows} "
             f"source_slots=[{slot_info}] strategies=[{strategy_info}]"
@@ -455,7 +465,9 @@ def _print_enrichment_stats(summaries: Sequence[DailySummary]) -> None:
     oi_present = sum(summary.oi_present for summary in summaries)
     missing_flag = sum(summary.oi_missing_flag for summary in summaries)
     ratio = oi_present / total_rows if total_rows else 0.0
-    print(f"  rows={total_rows} oi_present={oi_present} ratio={ratio:.3f} missing_flag={missing_flag}")
+    print(
+        f"  rows={total_rows} oi_present={oi_present} ratio={ratio:.3f} missing_flag={missing_flag}"
+    )
 
 
 def _normalize_flags(value) -> list[str]:

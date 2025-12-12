@@ -44,11 +44,13 @@ def build_config(tmp_path: Path) -> AppConfig:
             contracts_cache=state_root / "contracts_cache",
             run_logs=state_root / "run_logs",
         ),
-    universe=UniverseConfig(file=universe_file, refresh_days=30, intraday_file=None, close_file=None),
-    reference=ReferenceConfig(corporate_actions=tmp_path / "config/corporate_actions.csv"),
-    filters=FiltersConfig(
-        moneyness_pct=0.30, expiry_types=["monthly", "quarterly"], expiry_months_ahead=12
-    ),
+        universe=UniverseConfig(
+            file=universe_file, refresh_days=30, intraday_file=None, close_file=None
+        ),
+        reference=ReferenceConfig(corporate_actions=tmp_path / "config/corporate_actions.csv"),
+        filters=FiltersConfig(
+            moneyness_pct=0.30, expiry_types=["monthly", "quarterly"], expiry_months_ahead=12
+        ),
         rate_limits=RateLimitsConfig(
             discovery=RateLimitClassConfig(per_minute=1000, burst=1000),
             snapshot=RateLimitClassConfig(per_minute=1000, burst=1000, max_concurrent=10),
@@ -87,22 +89,22 @@ def build_config(tmp_path: Path) -> AppConfig:
             oi_duration="7 D",
             oi_use_rth=False,
         ),
-    qa=QAConfig(
-        slot_coverage_threshold=0.9,
-        delayed_ratio_threshold=0.1,
-        rollup_fallback_threshold=0.05,
-        oi_enrichment_threshold=0.95,
-    ),
-    acquisition=AcquisitionConfig(
-        mode="snapshot",
-        duration="1 D",
-        bar_size="1 day",
-        what_to_show="TRADES",
-        use_rth=True,
-        max_strikes_per_expiry=4,
-        fill_missing_greeks_with_zero=False,
-        historical_timeout=30.0,
-        throttle_sec=0.0,
-    ),
-    rollup=RollupConfig(allow_intraday_fallback=True),
-)
+        qa=QAConfig(
+            slot_coverage_threshold=0.9,
+            delayed_ratio_threshold=0.1,
+            rollup_fallback_threshold=0.05,
+            oi_enrichment_threshold=0.95,
+        ),
+        acquisition=AcquisitionConfig(
+            mode="snapshot",
+            duration="1 D",
+            bar_size="1 day",
+            what_to_show="TRADES",
+            use_rth=True,
+            max_strikes_per_expiry=4,
+            fill_missing_greeks_with_zero=False,
+            historical_timeout=30.0,
+            throttle_sec=0.0,
+        ),
+        rollup=RollupConfig(allow_intraday_fallback=True),
+    )

@@ -1,6 +1,4 @@
 #!/usr/bin/env python3
-from __future__ import annotations
-
 """
 Comprehensive historical option bar probe - tests ALL possible configurations.
 
@@ -9,18 +7,21 @@ Tests various combinations of:
 - Data types: TRADES, MIDPOINT, BID_ASK, OPTION_IMPLIED_VOLATILITY, HISTORICAL_VOLATILITY
 """
 
+from __future__ import annotations
+
 import json
 import logging
 import time
 from datetime import date, datetime
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List
 
 from ib_insync import IB, Option  # type: ignore
 
 
 class DateTimeEncoder(json.JSONEncoder):
     """Custom JSON encoder for datetime objects."""
+
     def default(self, obj):
         if isinstance(obj, (date, datetime)):
             return obj.isoformat()
@@ -106,8 +107,17 @@ def build_option(contract: Dict[str, Any]) -> Option:
     return opt
 
 
-def fetch_bars(ib: IB, option: Option, *, what_to_show: str, duration: str, bar_size: str, 
-               end_date_time: str, use_rth: bool, throttle: callable) -> tuple[List[Any], str | None]:
+def fetch_bars(
+    ib: IB,
+    option: Option,
+    *,
+    what_to_show: str,
+    duration: str,
+    bar_size: str,
+    end_date_time: str,
+    use_rth: bool,
+    throttle: callable,
+) -> tuple[List[Any], str | None]:
     """Fetch historical bars and return (bars, error_message)."""
     throttle()
     try:
@@ -144,8 +154,12 @@ def main() -> None:
     logger.info("=" * 80)
     logger.info("COMPREHENSIVE IBKR HISTORICAL DATA PROBE")
     logger.info("=" * 80)
-    logger.info("Testing %d bar sizes x %d data types x %d RTH settings",
-                len(BAR_SIZES), len(WHAT_TO_SHOW_OPTIONS), len(USE_RTH_OPTIONS))
+    logger.info(
+        "Testing %d bar sizes x %d data types x %d RTH settings",
+        len(BAR_SIZES),
+        len(WHAT_TO_SHOW_OPTIONS),
+        len(USE_RTH_OPTIONS),
+    )
 
     ib = IB()
     try:
@@ -176,17 +190,22 @@ def main() -> None:
                 continue
 
             end_dt = f"{trade_date.strftime('%Y%m%d')} 23:59:59 US/Eastern"
-            
+
             logger.info("-" * 80)
-            logger.info("Testing with contract: %s %s strike=%s %s",
-                       symbol, contract.get("expiry"), contract.get("strike"), contract.get("right"))
+            logger.info(
+                "Testing with contract: %s %s strike=%s %s",
+                symbol,
+                contract.get("expiry"),
+                contract.get("strike"),
+                contract.get("right"),
+            )
             logger.info("-" * 80)
 
             for use_rth in USE_RTH_OPTIONS:
                 rth_label = "RTH" if use_rth else "ETH"
                 for bar_size in BAR_SIZES:
                     duration = DURATION_MAP.get(bar_size, "1 D")
-                    
+
                     for what in WHAT_TO_SHOW_OPTIONS:
                         bars, error = fetch_bars(
                             ib,
@@ -198,7 +217,7 @@ def main() -> None:
                             use_rth=use_rth,
                             throttle=throttle,
                         )
-                        
+
                         if bars:
                             logger.info("Sample bars:")
                             for b in bars[:5]:
@@ -209,7 +228,7 @@ def main() -> None:
 
                         bar_count = len(bars)
                         status = "✅" if bar_count > 0 else ("❌ ERROR" if error else "⚠️ EMPTY")
-                        
+
                         result = {
                             "symbol": symbol,
                             "conid": contract.get("conid"),
@@ -218,16 +237,29 @@ def main() -> None:
                             "use_rth": use_rth,
                             "duration": duration,
                             "bars": bar_count,
-                            "status": "success" if bar_count > 0 else ("error" if error else "empty"),
+                            "status": "success"
+                            if bar_count > 0
+                            else ("error" if error else "empty"),
                             "error": error,
-                            "first": bars[0].date if bars and hasattr(bars[0], 'date') else None,
-                            "last": bars[-1].date if bars and hasattr(bars[-1], 'date') else None,
+                            "first": bars[0].date if bars and hasattr(bars[0], "date") else None,
+                            "last": bars[-1].date if bars and hasattr(bars[-1], "date") else None,
                         }
                         results.append(result)
-                        
-                        error_msg = f" ({error[:50]}...)" if error and len(error) > 50 else (f" ({error})" if error else "")
-                        logger.info("%s | %-4s | %-8s | %-28s | bars=%3d%s", 
-                                   status, rth_label, bar_size, what, bar_count, error_msg)
+
+                        error_msg = (
+                            f" ({error[:50]}...)"
+                            if error and len(error) > 50
+                            else (f" ({error})" if error else "")
+                        )
+                        logger.info(
+                            "%s | %-4s | %-8s | %-28s | bars=%3d%s",
+                            status,
+                            rth_label,
+                            bar_size,
+                            what,
+                            bar_count,
+                            error_msg,
+                        )
 
     finally:
         logger.info("Disconnecting")
@@ -243,18 +275,20 @@ def main() -> None:
     logger.info("\n" + "=" * 80)
     logger.info("SUMMARY TABLE")
     logger.info("=" * 80)
-    
+
     # Build summary matrix
     summary = {}
     for r in results:
         key = (r["use_rth"], r["bar_size"], r["what_to_show"])
         summary[key] = r["bars"] > 0
-    
+
     # Print header
-    header = f"{'RTH':<4} | {'Bar Size':<12} | " + " | ".join(f"{w[:12]:<12}" for w in WHAT_TO_SHOW_OPTIONS)
+    header = f"{'RTH':<4} | {'Bar Size':<12} | " + " | ".join(
+        f"{w[:12]:<12}" for w in WHAT_TO_SHOW_OPTIONS
+    )
     logger.info(header)
     logger.info("-" * len(header))
-    
+
     # Print rows
     for use_rth in USE_RTH_OPTIONS:
         rth_label = "YES" if use_rth else "NO"
@@ -267,13 +301,17 @@ def main() -> None:
                 cells.append(f"{status:<12}")
             row += " | ".join(cells)
             logger.info(row)
-    
+
     # Statistics
     success_count = sum(1 for r in results if r["bars"] > 0)
     total_count = len(results)
     logger.info("\n" + "=" * 80)
-    logger.info("TOTAL: %d/%d configurations returned data (%.1f%%)", 
-               success_count, total_count, 100 * success_count / total_count if total_count else 0)
+    logger.info(
+        "TOTAL: %d/%d configurations returned data (%.1f%%)",
+        success_count,
+        total_count,
+        100 * success_count / total_count if total_count else 0,
+    )
     logger.info("=" * 80)
 
 

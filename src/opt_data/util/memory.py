@@ -33,7 +33,7 @@ def optimize_dataframe_dtypes(
         return df
 
     start_mem = df.memory_usage(deep=True).sum() / 1024**2  # MB
-    
+
     for col in df.columns:
         col_type = df[col].dtype
 
@@ -48,12 +48,12 @@ def optimize_dataframe_dtypes(
                     continue
             except (IndexError, AttributeError):
                 pass
-            
+
             # Try to convert to category if few unique values
             try:
                 num_unique = df[col].nunique()
                 num_total = len(df[col])
-                
+
                 if num_total > 0 and num_unique / num_total < categorical_threshold:
                     df[col] = df[col].astype("category")
                     if verbose:
@@ -69,7 +69,7 @@ def optimize_dataframe_dtypes(
             # Check if all values fit in float32 range
             col_min = df[col].min()
             col_max = df[col].max()
-            
+
             if pd.notna(col_min) and pd.notna(col_max):
                 if col_min >= -3.4e38 and col_max <= 3.4e38:
                     df[col] = df[col].astype("float32")
@@ -80,7 +80,7 @@ def optimize_dataframe_dtypes(
             # Downcast to smaller int type
             col_min = df[col].min()
             col_max = df[col].max()
-            
+
             if pd.notna(col_min) and pd.notna(col_max):
                 if col_min >= -128 and col_max <= 127:
                     df[col] = df[col].astype("int8")
@@ -88,7 +88,7 @@ def optimize_dataframe_dtypes(
                     df[col] = df[col].astype("int16")
                 elif col_min >= -2147483648 and col_max <= 2147483647:
                     df[col] = df[col].astype("int32")
-                
+
                 if verbose:
                     logger.debug(f"Downcast {col} to {df[col].dtype}")
 
@@ -97,8 +97,7 @@ def optimize_dataframe_dtypes(
 
     if verbose:
         logger.info(
-            f"Memory usage: {start_mem:.2f} MB -> {end_mem:.2f} MB "
-            f"({reduction:.1f}% reduction)"
+            f"Memory usage: {start_mem:.2f} MB -> {end_mem:.2f} MB ({reduction:.1f}% reduction)"
         )
 
     return df
@@ -124,13 +123,13 @@ def process_dataframe_chunks(
         return process_fn(df)
 
     chunks: List[pd.DataFrame] = []
-    
+
     for start_idx in range(0, len(df), chunk_size):
         end_idx = min(start_idx + chunk_size, len(df))
         chunk = df.iloc[start_idx:end_idx]
         processed = process_fn(chunk)
         chunks.append(processed)
-        
+
         if start_idx % (chunk_size * 10) == 0:
             logger.debug(f"Processed {start_idx}/{len(df)} rows")
 
@@ -156,7 +155,7 @@ def iter_parquet_chunks(
     # Read Parquet file metadata to get total rows
     pf = pd.read_parquet(file_path, columns=columns if columns else None)
     total_rows = len(pf)
-    
+
     for start_row in range(0, total_rows, chunk_size):
         end_row = min(start_row + chunk_size, total_rows)
         chunk = pf.iloc[start_row:end_row]
