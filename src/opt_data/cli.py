@@ -1465,6 +1465,7 @@ def schedule(
     rollup_runner = RollupRunner(cfg, close_slot=close_slot_idx, fallback_slot=fallback_slot_idx)
 
     snapshot_progress = format_progress("snapshot")
+    close_snapshot_progress = format_progress("close-snapshot")
     rollup_progress = format_progress("rollup")
     enrichment_progress = format_progress("enrichment")
 
@@ -1502,12 +1503,14 @@ def schedule(
             include_rollup=rollup,
             include_enrichment=enrichment,
             snapshot_progress=snapshot_progress,
+            close_snapshot_progress=close_snapshot_progress,
             rollup_progress=rollup_progress,
             enrichment_progress=enrichment_progress,
         )
         typer.echo(
             "[schedule] simulation completed "
-            f"snapshots={summary.snapshots} rollups={summary.rollups} "
+            f"snapshots={summary.snapshots} close_snapshots={summary.close_snapshots} "
+            f"rollups={summary.rollups} "
             f"enrichments={summary.enrichments} errors={len(summary.errors or [])}"
         )
         if summary.errors:
@@ -1539,6 +1542,7 @@ def schedule(
         include_enrichment=enrichment,
         misfire_grace_seconds=misfire_grace_seconds,
         snapshot_progress=snapshot_progress,
+        close_snapshot_progress=close_snapshot_progress,
         rollup_progress=rollup_progress,
         enrichment_progress=enrichment_progress,
     )

@@ -1,11 +1,11 @@
 # 4 周项目计划
 
 ## 背景
-本项目聚焦 S&P 500（可配置）标的的期权链日内采集与日终归档：在交易日 09:30–16:00（America/New_York）每 30 分钟记录一次实时快照，17:30 ET 收盘快照后聚合为日级视图（含回退规则），次日 04:30 enrichment 补齐慢字段。目标是在 macOS 环境验证后迁移到 Linux 定时执行，确保快照与日终数据可恢复、可审计，且不再执行历史回填。
+本项目聚焦 S&P 500（可配置）标的的期权链日内采集与日终归档：在交易日 09:30–16:00（America/New_York）每 30 分钟记录一次实时快照，17:00 ET 先做收盘快照（close-snapshot）再 rollup 聚合为日级视图（含回退规则），次日 04:00 enrichment 补齐慢字段。目标是在 macOS 环境验证后迁移到 Linux 定时执行，确保快照与日终数据可恢复、可审计，且不再执行历史回填。
 
 ## 范围与里程碑
 - **M1（第 1 周）**：落地实时 snapshot 采集骨架（`acquisition.mode=snapshot`，`IB_MARKET_DATA_TYPE=1`），完成 09:25 ET 会话合约发现与冻结策略、槽位计算（含 16:00 槽宽限）、单标的冒烟（AAPL）并写入 `view=intraday` 数据。
-- **M2（第 2 周）**：实现 17:00 ET EOD rollup（收盘快照优先、回退策略、公司行动调整）、T+1 `open_interest` enrichment、数据契约与 QA 指标更新（slot 覆盖率、回退率、IV/Greeks 合规）。
+- **M2（第 2 周）**：实现 17:00 ET close-snapshot → rollup（收盘快照优先、回退策略、公司行动调整）、T+1 `open_interest` enrichment、数据契约与 QA 指标更新（slot 覆盖率、回退率、IV/Greeks 合规）。
 - **M3（第 3 周）**：完善调度与运维（APScheduler/launchd/systemd）、实时限速与退避、监控告警、日志与状态记录；周度 compaction 支持 intraday+daily 视图；加入延迟行情降级与标记。
 - **M4（第 4 周）**：扩容至多标的（≥50）并评估限速调优，完善文档（Runbook、数据契约、配置模板、渐进扩容指南）、Linux 环境试运行与验收。
 
@@ -13,8 +13,8 @@
 - **槽位与调度**：定义 14 个 30 分钟槽（含 16:00），处理夏/冬令时与早收盘，ET 调度、UTC 存储、宽限窗口重试。
 - **合约发现策略（2025 升级）**：09:25 ET 冻结一日合约集合（基于前收 ±30%、标准月/季到期），仅使用 `reqSecDefOptParams( exchange='SMART' )` 生成候选；直接批量 `qualifyContracts/Async` 获取 `conId` 并写入缓存；不再调用 `reqContractDetails`；发现阶段不施加应用层限流（采用批量资格化并遵循 IB pacing）。
 - **实时采集管道**：使用 `ib_insync` `reqMktData` 拉取实时快照，记录 `sample_time`/`slot_30m`，保存 `market_data_type` 与降级标记，按槽幂等写入 `data/raw|clean/ib/chain/view=intraday`。
-- **日终归档**：17:00 rollup 按策略选取快照，补写 `rollup_source_*`、公司行动调整，产出 `view=daily_clean|daily_adjusted` 并处理幂等覆盖。
-- **延迟字段补全**：维护次日 07:30 ET `open_interest` enrichment 任务，按 `(trade_date, conid)` 幂等更新日级数据。
+- **日终归档**：17:00 close-snapshot 后 rollup 按策略选取快照，补写 `rollup_source_*`、公司行动调整，产出 `view=daily_clean|daily_adjusted` 并处理幂等覆盖。
+- **延迟字段补全**：维护次日 04:00 ET `open_interest` enrichment 任务，按 `(trade_date, conid)` 幂等更新日级数据。
 - **存储与压缩**：Parquet `date/underlying/exchange` 分区；热数据 Snappy，冷数据 ZSTD，周度 compaction 目标 128–256MB；可选同日小文件合并（默认关闭）。
 - **QA 与监控**：槽位覆盖率 ≥90%、去重（`trade_date, sample_time, conid`）、IV/Greeks 范围、rollup 回退告警、pacing 监控、延迟行情与缺失字段标记。
 - **调度与运维**：CLI `snapshot`/`rollup`/`enrichment` 命令、配置模板、日志/状态目录、集中式错误日志（`state/run_logs/errors/`），故障恢复与扩容流程。
@@ -41,7 +41,7 @@
 
 ## 范围边界
 - 日内数据源仅限 IBKR/TWS 实时或延迟行情；不提供逐笔或毫秒级数据。
-- 不执行历史回填；仅维护 09:30–16:00 30 分钟快照与 17:00 日终 rollup。
+- 不执行历史回填；仅维护 09:30–16:00 30 分钟快照与 17:00 日终 close-snapshot → rollup。
 - 默认宇宙为 S&P 500，可通过 `config/universe.csv` 缩减或扩展；上线前分批扩容。
 - 初期仅覆盖本地/macOS 环境与指定 Linux 主机；不包含云端部署。
 - 旧回填/清洗相关测试基线已移除；后续测试将以 snapshot+rollup+enrichment 新管道为准重建。

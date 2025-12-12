@@ -13,10 +13,10 @@
   - 验收：新增 `SnapshotRunner` 与 `python -m opt_data.cli snapshot`；新增单测覆盖 parquet 输出与 slot 解析（AAPL 样例待连接真实 IB 冒烟验证）。
 - [x] Rollup 原型：实现 17:00 ET `rollup` CLI，优先使用 16:00 槽，写入 `rollup_source_time/slot/strategy`，并生成 `view=daily_clean`。
   - 验收：AAPL 样本中 `rollup_strategy` 正常为 `close`，缺槽时回退为 `last_good` 并记录日志。
-- [x] OI enrichment 设计：实现次日 07:30 ET 回补流程，按 `(trade_date, conid)` 幂等更新 `open_interest`、`oi_asof_date`。
+- [x] OI enrichment 设计：实现次日 04:00 ET 回补流程，按 `(trade_date, conid)` 幂等更新 `open_interest`、`oi_asof_date`。
   - 验收：构造缺失样本后补齐并移除 `missing_oi` 标记。
 - [x] CLI/配置更新：新增 `snapshot`/`rollup`/`enrichment` 参数（槽位范围、宽限、降级开关）；同步 `config/opt-data.toml` 模板。
-- [x] 调度原型：在 macOS 使用 APScheduler 跑通 09:30–16:00 每 30 分钟采集 + 17:00 rollup + 次日 07:30 enrichment。
+- [x] 调度原型：在 macOS 使用 APScheduler 跑通 09:30–16:00 每 30 分钟采集 + 17:00 close-snapshot → rollup + 次日 04:00 enrichment。
   - 验收：`python -m opt_data.cli schedule --simulate` 可验证计划与执行顺序；支持 `--live` 启动 APScheduler。
 - [x] QA 报告与监控：实现槽位覆盖率、延迟行情占比、rollup 回退率统计，并输出至 `state/run_logs/metrics/metrics_YYYYMMDD.json`。
 - [x] 关键自检脚本：编写自动化自检（槽位覆盖率 ≥90%、`rollup_strategy` 回退率 ≤5%、`missing_oi` 补齐率 ≥95%、`delayed_fallback` 占比 <10%）。

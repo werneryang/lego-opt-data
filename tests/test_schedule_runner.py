@@ -18,11 +18,11 @@ def test_plan_day_includes_all_job_types(tmp_path):
     jobs = runner.plan_day(trade_date)
 
     snapshot_jobs = [job for job in jobs if job.kind == "snapshot"]
-    rollup_jobs = [job for job in jobs if job.kind == "rollup"]
+    eod_jobs = [job for job in jobs if job.kind == "close_snapshot_rollup"]
     enrichment_jobs = [job for job in jobs if job.kind == "enrichment"]
 
     assert len(snapshot_jobs) == 14  # 09:30 through 16:00 inclusive, 30-minute spacing
-    assert len(rollup_jobs) == 1
+    assert len(eod_jobs) == 1
     assert len(enrichment_jobs) == 1
     assert jobs[0].kind == "snapshot"
     assert jobs[-1].kind == "enrichment"
@@ -93,6 +93,14 @@ def test_run_simulation_invokes_runners_in_order(tmp_path):
             self.calls.append((trade_date, tuple(symbols or [])))
             events.append(("rollup", None))
 
+    class FakeCloseSnapshotRunner:
+        def __init__(self) -> None:
+            self.calls: list[tuple] = []
+
+        def run(self, trade_date: date, slot, symbols=None, **_: object):
+            self.calls.append((trade_date, slot.label, tuple(symbols or [])))
+            events.append(("close-snapshot", slot.label))
+
     class FakeEnrichmentRunner:
         def __init__(self) -> None:
             self.calls: list[tuple] = []
@@ -103,11 +111,13 @@ def test_run_simulation_invokes_runners_in_order(tmp_path):
 
     snapshot_runner = FakeSnapshotRunner()
     rollup_runner = FakeRollupRunner()
+    close_snapshot_runner = FakeCloseSnapshotRunner()
     enrichment_runner = FakeEnrichmentRunner()
 
     runner = ScheduleRunner(
         cfg,
         snapshot_runner=snapshot_runner,
+        close_snapshot_runner=close_snapshot_runner,
         rollup_runner=rollup_runner,
         enrichment_runner=enrichment_runner,
     )
@@ -120,14 +130,17 @@ def test_run_simulation_invokes_runners_in_order(tmp_path):
     )
 
     assert summary.snapshots == 2
+    assert summary.close_snapshots == 1
     assert summary.rollups == 1
     assert summary.enrichments == 1
     assert summary.errors == []
 
-    # maintain chronological order: 09:30 snapshot -> 10:00 snapshot -> rollup -> enrichment
+    # maintain chronological order:
+    # 09:30 snapshot -> 10:00 snapshot -> close snapshot -> rollup -> enrichment
     expected_order = [
         ("snapshot", "09:30"),
         ("snapshot", "10:00"),
+        ("close-snapshot", "10:00"),
         ("rollup", None),
         ("enrichment", None),
     ]

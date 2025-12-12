@@ -12,6 +12,7 @@ except Exception:  # pragma: no cover - optional dependency guard
     BackgroundScheduler = None  # type: ignore[assignment]
 
 from ..config import AppConfig
+from ..ib.session import IBSession
 from ..util.calendar import is_trading_day
 from .snapshot import SnapshotRunner
 from .rollup import RollupRunner
@@ -31,6 +32,7 @@ class ScheduledJob:
 @dataclass
 class ScheduleSummary:
     snapshots: int = 0
+    close_snapshots: int = 0
     rollups: int = 0
     enrichments: int = 0
     errors: List[dict[str, Any]] | None = None
@@ -38,6 +40,7 @@ class ScheduleSummary:
     def as_dict(self) -> dict[str, Any]:
         return {
             "snapshots": self.snapshots,
+            "close_snapshots": self.close_snapshots,
             "rollups": self.rollups,
             "enrichments": self.enrichments,
             "errors": self.errors or [],
@@ -50,12 +53,14 @@ class ScheduleRunner:
         cfg: AppConfig,
         *,
         snapshot_runner: SnapshotRunner | None = None,
+        close_snapshot_runner: SnapshotRunner | None = None,
         rollup_runner: RollupRunner | None = None,
         enrichment_runner: EnrichmentRunner | None = None,
     ) -> None:
         self.cfg = cfg
         self._tz = ZoneInfo(cfg.timezone.name)
         self._snapshot_runner = snapshot_runner or SnapshotRunner(cfg)
+        self._close_snapshot_runner = close_snapshot_runner
         self._rollup_runner = rollup_runner or RollupRunner(cfg)
         self._enrichment_runner = enrichment_runner or EnrichmentRunner(cfg)
 
@@ -88,11 +93,11 @@ class ScheduleRunner:
                 )
 
         if include_rollup:
-            rollup_time = datetime.combine(trade_date, time(17, 0), tzinfo=self._tz)
+            eod_time = datetime.combine(trade_date, time(17, 0), tzinfo=self._tz)
             jobs.append(
                 ScheduledJob(
-                    kind="rollup",
-                    run_time=rollup_time,
+                    kind="close_snapshot_rollup",
+                    run_time=eod_time,
                     payload={
                         "symbols": list(symbols) if symbols else None,
                     },
@@ -102,7 +107,7 @@ class ScheduleRunner:
         if include_enrichment:
             target_fields = [f.lower() for f in (enrichment_fields or self.cfg.enrichment.fields)]
             enrichment_time = datetime.combine(
-                trade_date + timedelta(days=1), time(7, 30), tzinfo=self._tz
+                trade_date + timedelta(days=1), time(4, 0), tzinfo=self._tz
             )
             jobs.append(
                 ScheduledJob(
@@ -128,6 +133,7 @@ class ScheduleRunner:
         include_rollup: bool = True,
         include_enrichment: bool = True,
         snapshot_progress: callable[[str, str, Dict[str, Any]], None] | None = None,
+        close_snapshot_progress: callable[[str, str, Dict[str, Any]], None] | None = None,
         rollup_progress: callable[[str, str, Dict[str, Any]], None] | None = None,
         enrichment_progress: callable[[str, str, Dict[str, Any]], None] | None = None,
     ) -> ScheduleSummary:
@@ -146,8 +152,14 @@ class ScheduleRunner:
                 if job.kind == "snapshot":
                     self._run_snapshot_job(trade_date, job.payload, progress=snapshot_progress)
                     summary.snapshots += 1
-                elif job.kind == "rollup":
-                    self._run_rollup_job(trade_date, job.payload, progress=rollup_progress)
+                elif job.kind == "close_snapshot_rollup":
+                    self._run_close_snapshot_rollup_job(
+                        trade_date,
+                        job.payload,
+                        close_snapshot_progress=close_snapshot_progress or snapshot_progress,
+                        rollup_progress=rollup_progress,
+                    )
+                    summary.close_snapshots += 1
                     summary.rollups += 1
                 elif job.kind == "enrichment":
                     self._run_enrichment_job(trade_date, job.payload, progress=enrichment_progress)
@@ -175,6 +187,7 @@ class ScheduleRunner:
         include_enrichment: bool = True,
         misfire_grace_seconds: int = 120,
         snapshot_progress: callable[[str, str, Dict[str, Any]], None] | None = None,
+        close_snapshot_progress: callable[[str, str, Dict[str, Any]], None] | None = None,
         rollup_progress: callable[[str, str, Dict[str, Any]], None] | None = None,
         enrichment_progress: callable[[str, str, Dict[str, Any]], None] | None = None,
     ) -> list[str]:
@@ -208,15 +221,16 @@ class ScheduleRunner:
                     replace_existing=True,
                     misfire_grace_time=misfire_grace_seconds,
                 )
-            elif job.kind == "rollup":
+            elif job.kind == "close_snapshot_rollup":
                 scheduler.add_job(
-                    self._run_rollup_job,
+                    self._run_close_snapshot_rollup_job,
                     trigger="date",
                     run_date=job.run_time,
                     kwargs={
                         "trade_date": trade_date,
                         "payload": job.payload,
-                        "progress": rollup_progress,
+                        "close_snapshot_progress": close_snapshot_progress or snapshot_progress,
+                        "rollup_progress": rollup_progress,
                     },
                     id=job_id,
                     replace_existing=True,
@@ -262,19 +276,58 @@ class ScheduleRunner:
             progress=progress,
         )
 
-    def _run_rollup_job(
+    def _run_close_snapshot_rollup_job(
         self,
         trade_date: date,
         payload: Dict[str, Any],
         *,
-        progress: callable[[str, str, Dict[str, Any]], None] | None = None,
+        close_snapshot_progress: callable[[str, str, Dict[str, Any]], None] | None = None,
+        rollup_progress: callable[[str, str, Dict[str, Any]], None] | None = None,
     ) -> None:
         symbols = payload.get("symbols")
-        self._rollup_runner.run(
-            trade_date,
-            symbols,
-            progress=progress,
+        slots = self._snapshot_runner.available_slots(trade_date)
+        if not slots:
+            raise ValueError(f"No snapshot slots available for {trade_date}")
+        close_slot = slots[-1]
+
+        # Determine close universe: close_file > file.
+        close_universe = (
+            self.cfg.universe.close_file
+            if self.cfg.universe.close_file and Path(self.cfg.universe.close_file).exists()
+            else self.cfg.universe.file
         )
+
+        close_runner = self._close_snapshot_runner
+        if close_runner is None:
+            # Force frozen/delayed-replay market data type for EOD capture.
+            def session_factory() -> IBSession:
+                return IBSession(
+                    host=self.cfg.ib.host,
+                    port=self.cfg.ib.port,
+                    client_id=self.cfg.ib.client_id,
+                    client_id_pool=self.cfg.ib.client_id_pool,
+                    market_data_type=2,
+                )
+
+            slot_minutes = getattr(self._snapshot_runner, "_slot_minutes", 30)
+            close_runner = SnapshotRunner(
+                self.cfg,
+                snapshot_grace_seconds=getattr(self.cfg.cli, "snapshot_grace_seconds", 120),
+                session_factory=session_factory,
+                slot_minutes=slot_minutes,
+            )
+
+        close_runner.run(
+            trade_date,
+            close_slot,
+            symbols,
+            universe_path=close_universe,
+            ingest_run_type="close_snapshot",
+            view="close",
+            progress=close_snapshot_progress,
+        )
+
+        self._rollup_runner.run(trade_date, symbols, progress=rollup_progress)
 
     def _run_enrichment_job(
         self,
