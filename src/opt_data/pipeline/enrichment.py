@@ -84,7 +84,6 @@ class EnrichmentRunner:
     ) -> EnrichmentResult:
         ingest_id = uuid.uuid4().hex
         errors: list[dict[str, Any]] = []
-        enrichment_records: list[dict[str, Any]] = []
         daily_clean_paths: list[Path] = []
         daily_adjusted_paths: list[Path] = []
         enrichment_paths: list[Path] = []
@@ -146,7 +145,9 @@ class EnrichmentRunner:
         # Prescan to compute total work (additional read, but gives fixed totals for UI)
         for part_path in part_paths:
             try:
-                df = pd.read_parquet(part_path)
+                df = pd.read_parquet(
+                    part_path, columns=["underlying", "conid", "open_interest", "data_quality_flag"]
+                )
             except Exception:
                 continue  # actual run will log errors; skip for prescan
             if df.empty:
@@ -191,6 +192,7 @@ class EnrichmentRunner:
             except Exception:
                 pass
             for part_path in part_paths:
+                enrichment_updates: list[dict[str, Any]] = []
                 try:
                     df = pd.read_parquet(part_path)
                 except Exception as exc:
@@ -326,7 +328,7 @@ class EnrichmentRunner:
                     updated_here += 1
                     total_updated += 1
                     symbols_touched.add(underlying)
-                    enrichment_records.append(
+                    enrichment_updates.append(
                         {
                             "trade_date": pd.Timestamp(
                                 row.get("trade_date", trade_date)
@@ -366,18 +368,18 @@ class EnrichmentRunner:
                         ):
                             completed_symbols.add(underlying)
                             symbols_done += 1
-                            if progress:
-                                progress(
-                                    underlying,
-                                    "symbol_done",
-                                    {
-                                        "done": total_processed,
-                                        "total": grand_total,
-                                        "symbol": underlying,
-                                        "symbols_done": symbols_done,
-                                        "symbols_total": symbols_total,
-                                    },
-                                )
+                        if progress:
+                            progress(
+                                underlying,
+                                "symbol_done",
+                                {
+                                    "done": total_processed,
+                                    "total": grand_total,
+                                    "symbol": underlying,
+                                    "symbols_done": symbols_done,
+                                    "symbols_total": symbols_total,
+                                },
+                            )
 
                 if updated_here == 0:
                     continue
@@ -425,26 +427,21 @@ class EnrichmentRunner:
                     }
                     errors.append(payload)
                     _write_error_line(error_file, payload)
-
-        if enrichment_records:
-            enrichment_root = Path(self.cfg.paths.clean) / "view=enrichment"
-            grouped_records = defaultdict(list)
-            for record in enrichment_records:
-                key = (record["underlying"], record["exchange"])
-                grouped_records[key].append(record)
-
-            for (underlying, exchange), records in grouped_records.items():
-                part = partition_for(self.cfg, enrichment_root, trade_date, underlying, exchange)
-                existing = _read_parquet_optional(part.path() / "part-000.parquet")
-                new_df = pd.DataFrame(records)
-                combined = (
-                    pd.concat([existing, new_df], ignore_index=True)
-                    if existing is not None
-                    else new_df
-                )
-                combined["fields_updated"] = combined["fields_updated"].apply(list)
-                combined_path = self._writer.write_dataframe(combined, part)
-                enrichment_paths.append(combined_path)
+                if enrichment_updates:
+                    enrichment_root = Path(self.cfg.paths.clean) / "view=enrichment"
+                    part_enrich = partition_for(
+                        self.cfg, enrichment_root, trade_date, underlying, exchange
+                    )
+                    existing = _read_parquet_optional(part_enrich.path() / "part-000.parquet")
+                    new_df = pd.DataFrame(enrichment_updates)
+                    combined = (
+                        pd.concat([existing, new_df], ignore_index=True)
+                        if existing is not None
+                        else new_df
+                    )
+                    combined["fields_updated"] = combined["fields_updated"].apply(list)
+                    combined_path = self._writer.write_dataframe(combined, part_enrich)
+                    enrichment_paths.append(combined_path)
 
         return EnrichmentResult(
             ingest_id=ingest_id,

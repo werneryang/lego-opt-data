@@ -128,9 +128,9 @@ def get_recent_errors(limit=50):
     return df
 
 
-@st.cache_data(ttl=30)
-def load_parquet_data(path_str, filters=None, columns=None):
-    """Generic helper to load parquet data."""
+@st.cache_data(ttl=30, max_entries=6, show_spinner=False)
+def load_parquet_data(path_str, _filter_expr=None, columns=None, row_limit: int | None = 2000):
+    """Generic helper to load parquet data with optional projection, filter, and row cap."""
     try:
         path = Path(path_str)
         if not path.exists():
@@ -140,12 +140,11 @@ def load_parquet_data(path_str, filters=None, columns=None):
         # This handles schema evolution/mismatches better than pd.read_parquet(dir)
         dataset = ds.dataset(path, partitioning="hive")
 
-        # Apply columns projection if needed
-        # Note: filters in pyarrow dataset are expression based, simpler to load and filter in pandas for now
-        # unless dataset is huge. Given we load by date partition, it should be fine.
-
-        table = dataset.to_table(columns=columns)
+        scanner = dataset.scanner(columns=columns, filter=_filter_expr, use_threads=True)
+        table = scanner.head(row_limit) if row_limit else scanner.to_table()
         df = table.to_pandas()
+        if row_limit is not None and len(df) > row_limit:
+            df = df.head(row_limit)
         return df
     except Exception:
         # st.warning(f"Failed to load data from {path_str}: {e}")
@@ -744,7 +743,17 @@ def render_operations_tab():
         if st.button("Refresh Close Data"):
             st.cache_data.clear()
 
-        df_close = load_parquet_data(str(intraday_path), columns=cols)
+        close_filter = ds.field("slot_30m") == close_slot_val
+        if symbols_arg:
+            sym_filter = ds.field("underlying").isin(symbols_arg)
+            close_filter = close_filter & sym_filter
+
+        df_close = load_parquet_data(
+            str(intraday_path),
+            columns=cols,
+            _filter_expr=close_filter,
+            row_limit=2000,
+        )
 
         if df_close.empty:
             st.info("No intraday data found for this date.")
@@ -817,7 +826,13 @@ def render_operations_tab():
             "data_quality_flag",
         ]
 
-        df_rollup = load_parquet_data(str(daily_path), columns=cols_rollup)
+        rollup_filter = ds.field("underlying").isin(symbols_arg) if symbols_arg else None
+        df_rollup = load_parquet_data(
+            str(daily_path),
+            columns=cols_rollup,
+            _filter_expr=rollup_filter,
+            row_limit=2000,
+        )
 
         if df_rollup.empty:
             st.info("Daily data file exists but is empty or unreadable.")
@@ -887,7 +902,13 @@ def render_operations_tab():
         if st.button("Refresh OI Data"):
             st.cache_data.clear()
 
-        df_oi = load_parquet_data(str(daily_path), columns=cols_oi)
+        oi_filter = ds.field("underlying").isin(symbols_arg) if symbols_arg else None
+        df_oi = load_parquet_data(
+            str(daily_path),
+            columns=cols_oi,
+            _filter_expr=oi_filter,
+            row_limit=2000,
+        )
 
         if symbols_arg:
             df_oi = df_oi[df_oi["underlying"].isin(symbols_arg)]

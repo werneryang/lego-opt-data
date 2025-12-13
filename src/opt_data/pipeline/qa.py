@@ -4,7 +4,7 @@ import json
 from dataclasses import dataclass, asdict
 from datetime import date
 from pathlib import Path
-from typing import Any, Dict, List
+from typing import Any, Dict, Iterable, List
 
 import pandas as pd
 
@@ -50,14 +50,11 @@ class QAMetricsCalculator:
         intraday_dir = Path(self.cfg.paths.clean) / f"view=intraday/date={trade_date.isoformat()}"
         daily_dir = Path(self.cfg.paths.clean) / f"view=daily_clean/date={trade_date.isoformat()}"
 
-        intraday = _read_parquet_tree(intraday_dir)
-        daily = _read_parquet_tree(daily_dir)
-
         metrics: list[MetricResult] = []
         breaches: list[str] = []
         extra: dict[str, Any] = {}
 
-        coverage_metric, coverage_details = self._metric_slot_coverage(intraday)
+        coverage_metric, coverage_details = self._metric_slot_coverage(intraday_dir)
         metrics.append(
             MetricResult(
                 name="slot_coverage_min",
@@ -69,7 +66,7 @@ class QAMetricsCalculator:
             )
         )
 
-        delayed_metric, delayed_details = self._metric_delayed_ratio(intraday)
+        delayed_metric, delayed_details = self._metric_delayed_ratio(intraday_dir)
         metrics.append(
             MetricResult(
                 name="delayed_ratio",
@@ -81,7 +78,7 @@ class QAMetricsCalculator:
             )
         )
 
-        fallback_metric, fallback_details = self._metric_rollup_fallback(daily)
+        fallback_metric, fallback_details = self._metric_rollup_fallback(daily_dir)
         metrics.append(
             MetricResult(
                 name="rollup_fallback_ratio",
@@ -93,7 +90,7 @@ class QAMetricsCalculator:
             )
         )
 
-        oi_metric, oi_details = self._metric_oi_enrichment(daily)
+        oi_metric, oi_details = self._metric_oi_enrichment(daily_dir)
         metrics.append(
             MetricResult(
                 name="oi_enrichment_ratio",
@@ -111,8 +108,8 @@ class QAMetricsCalculator:
                 status = "FAIL"
                 breaches.append(metric.name)
 
-        extra["intraday_rows"] = len(intraday)
-        extra["daily_rows"] = len(daily)
+        extra["intraday_rows"] = coverage_details.get("rows", 0)
+        extra["daily_rows"] = fallback_details.get("rows", 0)
 
         return QAMetricsResult(
             trade_date=trade_date,
@@ -131,61 +128,93 @@ class QAMetricsCalculator:
         )
         return path
 
-    def _metric_slot_coverage(self, intraday: pd.DataFrame) -> tuple[float, dict[str, Any]]:
-        if intraday.empty:
-            return 0.0, {"coverage_by_symbol": {}, "slots_expected": TOTAL_SLOTS}
+    def _metric_slot_coverage(self, intraday_dir: Path) -> tuple[float, dict[str, Any]]:
+        if not intraday_dir.exists():
+            return 0.0, {"coverage_by_symbol": {}, "slots_expected": TOTAL_SLOTS, "rows": 0}
 
-        df = intraday.copy()
-        df["slot_30m"] = pd.to_numeric(df["slot_30m"], errors="coerce")
-        df.dropna(subset=["slot_30m"], inplace=True)
-        grouped = df.groupby(df["underlying"].astype(str).str.upper())["slot_30m"].nunique()
-        coverage_by_symbol = (grouped / TOTAL_SLOTS).to_dict()
+        coverage: dict[str, set[int]] = {}
+        rows = 0
+        for df in _iter_parquet_frames(
+            intraday_dir, columns=["underlying", "slot_30m"]
+        ):
+            if df.empty:
+                continue
+            rows += len(df)
+            underlying = str(df.get("underlying", pd.Series([""])).iloc[0]).upper()
+            slots = pd.to_numeric(df["slot_30m"], errors="coerce").dropna().astype(int)
+            if not slots.empty:
+                coverage.setdefault(underlying, set()).update(slots.tolist())
+
+        coverage_by_symbol = {sym: len(slots) / TOTAL_SLOTS for sym, slots in coverage.items()}
         minimum = float(min(coverage_by_symbol.values())) if coverage_by_symbol else 0.0
         return minimum, {
             "coverage_by_symbol": coverage_by_symbol,
             "slots_expected": TOTAL_SLOTS,
+            "rows": rows,
         }
 
-    def _metric_delayed_ratio(self, intraday: pd.DataFrame) -> tuple[float, dict[str, Any]]:
-        if intraday.empty:
+    def _metric_delayed_ratio(self, intraday_dir: Path) -> tuple[float, dict[str, Any]]:
+        if not intraday_dir.exists():
             return 0.0, {"rows": 0, "delayed_rows": 0}
 
-        flags_series = intraday.get("data_quality_flag")
-        delayed_mask = flags_series.apply(lambda x: "delayed_fallback" in _normalize_flags(x))
-        if "market_data_type" in intraday.columns:
-            delayed_mask |= intraday["market_data_type"].astype("Int64").fillna(1) != 1
-        delayed_rows = int(delayed_mask.sum())
-        total_rows = len(intraday)
+        total_rows = 0
+        delayed_rows = 0
+        for df in _iter_parquet_frames(
+            intraday_dir, columns=["data_quality_flag", "market_data_type"]
+        ):
+            if df.empty:
+                continue
+            total_rows += len(df)
+            flags_series = df.get("data_quality_flag", pd.Series([], dtype=object))
+            delayed_mask = flags_series.apply(lambda x: "delayed_fallback" in _normalize_flags(x))
+            if "market_data_type" in df.columns:
+                delayed_mask |= df["market_data_type"].astype("Int64").fillna(1) != 1
+            delayed_rows += int(delayed_mask.sum())
+
         ratio = delayed_rows / total_rows if total_rows else 0.0
         return ratio, {"rows": total_rows, "delayed_rows": delayed_rows}
 
-    def _metric_rollup_fallback(self, daily: pd.DataFrame) -> tuple[float, dict[str, Any]]:
-        if daily.empty or "rollup_strategy" not in daily:
-            return 1.0 if not daily.empty else 0.0, {
-                "rows": len(daily),
-                "fallback_rows": len(daily),
-            }
+    def _metric_rollup_fallback(self, daily_dir: Path) -> tuple[float, dict[str, Any]]:
+        if not daily_dir.exists():
+            return 0.0, {"rows": 0, "fallback_rows": 0}
 
-        strategies = daily["rollup_strategy"].astype(str).str.lower()
-        fallback_rows = int((strategies != "close").sum())
-        total_rows = len(daily)
+        total_rows = 0
+        fallback_rows = 0
+        for df in _iter_parquet_frames(daily_dir, columns=["rollup_strategy"]):
+            if df.empty:
+                continue
+            total_rows += len(df)
+            if "rollup_strategy" in df.columns:
+                strategies = df["rollup_strategy"].astype(str).str.lower()
+                fallback_rows += int((strategies != "close").sum())
+
         ratio = fallback_rows / total_rows if total_rows else 0.0
         return ratio, {
             "rows": total_rows,
             "fallback_rows": fallback_rows,
         }
 
-    def _metric_oi_enrichment(self, daily: pd.DataFrame) -> tuple[float, dict[str, Any]]:
-        if daily.empty:
+    def _metric_oi_enrichment(self, daily_dir: Path) -> tuple[float, dict[str, Any]]:
+        if not daily_dir.exists():
             return 0.0, {"rows": 0, "enriched_rows": 0, "missing_rows": 0}
 
-        flags = daily.get("data_quality_flag")
-        flags_list = flags.apply(_normalize_flags)
-        missing_mask = flags_list.apply(lambda flg: "missing_oi" in flg)
-        valid_mask = (~daily["open_interest"].isna()) & (~missing_mask)
-        enriched_rows = int(valid_mask.sum())
-        missing_rows = int(missing_mask.sum())
-        total_rows = len(daily)
+        total_rows = 0
+        enriched_rows = 0
+        missing_rows = 0
+        for df in _iter_parquet_frames(
+            daily_dir, columns=["open_interest", "data_quality_flag"]
+        ):
+            if df.empty:
+                continue
+            total_rows += len(df)
+            flags_series = df.get("data_quality_flag", pd.Series([], dtype=object))
+            flags_list = flags_series.apply(_normalize_flags)
+            missing_mask = flags_list.apply(lambda flg: "missing_oi" in flg)
+            oi_series = pd.to_numeric(df.get("open_interest"), errors="coerce")
+            valid_mask = (~oi_series.isna()) & (~missing_mask)
+            enriched_rows += int(valid_mask.sum())
+            missing_rows += int(missing_mask.sum())
+
         ratio = enriched_rows / total_rows if total_rows else 0.0
         return ratio, {
             "rows": total_rows,
@@ -214,6 +243,16 @@ def _normalize_flags(value: Any) -> list[str]:
                 pass
         return [text]
     return [str(value)]
+
+
+def _iter_parquet_frames(root: Path, columns: list[str]) -> Iterable[pd.DataFrame]:
+    if not root.exists():
+        return
+    for path in sorted(root.rglob("*.parquet")):
+        try:
+            yield pd.read_parquet(path, columns=columns)
+        except Exception:
+            continue
 
 
 def _read_parquet_tree(root: Path) -> pd.DataFrame:

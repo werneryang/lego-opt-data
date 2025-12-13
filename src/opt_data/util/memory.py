@@ -9,6 +9,7 @@ import logging
 from typing import Callable, Iterator, List, Optional
 
 import pandas as pd
+import pyarrow.parquet as pq
 
 logger = logging.getLogger(__name__)
 
@@ -152,14 +153,10 @@ def iter_parquet_chunks(
     Yields:
         DataFrame chunks
     """
-    # Read Parquet file metadata to get total rows
-    pf = pd.read_parquet(file_path, columns=columns if columns else None)
-    total_rows = len(pf)
-
-    for start_row in range(0, total_rows, chunk_size):
-        end_row = min(start_row + chunk_size, total_rows)
-        chunk = pf.iloc[start_row:end_row]
-        yield chunk
+    pf = pq.ParquetFile(file_path)
+    for batch in pf.iter_batches(batch_size=chunk_size, columns=columns):
+        # Convert record batch to pandas without materializing the full file
+        yield batch.to_pandas()
 
 
 def get_memory_usage_summary(df: pd.DataFrame) -> dict:
