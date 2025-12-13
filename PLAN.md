@@ -99,6 +99,9 @@
 - Stage 1（AAPL+MSFT）已按 `snapshot per_minute=30`、`max_concurrent_snapshots=14` 配置上线运行，`schedule --simulate` 验证完成，首三日监控完成。
 - 最近自检/日志：2025-12-08/09/10 已执行 selfcheck/logscan；2025-12-10 QA 指标达标，日志含 OI 缺失与参考价单条错误，已记录为已知告警。
 
+## 进展快照（2025-12-12 更新）
+- 增加远程 IB Gateway OI 脚本：新增 `data_test/OI3_remote.py`（支持 `--host/--port`/环境变量），`data_test/OI3.py` 保留为兼容入口。
+
 ## 本周目标（2025-11-03 当周）
 - **M1 · 槽位与调度（早收盘感知）**
   - 在 `src/opt_data/util/calendar.py` 增加会话开/收盘获取（优先使用 `pandas-market-calendars`，无依赖则 Mon–Fri 回退）。
