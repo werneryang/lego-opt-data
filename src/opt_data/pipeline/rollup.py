@@ -343,9 +343,7 @@ class RollupRunner:
             underlying_part = part_dir.parent.name
             exchange_part = part_dir.name
             underlying = (
-                underlying_part.split("=", 1)[1]
-                if "=" in underlying_part
-                else underlying_part
+                underlying_part.split("=", 1)[1] if "=" in underlying_part else underlying_part
             )
             exchange = exchange_part.split("=", 1)[1] if "=" in exchange_part else exchange_part
             return underlying.upper(), exchange.upper()

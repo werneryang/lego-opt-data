@@ -134,9 +134,7 @@ class QAMetricsCalculator:
 
         coverage: dict[str, set[int]] = {}
         rows = 0
-        for df in _iter_parquet_frames(
-            intraday_dir, columns=["underlying", "slot_30m"]
-        ):
+        for df in _iter_parquet_frames(intraday_dir, columns=["underlying", "slot_30m"]):
             if df.empty:
                 continue
             rows += len(df)
@@ -201,9 +199,7 @@ class QAMetricsCalculator:
         total_rows = 0
         enriched_rows = 0
         missing_rows = 0
-        for df in _iter_parquet_frames(
-            daily_dir, columns=["open_interest", "data_quality_flag"]
-        ):
+        for df in _iter_parquet_frames(daily_dir, columns=["open_interest", "data_quality_flag"]):
             if df.empty:
                 continue
             total_rows += len(df)

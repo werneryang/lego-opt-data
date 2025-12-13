@@ -34,6 +34,7 @@ state/
 !state/.gitkeep
 state_test/
 outputs/
+data_test_compare/*.csv
 
 # Test fixtures - ignore CSV files but keep sample ones
 tests/fixtures/option_chains/*.csv

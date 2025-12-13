@@ -2,7 +2,7 @@
 
 ## 标的范围
 - 默认宇宙：S&P 500 成分股（可通过 `config/universe.csv` 缩减或扩展），包含 `symbol` 与可选 `conid`。
-- 成分调整或扩容需更新 `config/universe.csv` 并在 `PLAN.md`、`TODO.now.md` 留痕；上线前建议按 AAPL → AAPL,MSFT → Top 10 → 全量的节奏逐步放量。
+- 成分调整或扩容需更新 `config/universe.csv` 并在 `PLAN.md`、`TODO.now.md` 留痕；历史上按 AAPL → AAPL,MSFT → Top 10 → 全量逐步放量，**当前生产已覆盖 `config/universe.csv` 全量**，后续扩容主要指提高并发/分批调度（原 Stage 3 类工作），需额外评审后再推进。
 
 ### 双清单配置（盘中/收盘分离）
 
@@ -23,8 +23,8 @@
 ## 时间范围与采样频率
 - 日内采集：美国交易日 09:30–16:00（America/New_York），每 30 分钟一个槽位，共 14 槽，包含 16:00 收盘槽；早收盘按交易日历截断。
 - 槽位时间按 ET 定义，存储时 `sample_time` 使用 UTC，另存 `slot_30m`（0–13）；单槽允许 ±120 秒宽限并重试。
-- 日终归档：当日 17:00 ET 运行 rollup，优先使用 16:00 槽快照（回退规则详见下文）；不再执行历史回填。
-- T+1 补全：次日 07:30 ET（可配置）执行 `open_interest` enrichment。
+- 日终归档：当日 **17:30 ET** 先运行 `close-snapshot`（写入 `view=close`），完成后立即运行 `rollup`（优先使用 close 数据；必要时按配置回退）；不再执行历史回填。
+- T+1 补全：次日 **04:30 ET**（可配置）执行 `open_interest` enrichment（通常周二至周五；周一处理上周五）。
 
 ## 合约发现与过滤规则（2025 升级）
 - 会话冻结：每日 09:25 ET 基于上一交易日收盘价的 ±30% 行权价范围及标准月度/季度到期合约生成目标集合，默认整日固定；可选单次中午（12:00 ET）增量刷新，仅新增不删除。
@@ -64,8 +64,8 @@
 - 参考数据（如标的收盘价）优先使用 IB 数据，必要时引入外部源并在文档中记录。
 
 ## 限速与调度
-- 限速默认值：snapshot 30 req/min；发现阶段（`qualifyContracts*` 批量）**不再施加应用层限速**，完全依赖 IB 客户端 pacing 机制（如出现 pacing 告警再行调优）。并发 `max_concurrent_snapshots=10` 起步，逐步调优。
-- 调度：开发机使用 APScheduler/launchd，生产使用 systemd timer；统一设置时区 `America/New_York`，维护交易日历及早收盘表。
+- 限速默认值：snapshot 30 req/min；发现阶段（`qualifyContracts*` 批量）**不再施加应用层限速**，完全依赖 IB 客户端 pacing 机制（如出现 pacing 告警再行调优）。当前生产并发采用 `max_concurrent_snapshots=14`，更高并发/分批调度暂缓，待评审后再推进。
+- 调度：推荐使用 `python -m opt_data.cli schedule --live` 常驻运行；系统级守护可用 launchd/systemd 包装同一条命令。统一设置时区 `America/New_York`，维护交易日历及早收盘表。
 - 失败重试：槽位请求失败即时重试（指数退避），超过阈值记录 `slot_retry_exceeded` 并进入人工处理队列。
 
 ## 数据质量校验
@@ -81,4 +81,4 @@
 - 历史大规模回填或外部数据源混合（除非在 PLAN/ADR 中重新批准）。
 
 ## 期权链拉取最佳实践
-详见 [docs/ops-runbook.md](docs/ops-runbook.md) 中“IBKR 期权链拉取最佳实践（AAPL/SPX）”章节，该处维护了最新的 Generic Ticks、就绪判定与并发策略。
+开发/诊断侧 best practices（Generic Ticks、就绪判定、并发策略、常见问题）详见 `docs/dev/ops-notes.md`；生产运维与值班入口以 `docs/ops-runbook.md` 为准。

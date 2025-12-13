@@ -56,21 +56,24 @@
 - **调度失败**：提供 launchd/systemd runbook、状态文件断点续跑与手动补采指南。
 
 ## 扩容策略与门槛
+- **当前生产范围（全量 `config/universe.csv`）**
+  - 实际运行已覆盖完整清单（等同于原 Stage 2 及以上），采用保守限速 `snapshot per_minute=30`、`max_concurrent_snapshots=14`，并保持 09:30–16:00 snapshot、17:30 rollup、次日 04:30 enrichment 的调度链路。
+  - 后续扩容仅指提高并发/分批调度（原 Stage 3 目标，例如 `per_minute=90`、`并发=20`），当前暂停，待评审运行稳定性与 Gateway 负载后再推进。
 - **阶段 0：AAPL（基线）**
   - 最近连续 2 个交易日通过自检/日志（2025-11-18、2025-11-19）：槽位覆盖率 ≥90%、`rollup_strategy` 回退率 ≤5%、延迟行情占比 <10%、`missing_oi` 补齐率 ≥95%。
   - 无 pacing violation 或仅出现 1 次且定位明确；`errors_YYYYMMDD.log` 中无未处理异常。
   - 保持默认限速：`snapshot per_minute=30`、`max_concurrent_snapshots=10`，扩容前需强调缩短 burn-in 带来的波动风险。
-- **阶段 1：AAPL + MSFT（双标的）**
+- **阶段 1：AAPL + MSFT（双标的）**（已完成，实际运行已覆盖全量清单）
   - 阶段 0（2-day gate）完成后即可扩容，扩容后前 3 个交易日重点监控；若槽位覆盖率跌破 88% 或 pacing 告警 >2 次，回退调优或暂缓并发提升。
   - 令牌桶调整：`snapshot per_minute=45`，视 Gateway 负载将并发提升至 12；宽限与重试策略保持。
   - Runbook 需补充并发调节、Gateway session 健康检查与故障切换步骤。
-  - 已批准偏差：当前 Stage 1 运行保持 `snapshot per_minute=30`、`max_concurrent_snapshots=14`，提升至 45/12 需额外评审。
-- **阶段 2：Top 10（按 `config/universe.csv` 前十权重）**
+  - 已批准偏差：当前 Stage 1 运行保持 `snapshot per_minute=30`、`max_concurrent_snapshots=14`，提升至 45/12 需额外评审；实际范围已提升为 `config/universe.csv` 全量。
+- **阶段 2：Top 10（按 `config/universe.csv` 前十权重）**（已覆盖：当前生产范围已是全量）
   - 阶段 1 结束后在 Rollup/OI enrichment 上保持 7 个交易日零人工干预，QA 指标全部满足阈值。
   - 启用 `midday_refresh`（仅新增合约）并跟踪新增请求量；每周 pacing 告警不超过 3 次。
   - 令牌桶调整：`snapshot per_minute=60`、并发 16；必要时配置槽位分批执行（每批 3-4 个标的）。
   - 文档要求：Runbook 描述批次执行策略、pacing 告警处置；TODO 建立扩容周报。
-- **阶段 3：全量 S&P 500**
+- **阶段 3：全量 S&P 500（并发/批次调度提升）**（暂停）
   - Top 10 阶段连续 2 周稳定运行，`slot_retry_exceeded=0` 且 QA 指标全部达标。
   - 引入调度分组（至少 2 批），在 `state/run_logs/metrics/` 追踪各批延迟与降级比例。
   - 令牌桶起始目标：`snapshot per_minute=90`、并发 20；根据 IBKR pacing 限制动态调节，同时准备延迟槽补采策略。
@@ -101,6 +104,11 @@
 
 ## 进展快照（2025-12-12 更新）
 - 增加远程 IB Gateway OI 脚本：新增 `data_test/OI3_remote.py`（支持 `--host/--port`/环境变量），`data_test/OI3.py` 保留为兼容入口。
+
+## 进展快照（2025-12-15 更新）
+- 生产范围已覆盖 `config/universe.csv` 全量（超过原 Stage 2/Top 10 目标），运行配置保持 `snapshot per_minute=30`、`max_concurrent_snapshots=14`，调度链路为 09:30–16:00 snapshot、17:30 close-snapshot → rollup、次日 04:30 enrichment。
+- 后续并发/分批调度提升（原 Stage 3 目标：`per_minute=90`、`并发=20`、多批次）暂缓，待评审 Gateway 负载与稳定性。
+- 文档整理：新增 `docs/README.md` 文档索引与 `docs/project-summary.md` 阶段性总结；`docs/ops-runbook.md` 顶部提供“一屏清单”，开发/测试细节移至 `docs/dev/`。
 
 ## 本周目标（2025-11-03 当周）
 - **M1 · 槽位与调度（早收盘感知）**

@@ -38,6 +38,15 @@ If you prefer `uv` or another package manager, adapt the commands accordingly; t
 - `state/` – runtime state, logs, and checkpoints
 - `docs/` – documentation including developer guides and troubleshooting
 
+## Documentation
+
+- Docs index: `docs/README.md`
+- Project summary: `docs/project-summary.md`
+- Production ops & scheduling: `docs/ops-runbook.md`
+- QA & smoke tests: `docs/dev/qa.md`
+- Data contract: `docs/data-contract.md`
+- Dev docs: `docs/dev/README.md`
+
 ## Features
 
 ### Robust Error Handling
@@ -61,5 +70,5 @@ See [docs/troubleshooting.md](docs/troubleshooting.md) for common issues and sol
 
 - **Configuration**: Review `config/opt-data.toml` to adjust universe, rate limits, and storage paths.
 - **Scheduling**: Use `python -m opt_data.cli schedule` to generate or run daily jobs (Snapshot -> Rollup -> Enrichment).
-- **Expansion**: Follow the expansion plan in `PLAN.md` to gradually add symbols (AAPL -> MSFT -> Top 10 -> S&P 500).
+- **Current scope**: Production runs the full `config/universe.csv` universe; higher-concurrency “Stage 3” style tuning is tracked in `PLAN.md` and currently on hold.
 - **Monitoring**: Check `state/run_logs/errors/` for error summaries and `state/run_logs/metrics/` for QA reports.

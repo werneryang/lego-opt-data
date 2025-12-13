@@ -55,7 +55,7 @@
   - [x] Add `fallback_intraday` flag to data_quality_flag
 
 #### Documentation (Pending)
-- [ ] Update `docs/ops-runbook.md` with close view section
+- [x] Update `docs/ops-runbook.md` with close view section (summary + links)
 - [ ] Update `SCOPE.md` with dual list explanation
 
 #### Verification

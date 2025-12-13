@@ -8,4 +8,4 @@
 - **公司行动与参考价**: 调整表本地维护；日终视图按表调整行权价/乘数/收盘价，日内保持原值。参考价优先 IB，外部源需记录来源。
 - **存储策略**: Parquet Snappy（热 14 天）/ZSTD（冷），周度合并目标 128–256MB；保留策略 `intraday_retain_days` 默认 60 天，操作记录写入 `state/run_logs/compaction_*`。
 - **数据质量与验收**: 槽位覆盖率每日 ≥90%；rollup 回退率、延迟占比、OI 补齐率纳入 QA 报告。错误行保留但标记 `snapshot_error`；`logscan` 汇总关键错误并触发告警。扩容/范围变化需更新 `PLAN.md`、`TODO.now.md` 与相关契约文档。
-- **限速现状**: Stage 1 生产运行采用 `snapshot per_minute=30`、`max_concurrent_snapshots=14`；提升至 45/12 需额外评审与监控。
+- **限速现状**: 当前生产已覆盖 `config/universe.csv` 全量，运行采用 `snapshot per_minute=30`、`max_concurrent_snapshots=14`；更高并发/分批调度（如 45/12 或 90/20）暂缓，推进前需额外评审与监控。

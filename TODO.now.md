@@ -25,6 +25,8 @@
 - [x] 错误日志落地：统一将 CLI 与调度任务异常写入 `state/run_logs/errors/errors_YYYYMMDD.log`，并提供关键字扫描脚本。
   - 验收：`python -m opt_data.cli logscan` 输出汇总 JSON，超阈值时退出码非零，并写入 `summary_YYYYMMDD.json`。
 - [x] 扩容策略确认：整理 AAPL → AAPL,MSFT → Top10 → 全量的上线门槛与限速调优流程，写入 `PLAN.md` 与 Runbook。
+- [x] 项目总结与文档梳理：记录当前生产范围已覆盖 `config/universe.csv` 全量（超出原 Stage 2），Stage 3 调优/扩容暂缓；同步更新 `PLAN.md`、`SCOPE.md`、`docs/ops-runbook.md`、`docs/dev/qa.md`、`docs/README.md`、`docs/project-summary.md` 与 `.agent` 摘要，确保生产/开发/测试文档分工明确、命令与参数清晰。（2025-12-13）
+- [x] 风险/依赖跟踪：实时行情权限与交易日历（早收盘）依赖已在 `TODO.now.md`（阻塞）、`SCOPE.md` 与 `docs/project-summary.md` 记录为持续跟踪项。（2025-12-13）
 
 ## 进行中
 - 无

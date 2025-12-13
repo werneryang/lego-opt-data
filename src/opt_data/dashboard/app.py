@@ -37,6 +37,7 @@ st.set_page_config(
     layout="wide",
 )
 
+
 @st.cache_data(ttl=60)
 def load_universe_data(config_path):
     try:
@@ -148,9 +149,7 @@ def compute_dataset_stats(path_str: str, _filter_expr=None, columns: list[str] |
         for batch in scanner.to_reader():
             if "underlying" in batch.column_names:
                 uniques = pc.unique(batch["underlying"])
-                underlying_vals.update(
-                    val.as_py() for val in uniques if val is not None
-                )
+                underlying_vals.update(val.as_py() for val in uniques if val is not None)
 
             if "snapshot_error" in batch.column_names:
                 err_sum = pc.sum(batch["snapshot_error"])
@@ -845,9 +844,7 @@ def render_operations_tab(*, lightweight_mode: bool = True):
             if df_rollup.empty:
                 st.info("Daily data file exists but is empty or unreadable.")
             else:
-                st.caption(
-                    f"Row cap: {row_limit_default} (increase by disabling lightweight mode)"
-                )
+                st.caption(f"Row cap: {row_limit_default} (increase by disabling lightweight mode)")
                 st.dataframe(df_rollup, use_container_width=True)
 
     st.divider()
@@ -942,12 +939,11 @@ def render_operations_tab(*, lightweight_mode: bool = True):
                 df_oi = df_oi[df_oi["underlying"].isin(symbols_arg)]
 
             if not df_oi.empty:
-                st.caption(
-                    f"Row cap: {row_limit_default} (increase by disabling lightweight mode)"
-                )
+                st.caption(f"Row cap: {row_limit_default} (increase by disabling lightweight mode)")
                 st.dataframe(df_oi, use_container_width=True)
 
     st.divider()
+
 
 def main():
     # Sidebar
