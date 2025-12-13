@@ -84,6 +84,18 @@ Research into option chain management platforms (e.g., interactive brokers, prop
 6.  **Comparison Tool:**
     *   Side-by-side view of "Intraday Last Slot" vs "Close Snapshot" to verify data consistency.
 
+### 4.4 Mobile/5G Mode (High Priority for UX)
+7.  **Default Lightweight Experience:**
+    *   On mobile/5G, do **not** auto-load Parquet or dataframes on landing pages; show only summary/status cards (freshness, last close check result).
+    *   Provide a “Lightweight mode” toggle that disables auto-refresh and large queries; auto-refresh interval floor at 60s.
+8.  **Guardrails on Data Fetch:**
+    *   Load **metadata first** (dates, symbols, partition size) and require an explicit click to fetch rows; default row cap 100 with pre-filter by symbol/date.
+    *   If `view=close` is missing, show an alert instead of falling back to `view=intraday` (avoid large pulls on mobile).
+9.  **Acceptance Criteria (mobile/5G):**
+    *   First meaningful paint/summary render < 1s.
+    *   Each request payload < 200KB by default.
+    *   Default behavior never loads Parquet data unless the user opts in on a detail page.
+
 ## 5. Proposed Implementation Plan
 
 If approved, I recommend the following steps:
@@ -93,3 +105,8 @@ If approved, I recommend the following steps:
     *   Implement the `view=close` loader logic.
 2.  **Enhance Visualization:**
     *   Add the Pipeline Status Grid to the Overview or Console.
+
+## 6. Current UI Adjustments (implemented)
+- Default landing is **Operations** (Overview tab removed); pipeline error table hidden.
+- Close/Daily/OI tables are opt-in and capped (100 rows in lightweight mode); Close reads `view=close`.
+- Added explicit “Compute full metrics” actions for Close/Rollup/OI (Arrow aggregations) so KPIs are accurate without auto-loading tables; lightweight mode warns about heavy scans.

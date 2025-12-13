@@ -4,16 +4,14 @@ Streamlit dashboard for opt-data observability and control.
 
 import streamlit as st
 import pandas as pd
-import sqlite3
-import time
 import json
 import altair as alt
-import os
 from typing import Any
 from pathlib import Path
-from datetime import datetime, timedelta
+from datetime import datetime
 import pytz
 import pyarrow.dataset as ds
+import pyarrow.compute as pc
 import asyncio
 
 # Fix for ib_insync/eventkit in Streamlit thread
@@ -38,31 +36,6 @@ st.set_page_config(
     page_icon="📊",
     layout="wide",
 )
-
-# Load config to find DB path
-# We'll use a simple heuristic or env var if config loading is complex
-DB_PATH = os.getenv("OPT_DATA_METRICS_DB", "data/metrics.db")
-DEFAULT_CONFIG_PATH = os.getenv("OPT_DATA_CONFIG", "config/opt-data.toml")
-
-
-@st.cache_data(ttl=10)
-def load_metrics(limit=1000):
-    """Load recent metrics from SQLite."""
-    try:
-        conn = sqlite3.connect(DB_PATH)
-        query = f"""
-            SELECT timestamp, name, value, type, tags 
-            FROM metrics 
-            ORDER BY timestamp DESC 
-            LIMIT {limit}
-        """
-        df = pd.read_sql_query(query, conn)
-        df["timestamp"] = pd.to_datetime(df["timestamp"])
-        return df
-    except Exception as e:
-        st.error(f"Failed to load metrics: {e}")
-        return pd.DataFrame()
-
 
 @st.cache_data(ttl=60)
 def load_universe_data(config_path):
@@ -151,89 +124,71 @@ def load_parquet_data(path_str, _filter_expr=None, columns=None, row_limit: int 
         return pd.DataFrame()
 
 
-def render_overview_tab(df):
-    st.header("🚀 System Status")
+def compute_dataset_stats(path_str: str, _filter_expr=None, columns: list[str] | None = None):
+    """Stream dataset to compute counts without loading full tables into pandas."""
+    path = Path(path_str)
+    if not path.exists():
+        return None
 
-    # Auto Refresh in Sidebar (Global)
+    dataset = ds.dataset(path, partitioning="hive")
+    try:
+        scanner = dataset.scanner(columns=columns, filter=_filter_expr, use_threads=True)
+        stats: dict[str, Any] = {
+            "rows": scanner.count_rows(),
+            "underlyings": 0,
+            "error_count": 0,
+            "market_data_type_counts": {},
+            "rollup_strategy_counts": {},
+            "data_quality_present": False,
+            "oi_positive": 0,
+        }
 
-    if df.empty:
-        st.warning("No metrics data found. System might be idle or starting up.")
-        return
+        underlying_vals: set[Any] = set()
 
-    # Overview Metrics
-    st.subheader("Key Metrics")
-    col1, col2, col3, col4 = st.columns(4)
-
-    # 1. Snapshot Rate (last 5 mins)
-    last_5m = df[df["timestamp"] > datetime.utcnow() - timedelta(minutes=5)]
-    snapshots_5m = last_5m[last_5m["name"] == "snapshot.fetch.success"]["value"].sum()
-    rate = snapshots_5m / 5 if snapshots_5m > 0 else 0
-    col1.metric("Snapshot Rate", f"{rate:.1f}/min")
-
-    # 2. Error Rate (last 5 mins)
-    errors_5m = last_5m[last_5m["name"] == "snapshot.fetch.error"]["value"].sum()
-    total_5m = snapshots_5m + errors_5m
-    error_rate = (errors_5m / total_5m * 100) if total_5m > 0 else 0
-    col2.metric("Error Rate", f"{error_rate:.2f}%", delta_color="inverse")
-
-    # 3. Avg Latency (last 5 mins)
-    latency_df = last_5m[last_5m["name"] == "snapshot.fetch.duration"]
-    avg_latency = latency_df["value"].mean() if not latency_df.empty else 0
-    col3.metric("Avg Latency", f"{avg_latency:.0f} ms")
-
-    # 4. Rollup Rows (Last Run)
-    rollup_df = df[df["name"] == "rollup.rows_written"].sort_values("timestamp", ascending=False)
-    last_rollup = rollup_df.iloc[0]["value"] if not rollup_df.empty else 0
-    col4.metric("Last Rollup Rows", f"{int(last_rollup):,}")
-
-    # Charts
-    st.subheader("Trends")
-
-    # Snapshot Activity
-    col_chart1, col_chart2 = st.columns(2)
-
-    with col_chart1:
-        st.caption("Snapshot Activity")
-        activity_df = df[df["name"].isin(["snapshot.fetch.success", "snapshot.fetch.error"])].copy()
-        if not activity_df.empty:
-            # Resample to 1 min
-            activity_df.set_index("timestamp", inplace=True)
-            resampled = (
-                activity_df.groupby([pd.Grouper(freq="1min"), "name"])["value"].sum().reset_index()
-            )
-
-            chart = (
-                alt.Chart(resampled)
-                .mark_line()
-                .encode(
-                    x="timestamp", y="value", color="name", tooltip=["timestamp", "name", "value"]
+        for batch in scanner.to_reader():
+            if "underlying" in batch.column_names:
+                uniques = pc.unique(batch["underlying"])
+                underlying_vals.update(
+                    val.as_py() for val in uniques if val is not None
                 )
-                .interactive()
-            )
-            st.altair_chart(chart, use_container_width=True)
 
-    with col_chart2:
-        st.caption("Latency Distribution")
-        lat_df = df[df["name"] == "snapshot.fetch.duration"]
-        if not lat_df.empty:
-            chart_lat = (
-                alt.Chart(lat_df)
-                .mark_bar()
-                .encode(
-                    x=alt.X("value", bin=True, title="Duration (ms)"),
-                    y="count()",
-                    tooltip=["value", "count()"],
-                )
-            )
-            st.altair_chart(chart_lat, use_container_width=True)
+            if "snapshot_error" in batch.column_names:
+                err_sum = pc.sum(batch["snapshot_error"])
+                if err_sum is not None:
+                    stats["error_count"] += err_sum.as_py()
 
-    # Recent Errors
-    st.subheader("Recent Errors (Metrics)")
-    errors_df = df[df["name"].str.contains("error")].head(10)
-    if not errors_df.empty:
-        st.dataframe(errors_df[["timestamp", "name", "value", "tags"]], use_container_width=True)
-    else:
-        st.info("No recent errors logged in metrics.")
+            if "market_data_type" in batch.column_names:
+                vc = pc.value_counts(batch["market_data_type"])
+                for val, cnt in zip(vc["values"], vc["counts"]):
+                    key = val.as_py()
+                    if key is None:
+                        continue
+                    stats["market_data_type_counts"][key] = (
+                        stats["market_data_type_counts"].get(key, 0) + cnt.as_py()
+                    )
+
+            if "rollup_strategy" in batch.column_names:
+                vc = pc.value_counts(batch["rollup_strategy"])
+                for val, cnt in zip(vc["values"], vc["counts"]):
+                    key = val.as_py()
+                    if key is None:
+                        continue
+                    stats["rollup_strategy_counts"][key] = (
+                        stats["rollup_strategy_counts"].get(key, 0) + cnt.as_py()
+                    )
+
+            if "data_quality_flag" in batch.column_names and len(batch["data_quality_flag"]) > 0:
+                stats["data_quality_present"] = True
+
+            if "open_interest" in batch.column_names:
+                pos_sum = pc.sum(pc.greater(batch["open_interest"], 0))
+                if pos_sum is not None:
+                    stats["oi_positive"] += pos_sum.as_py()
+
+        stats["underlyings"] = len(underlying_vals)
+        return stats
+    except Exception:
+        return None
 
 
 def load_history_data(base_path: Path, symbol: str, date_str: str) -> pd.DataFrame:
@@ -388,7 +343,7 @@ def render_history_tab(cfg, universe):
                     st.altair_chart(c, use_container_width=True)
 
 
-def render_operations_tab():
+def render_operations_tab(*, lightweight_mode: bool = True):
     st.header("🛠 Operations & Controls")
 
     # 1. Top Bar: Context & Date
@@ -424,6 +379,13 @@ def render_operations_tab():
         selected_symbols = st.multiselect("Select Symbols (Empty = All)", universe, default=[])
 
     symbols_arg = selected_symbols if selected_symbols else None
+    row_limit_default = 100 if lightweight_mode else 2000
+
+    if lightweight_mode:
+        st.info(
+            "Lightweight mode enabled (mobile/5G): tables are not auto-loaded; "
+            f"default row cap {row_limit_default}."
+        )
 
     st.divider()
 
@@ -432,16 +394,17 @@ def render_operations_tab():
 
     # Paths - CORRECTED to ib/chain
     intraday_path = Path(f"data/clean/ib/chain/view=intraday/date={selected_date}")
+    close_path = Path(f"data/clean/ib/chain/view=close/date={selected_date}")
     daily_path = Path(f"data/clean/ib/chain/view=daily_clean/date={selected_date}")
     enrich_path = Path(f"data/clean/ib/chain/view=enrichment/date={selected_date}")
 
     intraday_exists = intraday_path.exists()
     intraday_count = sum(1 for _ in intraday_path.glob("**/*.parquet")) if intraday_exists else 0
-
+    close_exists = close_path.exists()
     daily_exists = daily_path.exists()
     enrich_exists = enrich_path.exists()
 
-    m1, m2, m3, m4 = st.columns(4)
+    m1, m2, m3, m4, m5 = st.columns(5)
     m1.metric(
         "Intraday Partitions",
         f"{intraday_count}",
@@ -449,12 +412,18 @@ def render_operations_tab():
         delta_color="normal" if intraday_exists else "off",
     )
     m2.metric(
+        "Close Snapshot",
+        "Exists" if close_exists else "Missing",
+        delta="OK" if close_exists else "Missing",
+        delta_color="normal" if close_exists else "off",
+    )
+    m3.metric(
         "Daily Clean",
         "Exists" if daily_exists else "Missing",
         delta="OK" if daily_exists else "Pending",
         delta_color="normal" if daily_exists else "off",
     )
-    m3.metric(
+    m4.metric(
         "Enrichment (OI)",
         "Exists" if enrich_exists else "Missing",
         delta="OK" if enrich_exists else "Pending",
@@ -466,9 +435,9 @@ def render_operations_tab():
     try:
         avail_slots = runner.available_slots(selected_date)
         total_slots = len(avail_slots)
-        m4.metric("Total Slots", f"{total_slots}")
+        m5.metric("Total Slots", f"{total_slots}")
     except Exception:
-        m4.metric("Total Slots", "N/A")
+        m5.metric("Total Slots", "N/A")
 
     st.divider()
 
@@ -696,100 +665,98 @@ def render_operations_tab():
     # -------------------------------------------------------------------------
     st.subheader("🏁 Close Snapshot Data")
 
-    # Determine close slot
-    close_slot_val = None
-    try:
-        slots = runner.available_slots(selected_date)
-        if slots:
-            close_slot_val = slots[-1].index
-    except Exception:
-        pass
-
-    if not close_slot_val:
-        st.warning("Could not determine close slot for this date.")
+    if not close_exists:
+        st.warning("Close snapshot partition is missing for this date. Please run Close Snapshot.")
     else:
-        # Load intraday data
-        # We need to filter by slot_30m == close_slot_val
-        # Since parquet partitioning is by date/underlying, we load and then filter
-        # Optimization: If we could push down filters to read_parquet, that would be better.
-        # But partition structure is date=.../underlying=...
-        # So we load the date partition and filter in memory (or use pyarrow filters if possible)
+        close_stats_key = f"close_stats_{selected_date.isoformat()}_{','.join(symbols_arg) if symbols_arg else 'ALL'}"
+        if st.button(
+            "Compute full metrics (may be heavy on mobile/5G)",
+            key=f"compute_close_metrics_{selected_date.isoformat()}",
+            help="Runs full-partition counts using Arrow; may take time on large dates.",
+        ):
+            st.session_state[close_stats_key] = compute_dataset_stats(
+                str(close_path),
+                _filter_expr=ds.field("underlying").isin(symbols_arg) if symbols_arg else None,
+                columns=[
+                    "underlying",
+                    "snapshot_error",
+                    "market_data_type",
+                ],
+            )
 
-        # Columns to load
-        cols = [
-            "underlying",
-            "exchange",
-            "conid",
-            "expiry",
-            "right",
-            "strike",
-            "bid",
-            "ask",
-            "mid",
-            "last",
-            "volume",
-            "iv",
-            "delta",
-            "gamma",
-            "theta",
-            "vega",
-            "market_data_type",
-            "sample_time",
-            "slot_30m",
-            "snapshot_error",
-            "data_quality_flag",
-        ]
+        stats_close = st.session_state.get(close_stats_key)
 
-        if st.button("Refresh Close Data"):
-            st.cache_data.clear()
+        # Full-count metrics (shown if computed)
+        c1, c2, c3, c4 = st.columns(4)
+        if stats_close:
+            c1.metric("Underlyings", f"{stats_close.get('underlyings', 0)}")
+            c2.metric("Contracts", f"{stats_close.get('rows', 0)}")
 
-        close_filter = ds.field("slot_30m") == close_slot_val
-        if symbols_arg:
-            sym_filter = ds.field("underlying").isin(symbols_arg)
-            close_filter = close_filter & sym_filter
+            err_count = stats_close.get("error_count", 0)
+            rows_total = stats_close.get("rows", 0)
+            err_pct = (err_count / rows_total * 100) if rows_total else 0
+            c3.metric("Errors", f"{err_count} ({err_pct:.1f}%)")
 
-        df_close = load_parquet_data(
-            str(intraday_path),
-            columns=cols,
-            _filter_expr=close_filter,
-            row_limit=2000,
+            mdt_dist = stats_close.get("market_data_type_counts", {})
+            if mdt_dist:
+                c4.json(mdt_dist, expanded=False)
+        else:
+            c1.info("Click to compute full metrics")
+
+        load_close = st.checkbox(
+            "Load Close Snapshot Table",
+            value=False,
+            key=f"load_close_{selected_date.isoformat()}",
         )
 
-        if df_close.empty:
-            st.info("No intraday data found for this date.")
+        if not load_close:
+            st.info(
+                "Table not loaded (lightweight mode). Enable the checkbox to fetch close snapshot data."
+            )
         else:
-            # Filter for close slot
-            df_close_filtered = df_close[df_close["slot_30m"] == close_slot_val].copy()
+            if st.button("Refresh Close Data"):
+                st.cache_data.clear()
 
-            if symbols_arg:
-                df_close_filtered = df_close_filtered[
-                    df_close_filtered["underlying"].isin(symbols_arg)
-                ]
+            close_filter = ds.field("underlying").isin(symbols_arg) if symbols_arg else None
 
-            if df_close_filtered.empty:
-                st.warning(
-                    f"No data found for close slot ({close_slot_val}). Please run Close Snapshot."
+            close_cols = [
+                "underlying",
+                "exchange",
+                "conid",
+                "expiry",
+                "right",
+                "strike",
+                "bid",
+                "ask",
+                "mid",
+                "last",
+                "volume",
+                "iv",
+                "delta",
+                "gamma",
+                "theta",
+                "vega",
+                "market_data_type",
+                "sample_time",
+                "snapshot_error",
+                "data_quality_flag",
+            ]
+
+            df_close = load_parquet_data(
+                str(close_path),
+                columns=close_cols,
+                _filter_expr=close_filter,
+                row_limit=row_limit_default,
+            )
+
+            if df_close.empty:
+                st.info(
+                    "Close snapshot data exists but returned no rows. "
+                    "Check partitions or adjust filters."
                 )
             else:
-                # Metrics
-                c1, c2, c3, c4 = st.columns(4)
-                c1.metric("Underlyings", f"{df_close_filtered['underlying'].nunique()}")
-                c2.metric("Contracts", f"{len(df_close_filtered)}")
-
-                err_count = (
-                    df_close_filtered["snapshot_error"].sum()
-                    if "snapshot_error" in df_close_filtered.columns
-                    else 0
-                )
-                err_pct = (
-                    (err_count / len(df_close_filtered) * 100) if len(df_close_filtered) > 0 else 0
-                )
-                c3.metric("Errors", f"{err_count} ({err_pct:.1f}%)")
-
-                mdt_dist = df_close_filtered["market_data_type"].value_counts().to_dict()
-                c4.json(mdt_dist, expanded=False)
-
-                st.dataframe(df_close_filtered, use_container_width=True)
+                st.caption(f"Row cap: {row_limit_default} (increase by disabling lightweight mode)")
+                st.dataframe(df_close, use_container_width=True)
 
     st.divider()
 
@@ -801,65 +768,87 @@ def render_operations_tab():
     if not daily_exists:
         st.warning("Daily Rollup data does not exist. Please run Rollup.")
     else:
-        cols_rollup = [
-            "trade_date",
-            "underlying",
-            "exchange",
-            "conid",
-            "expiry",
-            "right",
-            "strike",
-            "underlying_close",
-            "bid",
-            "ask",
-            "mid",
-            "last",
-            "volume",
-            "iv",
-            "delta",
-            "gamma",
-            "theta",
-            "vega",
-            "rollup_strategy",
-            "rollup_source_slot",
-            "rollup_source_time",
-            "data_quality_flag",
-        ]
+        rollup_stats_key = f"rollup_stats_{selected_date.isoformat()}_{','.join(symbols_arg) if symbols_arg else 'ALL'}"
+        if st.button(
+            "Compute full metrics (may be heavy on mobile/5G)",
+            key=f"compute_rollup_metrics_{selected_date.isoformat()}",
+            help="Runs full-partition counts using Arrow; may take time on large dates.",
+        ):
+            st.session_state[rollup_stats_key] = compute_dataset_stats(
+                str(daily_path),
+                _filter_expr=ds.field("underlying").isin(symbols_arg) if symbols_arg else None,
+                columns=[
+                    "underlying",
+                    "rollup_strategy",
+                    "data_quality_flag",
+                ],
+            )
 
-        rollup_filter = ds.field("underlying").isin(symbols_arg) if symbols_arg else None
-        df_rollup = load_parquet_data(
-            str(daily_path),
-            columns=cols_rollup,
-            _filter_expr=rollup_filter,
-            row_limit=2000,
+        stats_rollup = st.session_state.get(rollup_stats_key)
+
+        r1, r2, r3 = st.columns(3)
+        if stats_rollup:
+            r1.metric("Contracts", f"{stats_rollup.get('rows', 0)}")
+            strat_dist_full = stats_rollup.get("rollup_strategy_counts", {})
+            if strat_dist_full:
+                r2.write("Strategy Dist (full):")
+                r2.json(strat_dist_full, expanded=False)
+            if stats_rollup.get("data_quality_present"):
+                r3.caption("Data quality flags present; see table for details.")
+        else:
+            r1.info("Click to compute full metrics")
+
+        load_rollup = st.checkbox(
+            "Load Daily Rollup Table",
+            value=False,
+            key=f"load_rollup_{selected_date.isoformat()}",
         )
 
-        if df_rollup.empty:
-            st.info("Daily data file exists but is empty or unreadable.")
-        else:
-            if symbols_arg:
-                df_rollup = df_rollup[df_rollup["underlying"].isin(symbols_arg)]
-
-            # Metrics
-            r1, r2, r3 = st.columns(3)
-            r1.metric("Contracts", f"{len(df_rollup)}")
-
-            strat_dist = (
-                df_rollup["rollup_strategy"].value_counts().to_dict()
-                if "rollup_strategy" in df_rollup.columns
-                else {}
+        if not load_rollup:
+            st.info(
+                "Table not loaded (lightweight mode). Enable the checkbox to fetch rollup data."
             )
-            r2.write("Strategy Dist:")
-            r2.json(strat_dist, expanded=False)
+        else:
+            cols_rollup = [
+                "trade_date",
+                "underlying",
+                "exchange",
+                "conid",
+                "expiry",
+                "right",
+                "strike",
+                "underlying_close",
+                "bid",
+                "ask",
+                "mid",
+                "last",
+                "volume",
+                "iv",
+                "delta",
+                "gamma",
+                "theta",
+                "vega",
+                "rollup_strategy",
+                "rollup_source_slot",
+                "rollup_source_time",
+                "data_quality_flag",
+            ]
 
-            # Flags
-            if "data_quality_flag" in df_rollup.columns:
-                # Count occurrences of flags
-                # Assuming list or string? Usually list in pandas from parquet if array
-                # But might be stringified. Let's just show raw value counts for now or simple check
-                pass
+            rollup_filter = ds.field("underlying").isin(symbols_arg) if symbols_arg else None
+            df_rollup = load_parquet_data(
+                str(daily_path),
+                columns=cols_rollup,
+                _filter_expr=rollup_filter,
+                row_limit=row_limit_default,
+            )
 
-            st.dataframe(df_rollup, use_container_width=True)
+            if df_rollup.empty:
+                st.info("Daily data file exists but is empty or unreadable.")
+            else:
+                st.caption(
+                    f"Row cap: {row_limit_default} (increase by disabling lightweight mode)"
+                )
+                st.dataframe(df_rollup, use_container_width=True)
 
     st.divider()
 
@@ -881,95 +870,97 @@ def render_operations_tab():
     if not daily_exists:
         st.error("Daily clean data missing, cannot show OI.")
     else:
-        cols_oi = [
-            "underlying",
-            "exchange",
-            "conid",
-            "expiry",
-            "right",
-            "strike",
-            "underlying_close",
-            "bid",
-            "ask",
-            "mid",
-            "last",
-            "volume",
-            "open_interest",
-            "oi_asof_date",
-            "data_quality_flag",
-        ]
+        oi_stats_key = f"oi_stats_{selected_date.isoformat()}_{','.join(symbols_arg) if symbols_arg else 'ALL'}"
+        if st.button(
+            "Compute full metrics (may be heavy on mobile/5G)",
+            key=f"compute_oi_metrics_{selected_date.isoformat()}",
+            help="Runs full-partition counts using Arrow; may take time on large dates.",
+        ):
+            st.session_state[oi_stats_key] = compute_dataset_stats(
+                str(daily_path),
+                _filter_expr=ds.field("underlying").isin(symbols_arg) if symbols_arg else None,
+                columns=[
+                    "underlying",
+                    "open_interest",
+                    "data_quality_flag",
+                ],
+            )
 
-        if st.button("Refresh OI Data"):
-            st.cache_data.clear()
+        stats_oi = st.session_state.get(oi_stats_key)
 
-        oi_filter = ds.field("underlying").isin(symbols_arg) if symbols_arg else None
-        df_oi = load_parquet_data(
-            str(daily_path),
-            columns=cols_oi,
-            _filter_expr=oi_filter,
-            row_limit=2000,
+        oi1, oi2, oi3 = st.columns(3)
+        if stats_oi:
+            oi1.metric("Contracts", f"{stats_oi.get('rows', 0)}")
+            rows_oi = stats_oi.get("rows", 0)
+            oi_pos = stats_oi.get("oi_positive", 0)
+            coverage_full = (oi_pos / rows_oi * 100) if rows_oi else 0
+            oi2.metric("OI Coverage (>0)", f"{coverage_full:.1f}%")
+            if stats_oi.get("data_quality_present"):
+                oi3.caption("Data quality flags present; see table for details.")
+        else:
+            oi1.info("Click to compute full metrics")
+
+        load_oi = st.checkbox(
+            "Load OI Table",
+            value=False,
+            key=f"load_oi_{selected_date.isoformat()}",
         )
 
-        if symbols_arg:
-            df_oi = df_oi[df_oi["underlying"].isin(symbols_arg)]
+        if not load_oi:
+            st.info("Table not loaded (lightweight mode). Enable the checkbox to fetch OI data.")
+        else:
+            cols_oi = [
+                "underlying",
+                "exchange",
+                "conid",
+                "expiry",
+                "right",
+                "strike",
+                "underlying_close",
+                "bid",
+                "ask",
+                "mid",
+                "last",
+                "volume",
+                "open_interest",
+                "oi_asof_date",
+                "data_quality_flag",
+            ]
 
-        if not df_oi.empty:
-            # Metrics
-            oi1, oi2, oi3 = st.columns(3)
+            if st.button("Refresh OI Data"):
+                st.cache_data.clear()
 
-            # Rows with OI > 0
-            has_oi = df_oi[df_oi["open_interest"] > 0]
-            coverage = (len(has_oi) / len(df_oi) * 100) if len(df_oi) > 0 else 0
-            oi1.metric("OI Coverage (>0)", f"{coverage:.1f}%")
+            oi_filter = ds.field("underlying").isin(symbols_arg) if symbols_arg else None
+            df_oi = load_parquet_data(
+                str(daily_path),
+                columns=cols_oi,
+                _filter_expr=oi_filter,
+                row_limit=row_limit_default,
+            )
 
-            # Missing OI flag
-            # Assuming data_quality_flag is a list or string.
-            # If it's a list column in parquet, pandas reads as array.
-            # Let's try to handle it safely.
-            # Simple string check if it's string, or apply if list
-            # For performance, let's just sample or assume string for now if simple
-            # Or just don't calculate if complex
+            if symbols_arg:
+                df_oi = df_oi[df_oi["underlying"].isin(symbols_arg)]
 
-            st.dataframe(df_oi, use_container_width=True)
+            if not df_oi.empty:
+                st.caption(
+                    f"Row cap: {row_limit_default} (increase by disabling lightweight mode)"
+                )
+                st.dataframe(df_oi, use_container_width=True)
 
     st.divider()
-
-    # 5. Errors & Logs
-    st.subheader("⚠️ Recent Pipeline Errors")
-    err_df = get_recent_errors()
-    if not err_df.empty:
-        st.dataframe(err_df, use_container_width=True)
-    else:
-        st.info("No recent error logs found in state/run_logs/errors/")
-
 
 def main():
     # Sidebar
     st.sidebar.title("Opt-Data")
-    auto_refresh = st.sidebar.checkbox("Auto Refresh Metrics", value=True)
+    lightweight_mode = st.sidebar.checkbox("Lightweight mode (mobile/5G)", value=True)
 
-    if auto_refresh:
-        time.sleep(5)
-        st.rerun()
+    tab_ops, tab_hist = st.tabs(["Operations", "History"])
 
-    tab1, tab2, tab3 = st.tabs(["Overview", "Operations", "History"])
+    with tab_ops:
+        render_operations_tab(lightweight_mode=lightweight_mode)
 
-    # Load metrics for Overview
-    df_metrics = load_metrics(2000)
-
-    with tab1:
-        render_overview_tab(df_metrics)
-
-    with tab2:
-        render_operations_tab()
-
-    with tab3:
+    with tab_hist:
         # Load config for history tab
-        # We need to pick a config. Default to main config for now or let user select inside tab?
-        # render_operations_tab has its own config selector.
-        # Let's reuse the logic or just load default.
-        # Better: Move config selection to sidebar or top level?
-        # For now, load default config for History tab to keep it simple.
         cfg_hist, univ_hist = load_universe_data("config/opt-data.toml")
         render_history_tab(cfg_hist, univ_hist)
 
