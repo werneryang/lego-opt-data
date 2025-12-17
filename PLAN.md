@@ -109,6 +109,9 @@
 - 生产范围已覆盖 `config/universe.csv` 全量（超过原 Stage 2/Top 10 目标），运行配置保持 `snapshot per_minute=30`、`max_concurrent_snapshots=14`，调度链路为 09:30–16:00 snapshot、17:30 close-snapshot → rollup、次日 04:30 enrichment。
 - 后续并发/分批调度提升（原 Stage 3 目标：`per_minute=90`、`并发=20`、多批次）暂缓，待评审 Gateway 负载与稳定性。
 - 文档整理：新增 `docs/README.md` 文档索引与 `docs/project-summary.md` 阶段性总结；`docs/ops-runbook.md` 顶部提供“一屏清单”，开发/测试细节移至 `docs/dev/`。
+- 历史数据能力补充诊断：新增 `scripts/historical_probe_quarterly_duration_ladder.py`，用最近季度到期合约对 1min–8h bars 做 `durationStr` 梯度探测（含 `TRADES`），用于快速验证“单次请求可拉多长/可回溯到何时”的边界。
+- 历史数据批量探针：新增 `scripts/historical_probe_quarterly_universe_stage.py`，支持按 `config/universe_history_202511.csv` 分批（`--batch-index/batch-count`）与分阶段（`--stage minutes|hours`）运行，并通过 `probe.json` 复用探针合约，便于按周末逐步拉取 1m–8h bars。
+- 周末历史回填（实验）需求确认：minutes 阶段仅拉“活跃子集”（先用近 ATM K/E 规则），TRADES `no data` 不做自动 fallback，合约集合以“最近交易日 contracts cache”为准；仅用于 `data_test/` 实验与参数验证，不纳入生产调度（详见 `docs/dev/history-weekend-backfill.md`）。
 
 ## 本周目标（2025-11-03 当周）
 - **M1 · 槽位与调度（早收盘感知）**

@@ -6,7 +6,7 @@ import streamlit as st
 import pandas as pd
 import json
 import altair as alt
-from typing import Any
+from typing import Any, Dict
 from pathlib import Path
 from datetime import datetime
 import pytz
@@ -190,6 +190,29 @@ def compute_dataset_stats(path_str: str, _filter_expr=None, columns: list[str] |
         return None
 
 
+@st.cache_data(ttl=60, show_spinner=False)
+def compute_fast_stats(path_str: str) -> dict | None:
+    """Read Parquet metadata only - no data scan. Ultra-fast for mobile."""
+    path = Path(path_str)
+    if not path.exists():
+        return {"exists": False, "rows": 0, "files": 0}
+
+    try:
+        dataset = ds.dataset(path, partitioning="hive")
+        fragments = list(dataset.get_fragments())
+        total_rows = 0
+        for frag in fragments:
+            try:
+                meta = frag.metadata
+                if meta is not None:
+                    total_rows += meta.num_rows
+            except Exception:
+                pass
+        return {"exists": True, "rows": total_rows, "files": len(fragments)}
+    except Exception:
+        return {"exists": True, "rows": 0, "files": 0}
+
+
 def load_history_data(base_path: Path, symbol: str, date_str: str) -> pd.DataFrame:
     """Load history JSON files for a symbol and date."""
     target_dir = base_path / symbol / date_str
@@ -216,7 +239,7 @@ def load_history_data(base_path: Path, symbol: str, date_str: str) -> pd.DataFra
     return df
 
 
-def render_history_tab(cfg, universe):
+def render_history_tab(cfg, universe, *, lightweight_mode: bool = False):
     st.header("📜 Daily Option History")
 
     if not cfg:
@@ -225,121 +248,246 @@ def render_history_tab(cfg, universe):
 
     # 1. Fetch Controls
     with st.expander("Fetch History", expanded=True):
-        c1, c2, c3, c4, c5 = st.columns([2, 1, 1, 1, 1])
+        # Row 1: Primary Controls
+        c1, c2, c3 = st.columns([2, 1, 1])
 
         with c1:
             # Symbol selection
             univ_symbols = [u.symbol for u in universe] if universe else []
             selected_symbols = st.multiselect("Symbols", univ_symbols, default=["AAPL"])
+            
+            if not selected_symbols:
+                st.warning("⚠️ No symbols selected. This will fetch the ENTIRE universe.")
 
         with c2:
-            days = st.number_input("Days", min_value=1, max_value=365, value=30)
-
+            days = st.number_input("Days (Full Fetch)", min_value=1, max_value=365, value=30, help="Days to look back")
+            
         with c3:
-            what_to_show = st.selectbox(
-                "Data Type",
-                ["TRADES", "MIDPOINT"],
-                index=0,
-                help="Use TRADES to get real volume/barCount/WAP; MIDPOINT has no real volume.",
-            )
+            fetch_mode = st.radio("Fetch Mode", ["Incremental", "Full Overwrite"], horizontal=True, help="Incremental checks existing data and only fetches missing days.")
+            incremental = fetch_mode == "Incremental"
 
-        with c4:
-            force_refresh = st.checkbox("Force Refresh Cache", value=False)
+        # Row 2: Advanced Settings
+        with st.expander("Advanced Settings"):
+            a1, a2, a3, a4 = st.columns(4)
+            with a1:
+                bar_size = st.selectbox(
+                    "Bar Size", 
+                    ["8 hours", "1 day", "1 hour", "30 mins", "15 mins", "5 mins", "1 min"],
+                    index=0,
+                    help="Time interval for bars. '8 hours' uses the daily aggregator workaround."
+                )
+            with a2:
+                what_to_show = st.selectbox(
+                    "Data Type",
+                    ["MIDPOINT", "TRADES", "BID", "ASK", "BID_ASK", "ADJUSTED_LAST"],
+                    index=0,
+                    help="Data type to fetch."
+                )
+            with a3:
+                use_rth = st.checkbox("Regular Trading Hours (RTH)", value=True)
+            with a4:
+                force_refresh = st.checkbox("Force Refresh Contracts", value=False, help="Re-run contract discovery")
 
-        with c5:
-            st.write("")
-            st.write("")
-            if st.button("Fetch History", type="primary"):
-                st_hist = st.empty()
-                st_hist.info("Fetching history...")
-                try:
-                    runner = HistoryRunner(cfg)
-                    res = runner.run(
-                        symbols=selected_symbols,
-                        days=days,
-                        what_to_show=what_to_show,
-                        force_refresh=force_refresh,
-                    )
-                    st_hist.success(
-                        f"History Fetch Complete. Processed: {res.get('processed')} symbols."
-                    )
-                    if res.get("errors", 0) > 0:
-                        st.warning(f"Errors encountered: {res.get('errors')}")
-                except Exception as e:
-                    st_hist.error(f"Failed: {e}")
+        st.write("")
+        if st.button("Start Fetching", type="primary"):
+            st_status = st.empty()
+            st_prog_bar = st.progress(0)
+            st_prog_text = st.empty()
+            
+            st_status.info("Initializing History Runner...")
+            
+            def ui_progress_callback(current: int, total: int, status: str, details: Dict[str, Any]):
+                pct = (current / total) if total > 0 else 0
+                pct = min(max(pct, 0.0), 1.0)
+                st_prog_bar.progress(pct)
+                st_prog_text.text(f"{int(pct*100)}% - {status}")
+            
+            try:
+                runner = HistoryRunner(cfg)
+                res = runner.run(
+                    symbols=selected_symbols,
+                    days=days,
+                    what_to_show=what_to_show,
+                    use_rth=use_rth,
+                    force_refresh=force_refresh,
+                    incremental=incremental,
+                    bar_size=bar_size,
+                    progress_callback=ui_progress_callback
+                )
+                
+                st_prog_bar.progress(1.0)
+                st_status.success(
+                    f"Fetch Complete! Processed: {res.get('processed')} symbols. Errors: {res.get('errors')}"
+                )
+                
+                if res.get("errors", 0) > 0:
+                    with st.expander("Error Details"):
+                        st.json(res["symbols"])
+                        
+            except Exception as e:
+                st_status.error(f"Failed: {e}")
 
     st.divider()
 
     # 2. Data Viewer
     st.subheader("📊 History Viewer")
 
-    # Path resolution
-    history_base = Path(cfg.paths.clean) / "ib" / "history"
+    # Source Selection
+    data_source = st.radio(
+        "Data Source",
+        ["Legacy JSON (Production)", "Weekend Backfill (Experiment)"],
+        horizontal=True,
+    )
 
-    if not history_base.exists():
-        st.info("No history data found yet.")
-        return
+    if data_source == "Legacy JSON (Production)":
+        # Original Logic
+        history_base = Path(cfg.paths.clean) / "ib" / "history"
 
-    # List available symbols
-    avail_symbols = [d.name for d in history_base.iterdir() if d.is_dir()]
-    if not avail_symbols:
-        st.info("No symbols in history directory.")
-        return
+        if not history_base.exists():
+            st.info("No history data found yet.")
+            return
 
-    v1, v2 = st.columns([1, 3])
+        avail_symbols = [d.name for d in history_base.iterdir() if d.is_dir()]
+        if not avail_symbols:
+            st.info("No symbols in history directory.")
+            return
 
-    with v1:
-        view_symbol = st.selectbox("Select Symbol", sorted(avail_symbols))
+        v1, v2 = st.columns([1, 3])
 
-        # List dates for symbol
-        sym_dir = history_base / view_symbol
-        avail_dates = sorted([d.name for d in sym_dir.iterdir() if d.is_dir()], reverse=True)
+        with v1:
+            view_symbol = st.selectbox("Select Symbol", sorted(avail_symbols))
 
-        if not avail_dates:
-            st.warning("No dates found for symbol.")
-            view_date = None
-        else:
-            view_date = st.selectbox("Select Run Date", avail_dates)
+            sym_dir = history_base / view_symbol
+            avail_dates = sorted([d.name for d in sym_dir.iterdir() if d.is_dir()], reverse=True)
 
-    with v2:
-        if view_symbol and view_date:
-            df = load_history_data(history_base, view_symbol, view_date)
-
-            if df.empty:
-                st.warning("No data found in files.")
+            if not avail_dates:
+                st.warning("No dates found for symbol.")
+                view_date = None
             else:
-                st.caption(f"Loaded {len(df)} records (bars) for {view_symbol} on {view_date}")
+                view_date = st.selectbox("Select Run Date", avail_dates)
 
+        with v2:
+            if view_symbol and view_date:
+                df = load_history_data(history_base, view_symbol, view_date)
+
+                if df.empty:
+                    st.warning("No data found in files.")
+                else:
+                    st.caption(f"Loaded {len(df)} records (bars) for {view_symbol} on {view_date}")
+
+                    m1, m2, m3 = st.columns(3)
+                    m1.metric("Total Bars", len(df))
+                    m2.metric("Unique Contracts", df["conid"].nunique())
+
+                    if lightweight_mode:
+                        st.info("📱 Lightweight mode: data tables and charts are hidden.")
+                    else:
+                        tab_data, tab_chart = st.tabs(["Data Table", "Visualization"])
+
+                        with tab_data:
+                            st.dataframe(df, use_container_width=True)
+
+                        with tab_chart:
+                            if "close" in df.columns:
+                                c = (
+                                    alt.Chart(df.sample(min(len(df), 5000)) if len(df) > 5000 else df)
+                                    .mark_bar()
+                                    .encode(
+                                        x=alt.X("close", bin=True, title="Close Price"),
+                                        y="count()",
+                                        tooltip=["count()"],
+                                    )
+                                    .properties(title="Close Price Distribution (Sampled)")
+                                )
+                                st.altair_chart(c, use_container_width=True)
+                            else:
+                                st.info("No 'close' column to chart.")
+
+    else:
+        # Weekend Backfill Viewer logic
+        backfill_base = Path("data_test/raw/ib/historical_bars_weekend")
+
+        if not backfill_base.exists():
+            st.info(f"Backfill directory not found: {backfill_base}")
+            return
+
+        # Listing Symbols
+        avail_symbols = sorted([d.name for d in backfill_base.iterdir() if d.is_dir()])
+        if not avail_symbols:
+            st.info("No symbols found in backfill directory.")
+            return
+
+        c1, c2, c3 = st.columns([1, 1, 2])
+        
+        with c1:
+            bf_symbol = st.selectbox("Symbol", avail_symbols, key="bf_sym")
+        
+        # List contracts for symbol
+        sym_dir = backfill_base / bf_symbol
+        avail_cons = sorted([d.name for d in sym_dir.iterdir() if d.is_dir()])
+        
+        with c2:
+            bf_conid = st.selectbox("Contract ID", avail_cons, key="bf_con") if avail_cons else None
+            
+        if not bf_conid:
+            st.warning("No contracts found.")
+            return
+
+        # List Parquet files for contract
+        # Structure: SYMBOL/conId/TRADES/*.parquet
+        trades_dir = sym_dir / bf_conid / "TRADES"
+        files = sorted(list(trades_dir.glob("*.parquet"))) if trades_dir.exists() else []
+
+        with c3:
+            selected_file = st.selectbox("Select File", [f.name for f in files], key="bf_file") if files else None
+
+        if not selected_file:
+            st.warning("No Parquet files found in TRADES directory.")
+        else:
+            file_path = trades_dir / selected_file
+            try:
+                # For Parquet, always read to get metrics, but maybe skip table if lightweight?
+                # Reading small parquet is usually fast.
+                df = pd.read_parquet(file_path)
+                st.success(f"Loaded {len(df)} rows from {selected_file}")
+                
                 # Metrics
                 m1, m2, m3 = st.columns(3)
-                m1.metric("Total Bars", len(df))
-                m2.metric("Unique Contracts", df["conid"].nunique())
-
-                # Charting - Close Price of Underlying (if available) or aggregated stats
-                # Since these are option bars, plotting them all is messy.
-                # Let's plot the distribution of Close prices or Volume.
-
-                tab_data, tab_chart = st.tabs(["Data Table", "Visualization"])
-
-                with tab_data:
-                    st.dataframe(df, use_container_width=True)
-
-                with tab_chart:
-                    # Simple scatter of Strike vs Volume (if strike available in data? No, data is OHLCV)
-                    # We only have conid. We'd need to join with contract info to get strike.
-                    # For now, just plot Volume distribution.
-
-                    c = (
-                        alt.Chart(df)
-                        .mark_bar()
-                        .encode(
-                            x=alt.X("close", bin=True, title="Close Price"),
-                            y="count()",
-                            tooltip=["count()"],
-                        )
-                        .properties(title="Close Price Distribution")
-                    )
-                    st.altair_chart(c, use_container_width=True)
+                m1.metric("Rows", len(df))
+                if "date" in df.columns:
+                    min_date = df["date"].min()
+                    max_date = df["date"].max()
+                    m2.metric("Start", str(min_date))
+                    m3.metric("End", str(max_date))
+                
+                if lightweight_mode:
+                    st.info("📱 Lightweight mode: data tables and charts are hidden.")
+                else:
+                    # Table & Chart
+                    t1, t2 = st.tabs(["Data Table", "Chart"])
+                    
+                    with t1:
+                        st.dataframe(df, use_container_width=True)
+                        
+                    with t2:
+                        if "close" in df.columns and "date" in df.columns:
+                            chart = (
+                                alt.Chart(df)
+                                .mark_line()
+                                .encode(
+                                    x="date:T",
+                                    y=alt.Y("close:Q", scale=alt.Scale(zero=False)),
+                                    tooltip=["date", "open", "high", "low", "close", "volume"]
+                                )
+                                .properties(title=f"{bf_symbol} - {selected_file}")
+                                .interactive()
+                            )
+                            st.altair_chart(chart, use_container_width=True)
+                        else:
+                            st.info("Chart requires 'date' and 'close' columns.")
+                        
+            except Exception as e:
+                st.error(f"Failed to read parquet: {e}")
 
 
 def render_operations_tab(*, lightweight_mode: bool = True):
@@ -375,15 +523,14 @@ def render_operations_tab(*, lightweight_mode: bool = True):
 
     # Symbol Selection
     with st.expander("Symbol Selection", expanded=False):
-        selected_symbols = st.multiselect("Select Symbols (Empty = All)", universe, default=[])
+                selected_symbols = st.multiselect("Select Symbols (Empty = All)", universe, default=[])
 
     symbols_arg = selected_symbols if selected_symbols else None
     row_limit_default = 100 if lightweight_mode else 2000
 
     if lightweight_mode:
         st.info(
-            "Lightweight mode enabled (mobile/5G): tables are not auto-loaded; "
-            f"default row cap {row_limit_default}."
+            "📱 Lightweight mode (mobile/5G): showing stats only, tables hidden."
         )
 
     st.divider()
@@ -397,46 +544,93 @@ def render_operations_tab(*, lightweight_mode: bool = True):
     daily_path = Path(f"data/clean/ib/chain/view=daily_clean/date={selected_date}")
     enrich_path = Path(f"data/clean/ib/chain/view=enrichment/date={selected_date}")
 
-    intraday_exists = intraday_path.exists()
-    intraday_count = sum(1 for _ in intraday_path.glob("**/*.parquet")) if intraday_exists else 0
-    close_exists = close_path.exists()
-    daily_exists = daily_path.exists()
-    enrich_exists = enrich_path.exists()
+    # Use fast stats in lightweight mode, skip expensive file counting
+    if lightweight_mode:
+        # Fast metadata-only stats
+        intraday_stats = compute_fast_stats(str(intraday_path))
+        close_stats = compute_fast_stats(str(close_path))
+        daily_stats = compute_fast_stats(str(daily_path))
+        enrich_stats = compute_fast_stats(str(enrich_path))
 
-    m1, m2, m3, m4, m5 = st.columns(5)
-    m1.metric(
-        "Intraday Partitions",
-        f"{intraday_count}",
-        delta="Exists" if intraday_exists else "Missing",
-        delta_color="normal" if intraday_exists else "off",
-    )
-    m2.metric(
-        "Close Snapshot",
-        "Exists" if close_exists else "Missing",
-        delta="OK" if close_exists else "Missing",
-        delta_color="normal" if close_exists else "off",
-    )
-    m3.metric(
-        "Daily Clean",
-        "Exists" if daily_exists else "Missing",
-        delta="OK" if daily_exists else "Pending",
-        delta_color="normal" if daily_exists else "off",
-    )
-    m4.metric(
-        "Enrichment (OI)",
-        "Exists" if enrich_exists else "Missing",
-        delta="OK" if enrich_exists else "Pending",
-        delta_color="normal" if enrich_exists else "off",
-    )
+        # Mobile layout: 2 columns
+        row1_c1, row1_c2 = st.columns(2)
+        row1_c1.metric(
+            "Intraday",
+            f"{intraday_stats.get('rows', 0):,}" if intraday_stats.get('exists') else "Missing",
+            delta="OK" if intraday_stats.get('exists') else "Missing",
+            delta_color="normal" if intraday_stats.get('exists') else "off",
+        )
+        row1_c2.metric(
+            "Close",
+            f"{close_stats.get('rows', 0):,}" if close_stats.get('exists') else "Missing",
+            delta="OK" if close_stats.get('exists') else "Missing",
+            delta_color="normal" if close_stats.get('exists') else "off",
+        )
 
-    # Slot Coverage (Estimate)
-    runner = SnapshotRunner(cfg)
-    try:
-        avail_slots = runner.available_slots(selected_date)
-        total_slots = len(avail_slots)
-        m5.metric("Total Slots", f"{total_slots}")
-    except Exception:
-        m5.metric("Total Slots", "N/A")
+        row2_c1, row2_c2 = st.columns(2)
+        row2_c1.metric(
+            "Daily",
+            f"{daily_stats.get('rows', 0):,}" if daily_stats.get('exists') else "Missing",
+            delta="OK" if daily_stats.get('exists') else "Pending",
+            delta_color="normal" if daily_stats.get('exists') else "off",
+        )
+        row2_c2.metric(
+            "OI Enrichment",
+            f"{enrich_stats.get('rows', 0):,}" if enrich_stats.get('exists') else "Missing",
+            delta="OK" if enrich_stats.get('exists') else "Pending",
+            delta_color="normal" if enrich_stats.get('exists') else "off",
+        )
+
+        # Slot count
+        runner = SnapshotRunner(cfg)
+        try:
+            avail_slots = runner.available_slots(selected_date)
+            st.metric("Total Slots", f"{len(avail_slots)}")
+        except Exception:
+            st.metric("Total Slots", "N/A")
+
+    else:
+        # Desktop mode: original 5-column layout
+        intraday_exists = intraday_path.exists()
+        intraday_count = sum(1 for _ in intraday_path.glob("**/*.parquet")) if intraday_exists else 0
+        close_exists = close_path.exists()
+        daily_exists = daily_path.exists()
+        enrich_exists = enrich_path.exists()
+
+        m1, m2, m3, m4, m5 = st.columns(5)
+        m1.metric(
+            "Intraday Partitions",
+            f"{intraday_count}",
+            delta="Exists" if intraday_exists else "Missing",
+            delta_color="normal" if intraday_exists else "off",
+        )
+        m2.metric(
+            "Close Snapshot",
+            "Exists" if close_exists else "Missing",
+            delta="OK" if close_exists else "Missing",
+            delta_color="normal" if close_exists else "off",
+        )
+        m3.metric(
+            "Daily Clean",
+            "Exists" if daily_exists else "Missing",
+            delta="OK" if daily_exists else "Pending",
+            delta_color="normal" if daily_exists else "off",
+        )
+        m4.metric(
+            "Enrichment (OI)",
+            "Exists" if enrich_exists else "Missing",
+            delta="OK" if enrich_exists else "Pending",
+            delta_color="normal" if enrich_exists else "off",
+        )
+
+        # Slot Coverage (Estimate)
+        runner = SnapshotRunner(cfg)
+        try:
+            avail_slots = runner.available_slots(selected_date)
+            total_slots = len(avail_slots)
+            m5.metric("Total Slots", f"{total_slots}")
+        except Exception:
+            m5.metric("Total Slots", "N/A")
 
     st.divider()
 
@@ -461,6 +655,39 @@ def render_operations_tab(*, lightweight_mode: bool = True):
                 st.error(f"Could not load slots: {e}")
         else:
             st.info("Will use current time to resolve slot.")
+
+    # -------------------------------------------------------------------------
+    # WEEKEND BACKFILL STATUS (Experiment)
+    # -------------------------------------------------------------------------
+    st.divider()
+    st.subheader("🧪 Weekend Backfill Status (Experiment)")
+    
+    backfill_path = Path("data_test/raw/ib/historical_bars_weekend")
+    if not backfill_path.exists():
+        st.info(f"No experimental backfill data found at {backfill_path}")
+    else:
+        # Simple stats: count symbols
+        bf_symbols = [x for x in backfill_path.iterdir() if x.is_dir()]
+        count_syms = len(bf_symbols)
+        
+        # Check if we have data for selected Date? No, backfill structure is Symbol/ConId/TRADES/file.parquet
+        # It's not strictly date partitioned at top level.
+        # But we can check if any file modification time is recent, or just general stats.
+        
+        bf1, bf2 = st.columns(2)
+        bf1.metric("Backfill Symbols", count_syms)
+        bf1.caption(f"Path: {backfill_path}")
+        
+        if count_syms > 0:
+            if lightweight_mode:
+                bf2.info("Lightweight mode: deeper stats hidden.")
+            else:
+                # Count total parquet files? Might be slow if many files.
+                # Just show a sample symbol
+                sample_sym = bf_symbols[0].name
+                bf2.info(f"Sample data available for {sample_sym}. View in 'History' tab.")
+    
+    st.divider()
 
     if st.button("Run Intraday Snapshot", type="primary"):
         status_container = st.empty()
@@ -660,287 +887,291 @@ def render_operations_tab(*, lightweight_mode: bool = True):
     st.divider()
 
     # -------------------------------------------------------------------------
-    # 1. Close Snapshot View
+    # 1. Close Snapshot View (Desktop only - tables hidden in lightweight mode)
     # -------------------------------------------------------------------------
-    st.subheader("🏁 Close Snapshot Data")
+    if not lightweight_mode:
+        st.subheader("🏁 Close Snapshot Data")
 
-    if not close_exists:
-        st.warning("Close snapshot partition is missing for this date. Please run Close Snapshot.")
-    else:
-        close_stats_key = f"close_stats_{selected_date.isoformat()}_{','.join(symbols_arg) if symbols_arg else 'ALL'}"
-        if st.button(
-            "Compute full metrics (may be heavy on mobile/5G)",
-            key=f"compute_close_metrics_{selected_date.isoformat()}",
-            help="Runs full-partition counts using Arrow; may take time on large dates.",
-        ):
-            st.session_state[close_stats_key] = compute_dataset_stats(
-                str(close_path),
-                _filter_expr=ds.field("underlying").isin(symbols_arg) if symbols_arg else None,
-                columns=[
-                    "underlying",
-                    "snapshot_error",
-                    "market_data_type",
-                ],
-            )
-
-        stats_close = st.session_state.get(close_stats_key)
-
-        # Full-count metrics (shown if computed)
-        c1, c2, c3, c4 = st.columns(4)
-        if stats_close:
-            c1.metric("Underlyings", f"{stats_close.get('underlyings', 0)}")
-            c2.metric("Contracts", f"{stats_close.get('rows', 0)}")
-
-            err_count = stats_close.get("error_count", 0)
-            rows_total = stats_close.get("rows", 0)
-            err_pct = (err_count / rows_total * 100) if rows_total else 0
-            c3.metric("Errors", f"{err_count} ({err_pct:.1f}%)")
-
-            mdt_dist = stats_close.get("market_data_type_counts", {})
-            if mdt_dist:
-                c4.json(mdt_dist, expanded=False)
+        close_exists = close_path.exists()
+        if not close_exists:
+            st.warning("Close snapshot partition is missing for this date. Please run Close Snapshot.")
         else:
-            c1.info("Click to compute full metrics")
+            close_stats_key = f"close_stats_{selected_date.isoformat()}_{','.join(symbols_arg) if symbols_arg else 'ALL'}"
+            if st.button(
+                "Compute full metrics (may be heavy on mobile/5G)",
+                key=f"compute_close_metrics_{selected_date.isoformat()}",
+                help="Runs full-partition counts using Arrow; may take time on large dates.",
+            ):
+                st.session_state[close_stats_key] = compute_dataset_stats(
+                    str(close_path),
+                    _filter_expr=ds.field("underlying").isin(symbols_arg) if symbols_arg else None,
+                    columns=[
+                        "underlying",
+                        "snapshot_error",
+                        "market_data_type",
+                    ],
+                )
 
-        load_close = st.checkbox(
-            "Load Close Snapshot Table",
-            value=False,
-            key=f"load_close_{selected_date.isoformat()}",
-        )
+            stats_close = st.session_state.get(close_stats_key)
 
-        if not load_close:
-            st.info(
-                "Table not loaded (lightweight mode). Enable the checkbox to fetch close snapshot data."
-            )
-        else:
-            if st.button("Refresh Close Data"):
-                st.cache_data.clear()
+            # Full-count metrics (shown if computed)
+            c1, c2, c3, c4 = st.columns(4)
+            if stats_close:
+                c1.metric("Underlyings", f"{stats_close.get('underlyings', 0)}")
+                c2.metric("Contracts", f"{stats_close.get('rows', 0)}")
 
-            close_filter = ds.field("underlying").isin(symbols_arg) if symbols_arg else None
+                err_count = stats_close.get("error_count", 0)
+                rows_total = stats_close.get("rows", 0)
+                err_pct = (err_count / rows_total * 100) if rows_total else 0
+                c3.metric("Errors", f"{err_count} ({err_pct:.1f}%)")
 
-            close_cols = [
-                "underlying",
-                "exchange",
-                "conid",
-                "expiry",
-                "right",
-                "strike",
-                "bid",
-                "ask",
-                "mid",
-                "last",
-                "volume",
-                "iv",
-                "delta",
-                "gamma",
-                "theta",
-                "vega",
-                "market_data_type",
-                "sample_time",
-                "snapshot_error",
-                "data_quality_flag",
-            ]
+                mdt_dist = stats_close.get("market_data_type_counts", {})
+                if mdt_dist:
+                    c4.json(mdt_dist, expanded=False)
+            else:
+                c1.info("Click to compute full metrics")
 
-            df_close = load_parquet_data(
-                str(close_path),
-                columns=close_cols,
-                _filter_expr=close_filter,
-                row_limit=row_limit_default,
+            load_close = st.checkbox(
+                "Load Close Snapshot Table",
+                value=False,
+                key=f"load_close_{selected_date.isoformat()}",
             )
 
-            if df_close.empty:
+            if not load_close:
                 st.info(
-                    "Close snapshot data exists but returned no rows. "
-                    "Check partitions or adjust filters."
+                    "Table not loaded. Enable the checkbox to fetch close snapshot data."
                 )
             else:
-                st.caption(f"Row cap: {row_limit_default} (increase by disabling lightweight mode)")
-                st.dataframe(df_close, use_container_width=True)
+                if st.button("Refresh Close Data"):
+                    st.cache_data.clear()
 
-    st.divider()
+                close_filter = ds.field("underlying").isin(symbols_arg) if symbols_arg else None
 
-    # -------------------------------------------------------------------------
-    # 2. Daily Rollup View
-    # -------------------------------------------------------------------------
-    st.subheader("📦 Daily Rollup Data")
-
-    if not daily_exists:
-        st.warning("Daily Rollup data does not exist. Please run Rollup.")
-    else:
-        rollup_stats_key = f"rollup_stats_{selected_date.isoformat()}_{','.join(symbols_arg) if symbols_arg else 'ALL'}"
-        if st.button(
-            "Compute full metrics (may be heavy on mobile/5G)",
-            key=f"compute_rollup_metrics_{selected_date.isoformat()}",
-            help="Runs full-partition counts using Arrow; may take time on large dates.",
-        ):
-            st.session_state[rollup_stats_key] = compute_dataset_stats(
-                str(daily_path),
-                _filter_expr=ds.field("underlying").isin(symbols_arg) if symbols_arg else None,
-                columns=[
+                close_cols = [
                     "underlying",
-                    "rollup_strategy",
+                    "exchange",
+                    "conid",
+                    "expiry",
+                    "right",
+                    "strike",
+                    "bid",
+                    "ask",
+                    "mid",
+                    "last",
+                    "volume",
+                    "iv",
+                    "delta",
+                    "gamma",
+                    "theta",
+                    "vega",
+                    "market_data_type",
+                    "sample_time",
+                    "snapshot_error",
                     "data_quality_flag",
-                ],
-            )
+                ]
 
-        stats_rollup = st.session_state.get(rollup_stats_key)
+                df_close = load_parquet_data(
+                    str(close_path),
+                    columns=close_cols,
+                    _filter_expr=close_filter,
+                    row_limit=row_limit_default,
+                )
 
-        r1, r2, r3 = st.columns(3)
-        if stats_rollup:
-            r1.metric("Contracts", f"{stats_rollup.get('rows', 0)}")
-            strat_dist_full = stats_rollup.get("rollup_strategy_counts", {})
-            if strat_dist_full:
-                r2.write("Strategy Dist (full):")
-                r2.json(strat_dist_full, expanded=False)
-            if stats_rollup.get("data_quality_present"):
-                r3.caption("Data quality flags present; see table for details.")
+                if df_close.empty:
+                    st.info(
+                        "Close snapshot data exists but returned no rows. "
+                        "Check partitions or adjust filters."
+                    )
+                else:
+                    st.caption(f"Row cap: {row_limit_default} (increase by disabling lightweight mode)")
+                    st.dataframe(df_close, use_container_width=True)
+
+        st.divider()
+
+
+    # -------------------------------------------------------------------------
+    # 2. Daily Rollup View (Desktop only)
+    # -------------------------------------------------------------------------
+    if not lightweight_mode:
+        st.subheader("📦 Daily Rollup Data")
+
+        daily_exists = daily_path.exists()
+        if not daily_exists:
+            st.warning("Daily Rollup data does not exist. Please run Rollup.")
         else:
-            r1.info("Click to compute full metrics")
+            rollup_stats_key = f"rollup_stats_{selected_date.isoformat()}_{','.join(symbols_arg) if symbols_arg else 'ALL'}"
+            if st.button(
+                "Compute full metrics (may be heavy on mobile/5G)",
+                key=f"compute_rollup_metrics_{selected_date.isoformat()}",
+                help="Runs full-partition counts using Arrow; may take time on large dates.",
+            ):
+                st.session_state[rollup_stats_key] = compute_dataset_stats(
+                    str(daily_path),
+                    _filter_expr=ds.field("underlying").isin(symbols_arg) if symbols_arg else None,
+                    columns=[
+                        "underlying",
+                        "rollup_strategy",
+                        "data_quality_flag",
+                    ],
+                )
 
-        load_rollup = st.checkbox(
-            "Load Daily Rollup Table",
-            value=False,
-            key=f"load_rollup_{selected_date.isoformat()}",
-        )
+            stats_rollup = st.session_state.get(rollup_stats_key)
 
-        if not load_rollup:
-            st.info(
-                "Table not loaded (lightweight mode). Enable the checkbox to fetch rollup data."
-            )
-        else:
-            cols_rollup = [
-                "trade_date",
-                "underlying",
-                "exchange",
-                "conid",
-                "expiry",
-                "right",
-                "strike",
-                "underlying_close",
-                "bid",
-                "ask",
-                "mid",
-                "last",
-                "volume",
-                "iv",
-                "delta",
-                "gamma",
-                "theta",
-                "vega",
-                "rollup_strategy",
-                "rollup_source_slot",
-                "rollup_source_time",
-                "data_quality_flag",
-            ]
-
-            rollup_filter = ds.field("underlying").isin(symbols_arg) if symbols_arg else None
-            df_rollup = load_parquet_data(
-                str(daily_path),
-                columns=cols_rollup,
-                _filter_expr=rollup_filter,
-                row_limit=row_limit_default,
-            )
-
-            if df_rollup.empty:
-                st.info("Daily data file exists but is empty or unreadable.")
+            r1, r2, r3 = st.columns(3)
+            if stats_rollup:
+                r1.metric("Contracts", f"{stats_rollup.get('rows', 0)}")
+                strat_dist_full = stats_rollup.get("rollup_strategy_counts", {})
+                if strat_dist_full:
+                    r2.write("Strategy Dist (full):")
+                    r2.json(strat_dist_full, expanded=False)
+                if stats_rollup.get("data_quality_present"):
+                    r3.caption("Data quality flags present; see table for details.")
             else:
-                st.caption(f"Row cap: {row_limit_default} (increase by disabling lightweight mode)")
-                st.dataframe(df_rollup, use_container_width=True)
+                r1.info("Click to compute full metrics")
 
-    st.divider()
+            load_rollup = st.checkbox(
+                "Load Daily Rollup Table",
+                value=False,
+                key=f"load_rollup_{selected_date.isoformat()}",
+            )
 
-    # -------------------------------------------------------------------------
-    # 3. OI Enrichment View (T+1)
-    # -------------------------------------------------------------------------
-    st.subheader("💰 OI Enrichment (T+1)")
-
-    # Check if enrichment marker exists
-    if not enrich_exists:
-        st.warning("OI Enrichment has not been run (view=enrichment missing).")
-    else:
-        st.success("OI Enrichment executed.")
-
-    # We load from daily_clean because enrichment updates daily_clean in place (or rather, creates a new version/overwrites)
-    # But wait, the user request says: "OI View displays daily_clean/date=D ... updated by enrichment"
-    # And also mentions "view=enrichment/date=D partition" as a status indicator.
-
-    if not daily_exists:
-        st.error("Daily clean data missing, cannot show OI.")
-    else:
-        oi_stats_key = f"oi_stats_{selected_date.isoformat()}_{','.join(symbols_arg) if symbols_arg else 'ALL'}"
-        if st.button(
-            "Compute full metrics (may be heavy on mobile/5G)",
-            key=f"compute_oi_metrics_{selected_date.isoformat()}",
-            help="Runs full-partition counts using Arrow; may take time on large dates.",
-        ):
-            st.session_state[oi_stats_key] = compute_dataset_stats(
-                str(daily_path),
-                _filter_expr=ds.field("underlying").isin(symbols_arg) if symbols_arg else None,
-                columns=[
+            if not load_rollup:
+                st.info(
+                    "Table not loaded. Enable the checkbox to fetch rollup data."
+                )
+            else:
+                cols_rollup = [
+                    "trade_date",
                     "underlying",
-                    "open_interest",
+                    "exchange",
+                    "conid",
+                    "expiry",
+                    "right",
+                    "strike",
+                    "underlying_close",
+                    "bid",
+                    "ask",
+                    "mid",
+                    "last",
+                    "volume",
+                    "iv",
+                    "delta",
+                    "gamma",
+                    "theta",
+                    "vega",
+                    "rollup_strategy",
+                    "rollup_source_slot",
+                    "rollup_source_time",
                     "data_quality_flag",
-                ],
+                ]
+
+                rollup_filter = ds.field("underlying").isin(symbols_arg) if symbols_arg else None
+                df_rollup = load_parquet_data(
+                    str(daily_path),
+                    columns=cols_rollup,
+                    _filter_expr=rollup_filter,
+                    row_limit=row_limit_default,
+                )
+
+                if df_rollup.empty:
+                    st.info("Daily data file exists but is empty or unreadable.")
+                else:
+                    st.caption(f"Row cap: {row_limit_default} (increase by disabling lightweight mode)")
+                    st.dataframe(df_rollup, use_container_width=True)
+
+        st.divider()
+
+
+    # -------------------------------------------------------------------------
+    # 3. OI Enrichment View (Desktop only)
+    # -------------------------------------------------------------------------
+    if not lightweight_mode:
+        st.subheader("💰 OI Enrichment (T+1)")
+
+        enrich_exists = enrich_path.exists()
+        if not enrich_exists:
+            st.warning("OI Enrichment has not been run (view=enrichment missing).")
+        else:
+            st.success("OI Enrichment executed.")
+
+        # We load from daily_clean because enrichment updates daily_clean in place
+        if not daily_exists:
+            st.error("Daily clean data missing, cannot show OI.")
+        else:
+            oi_stats_key = f"oi_stats_{selected_date.isoformat()}_{','.join(symbols_arg) if symbols_arg else 'ALL'}"
+            if st.button(
+                "Compute full metrics (may be heavy on mobile/5G)",
+                key=f"compute_oi_metrics_{selected_date.isoformat()}",
+                help="Runs full-partition counts using Arrow; may take time on large dates.",
+            ):
+                st.session_state[oi_stats_key] = compute_dataset_stats(
+                    str(daily_path),
+                    _filter_expr=ds.field("underlying").isin(symbols_arg) if symbols_arg else None,
+                    columns=[
+                        "underlying",
+                        "open_interest",
+                        "data_quality_flag",
+                    ],
+                )
+
+            stats_oi = st.session_state.get(oi_stats_key)
+
+            oi1, oi2, oi3 = st.columns(3)
+            if stats_oi:
+                oi1.metric("Contracts", f"{stats_oi.get('rows', 0)}")
+                rows_oi = stats_oi.get("rows", 0)
+                oi_pos = stats_oi.get("oi_positive", 0)
+                coverage_full = (oi_pos / rows_oi * 100) if rows_oi else 0
+                oi2.metric("OI Coverage (>0)", f"{coverage_full:.1f}%")
+                if stats_oi.get("data_quality_present"):
+                    oi3.caption("Data quality flags present; see table for details.")
+            else:
+                oi1.info("Click to compute full metrics")
+
+            load_oi = st.checkbox(
+                "Load OI Table",
+                value=False,
+                key=f"load_oi_{selected_date.isoformat()}",
             )
 
-        stats_oi = st.session_state.get(oi_stats_key)
+            if not load_oi:
+                st.info("Table not loaded. Enable the checkbox to fetch OI data.")
+            else:
+                if st.button("Refresh OI Data"):
+                    st.cache_data.clear()
 
-        oi1, oi2, oi3 = st.columns(3)
-        if stats_oi:
-            oi1.metric("Contracts", f"{stats_oi.get('rows', 0)}")
-            rows_oi = stats_oi.get("rows", 0)
-            oi_pos = stats_oi.get("oi_positive", 0)
-            coverage_full = (oi_pos / rows_oi * 100) if rows_oi else 0
-            oi2.metric("OI Coverage (>0)", f"{coverage_full:.1f}%")
-            if stats_oi.get("data_quality_present"):
-                oi3.caption("Data quality flags present; see table for details.")
-        else:
-            oi1.info("Click to compute full metrics")
+                cols_oi = [
+                    "underlying",
+                    "exchange",
+                    "conid",
+                    "expiry",
+                    "right",
+                    "strike",
+                    "underlying_close",
+                    "bid",
+                    "ask",
+                    "mid",
+                    "last",
+                    "volume",
+                    "open_interest",
+                    "oi_asof_date",
+                    "data_quality_flag",
+                ]
 
-        load_oi = st.checkbox(
-            "Load OI Table",
-            value=False,
-            key=f"load_oi_{selected_date.isoformat()}",
-        )
+                oi_filter = ds.field("underlying").isin(symbols_arg) if symbols_arg else None
+                df_oi = load_parquet_data(
+                    str(daily_path),
+                    columns=cols_oi,
+                    _filter_expr=oi_filter,
+                    row_limit=row_limit_default,
+                )
 
-        if not load_oi:
-            st.info("Table not loaded (lightweight mode). Enable the checkbox to fetch OI data.")
-        else:
-            cols_oi = [
-                "underlying",
-                "exchange",
-                "conid",
-                "expiry",
-                "right",
-                "strike",
-                "underlying_close",
-                "bid",
-                "ask",
-                "mid",
-                "last",
-                "volume",
-                "open_interest",
-                "oi_asof_date",
-                "data_quality_flag",
-            ]
+                if symbols_arg:
+                    df_oi = df_oi[df_oi["underlying"].isin(symbols_arg)]
 
-            if st.button("Refresh OI Data"):
-                st.cache_data.clear()
-
-            oi_filter = ds.field("underlying").isin(symbols_arg) if symbols_arg else None
-            df_oi = load_parquet_data(
-                str(daily_path),
-                columns=cols_oi,
-                _filter_expr=oi_filter,
-                row_limit=row_limit_default,
-            )
-
-            if symbols_arg:
-                df_oi = df_oi[df_oi["underlying"].isin(symbols_arg)]
-
-            if not df_oi.empty:
-                st.caption(f"Row cap: {row_limit_default} (increase by disabling lightweight mode)")
-                st.dataframe(df_oi, use_container_width=True)
+                if not df_oi.empty:
+                    st.caption(f"Row cap: {row_limit_default} (increase by disabling lightweight mode)")
+                    st.dataframe(df_oi, use_container_width=True)
 
     st.divider()
 
@@ -958,7 +1189,7 @@ def main():
     with tab_hist:
         # Load config for history tab
         cfg_hist, univ_hist = load_universe_data("config/opt-data.toml")
-        render_history_tab(cfg_hist, univ_hist)
+        render_history_tab(cfg_hist, univ_hist, lightweight_mode=lightweight_mode)
 
 
 if __name__ == "__main__":

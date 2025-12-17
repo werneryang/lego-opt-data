@@ -20,6 +20,7 @@ Documents here主要面向**开发/测试与实验性工作流**，包括：
 - **[Retry Mechanism Usage Guide](./retry_usage_guide.md)** - How to use the `@retry_with_backoff` decorator effectively
 - **[QA & Smoke Tests](./qa.md)** - Daily selfcheck/logscan usage and test smoke procedures
 - **[Dev Ops Runbook](./ops-runbook-dev.md)** - data_test scripts and dev-only operational workflow
+- **[Weekend History Backfill (Experimental)](./history-weekend-backfill.md)** - Batch-pull IBKR option historical bars using contracts cache (dev-only)
 
 ## Additional Resources
 

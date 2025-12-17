@@ -4,6 +4,16 @@
 - [x] 清理失效测试：移除当前与 snapshot+rollup 新架构不一致、导致本地 pytest 阻塞的旧测试文件（`tests/test_backfill_planner.py`、`tests/test_backfill_runner.py`、`tests/test_cleaning.py`、`tests/test_quality.py`、`tests/test_rollup_runner.py`、`tests/test_selfcheck_cli.py`、`tests/test_storage_layout.py`、`tests/test_universe_update.py`）。后续按新数据流重建对应测试基线与验收。（2025-12-12）
 - [x] 增加远程 IB Gateway OI 脚本：新增 `data_test/OI3_remote.py`（支持 `--host/--port`/环境变量），`data_test/OI3.py` 保留为兼容入口。（2025-12-12）
 - [x] 历史数据探针：用周五 contracts cache 采样少量合约，调用 IB historical API（TRADES/OI）验证权限与 bars 返回，仅输出日志/summary 文件不落盘数据。（已完成；AAPL/MSFT 基于 2025-12-10 缓存，端口 4001，summary 输出 `state/run_logs/historical_probe/summary_20251210T20251211T164052Z.jsonl`，8/8 配置返回非零 bars）
+- [x] 历史数据 duration 梯度探针：新增 `scripts/historical_probe_quarterly_duration_ladder.py`，自动选取最近季度到期合约（第三周五族），按 `durationStr` 梯度（1W→1M→6M→1Y→2Y…）探测 1min–8h bars（含 `TRADES`）可回溯时间跨度，输出 JSONL 至 `state/run_logs/historical_probe_duration_ladder/`；支持 `--strike/--strict-strike` 固定探针行权价。（2025-12-14）
+- [x] 历史数据批量探针（分阶段/分批）：新增 `scripts/historical_probe_quarterly_universe_stage.py`，读取 `config/universe.csv`/`config/universe_history_202511.csv`，支持 `--stage minutes|hours`、`--batch-index/batch-count` 与 `--reuse-probe` 固定探针合约；按安全 duration 组合拉取并可输出 Parquet 至 `data_test/raw/ib/historical_bars_quarterly/`，summary JSONL 输出至 `state/run_logs/historical_probe_universe/`。（2025-12-14）
+- [x] IB API 连通性体检：新增 `scripts/ib_api_healthcheck.py`，区分“TCP 可连但 IB API 握手不可用”的情况，输出排障提示（API 设置/端口/登录状态/SSL）。（2025-12-14）
+- [x] 历史数据标的清单转换：将 `data_test/underlyings_202511.csv` 转为 universe 格式并输出 `config/universe_history_202511.csv`，用于 `opt_data.cli history` 的历史拉取实验；转换脚本为 `scripts/convert_underlyings_to_universe.py`。（2025-12-14）
+- [x] 历史数据配置模板：新增 `config/opt-data.paper-history.underlyings_202511.toml`，将 `universe.file` 指向 `config/universe_history_202511.csv`，用于历史拉取实验快速切换。（2025-12-14）
+- [x] 周末历史回填（实验）实现：基于"最近交易日 contracts cache"，hours 拉全量合约（`8 hours`+`6 M`+`TRADES`），minutes 拉近 ATM 子集（K/E 可配，`30 mins`+`1 M`+`TRADES`），支持分批、resume、summary 与 rerun 补漏。（需求文档：`docs/dev/history-weekend-backfill.md`）（2025-12-16 完成）
+  - 实现：`scripts/weekend_history_backfill.py`（~730 行），支持 `--stage hours|minutes`、`--batch-index/--batch-count`、`--top-expiries/--strikes-per-side`、`--resume`、远程 Gateway 连接
+  - 验收：AAPL 测试成功，远程 Gateway (100.71.7.100:4001) 连接正常，自动跳过已过期合约，成功拉取 149-178 条 8h bars/合约
+  - 批量运行脚本：`scripts/run_weekend_backfill.sh`
+- [x] 历史数据批量探针结果整理：从 `state/run_logs/historical_probe_universe/summary_quarterly_{hours|minutes}_b*of8_*.jsonl` 自动汇总 `ERR/EMPTY/SKIP` 标的并生成 rerun universe CSV 与建议命令，便于对失败标的做“补漏重跑”（`scripts/make_probe_rerun_universe.py`）。（2025-12-14）
 - [x] 行权价过滤收敛：将 moneyness 下调（如 0.20），恢复 `strikes_per_side`=2–3 或 `max_strikes_per_expiry`=6–10，重建 AAPL/MSFT 缓存，避免半档/远档引发 Error 200。（已完成；当前运行配置保持 `snapshot per_minute=30`、`max_concurrent_snapshots=14`）
 - [x] 补齐 2025-11-21 全天槽位：在收敛配置下跑满 snapshot → rollup → enrichment（AAPL+MSFT），确保 slot 覆盖率 ≥90%、OI 补齐率达标。（已用近期交易日链路跑通并达标，运行配置同上）
 - [x] QA 验证：跑 `selfcheck`/`logscan`（2025-11-21），确认 PASS 后再推进 Stage 1；如仍 FAIL，记录槽位缺失/错误来源。（已完成；近期自检覆盖 2025-12-08/09/10，其中 2025-12-10 QA 指标 PASS，日志告警为已知 OI 缺失/参考价单条）
