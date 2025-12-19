@@ -255,15 +255,22 @@ def render_history_tab(cfg, universe, *, lightweight_mode: bool = False):
             # Symbol selection
             univ_symbols = [u.symbol for u in universe] if universe else []
             selected_symbols = st.multiselect("Symbols", univ_symbols, default=["AAPL"])
-            
+
             if not selected_symbols:
                 st.warning("⚠️ No symbols selected. This will fetch the ENTIRE universe.")
 
         with c2:
-            days = st.number_input("Days (Full Fetch)", min_value=1, max_value=365, value=30, help="Days to look back")
-            
+            days = st.number_input(
+                "Days (Full Fetch)", min_value=1, max_value=365, value=30, help="Days to look back"
+            )
+
         with c3:
-            fetch_mode = st.radio("Fetch Mode", ["Incremental", "Full Overwrite"], horizontal=True, help="Incremental checks existing data and only fetches missing days.")
+            fetch_mode = st.radio(
+                "Fetch Mode",
+                ["Incremental", "Full Overwrite"],
+                horizontal=True,
+                help="Incremental checks existing data and only fetches missing days.",
+            )
             incremental = fetch_mode == "Incremental"
 
         # Row 2: Advanced Settings
@@ -271,37 +278,41 @@ def render_history_tab(cfg, universe, *, lightweight_mode: bool = False):
             a1, a2, a3, a4 = st.columns(4)
             with a1:
                 bar_size = st.selectbox(
-                    "Bar Size", 
+                    "Bar Size",
                     ["8 hours", "1 day", "1 hour", "30 mins", "15 mins", "5 mins", "1 min"],
                     index=0,
-                    help="Time interval for bars. '8 hours' uses the daily aggregator workaround."
+                    help="Time interval for bars. '8 hours' uses the daily aggregator workaround.",
                 )
             with a2:
                 what_to_show = st.selectbox(
                     "Data Type",
                     ["MIDPOINT", "TRADES", "BID", "ASK", "BID_ASK", "ADJUSTED_LAST"],
                     index=0,
-                    help="Data type to fetch."
+                    help="Data type to fetch.",
                 )
             with a3:
                 use_rth = st.checkbox("Regular Trading Hours (RTH)", value=True)
             with a4:
-                force_refresh = st.checkbox("Force Refresh Contracts", value=False, help="Re-run contract discovery")
+                force_refresh = st.checkbox(
+                    "Force Refresh Contracts", value=False, help="Re-run contract discovery"
+                )
 
         st.write("")
         if st.button("Start Fetching", type="primary"):
             st_status = st.empty()
             st_prog_bar = st.progress(0)
             st_prog_text = st.empty()
-            
+
             st_status.info("Initializing History Runner...")
-            
-            def ui_progress_callback(current: int, total: int, status: str, details: Dict[str, Any]):
+
+            def ui_progress_callback(
+                current: int, total: int, status: str, details: Dict[str, Any]
+            ):
                 pct = (current / total) if total > 0 else 0
                 pct = min(max(pct, 0.0), 1.0)
                 st_prog_bar.progress(pct)
-                st_prog_text.text(f"{int(pct*100)}% - {status}")
-            
+                st_prog_text.text(f"{int(pct * 100)}% - {status}")
+
             try:
                 runner = HistoryRunner(cfg)
                 res = runner.run(
@@ -312,18 +323,18 @@ def render_history_tab(cfg, universe, *, lightweight_mode: bool = False):
                     force_refresh=force_refresh,
                     incremental=incremental,
                     bar_size=bar_size,
-                    progress_callback=ui_progress_callback
+                    progress_callback=ui_progress_callback,
                 )
-                
+
                 st_prog_bar.progress(1.0)
                 st_status.success(
                     f"Fetch Complete! Processed: {res.get('processed')} symbols. Errors: {res.get('errors')}"
                 )
-                
+
                 if res.get("errors", 0) > 0:
                     with st.expander("Error Details"):
                         st.json(res["symbols"])
-                        
+
             except Exception as e:
                 st_status.error(f"Failed: {e}")
 
@@ -390,7 +401,9 @@ def render_history_tab(cfg, universe, *, lightweight_mode: bool = False):
                         with tab_chart:
                             if "close" in df.columns:
                                 c = (
-                                    alt.Chart(df.sample(min(len(df), 5000)) if len(df) > 5000 else df)
+                                    alt.Chart(
+                                        df.sample(min(len(df), 5000)) if len(df) > 5000 else df
+                                    )
                                     .mark_bar()
                                     .encode(
                                         x=alt.X("close", bin=True, title="Close Price"),
@@ -418,17 +431,17 @@ def render_history_tab(cfg, universe, *, lightweight_mode: bool = False):
             return
 
         c1, c2, c3 = st.columns([1, 1, 2])
-        
+
         with c1:
             bf_symbol = st.selectbox("Symbol", avail_symbols, key="bf_sym")
-        
+
         # List contracts for symbol
         sym_dir = backfill_base / bf_symbol
         avail_cons = sorted([d.name for d in sym_dir.iterdir() if d.is_dir()])
-        
+
         with c2:
             bf_conid = st.selectbox("Contract ID", avail_cons, key="bf_con") if avail_cons else None
-            
+
         if not bf_conid:
             st.warning("No contracts found.")
             return
@@ -439,7 +452,11 @@ def render_history_tab(cfg, universe, *, lightweight_mode: bool = False):
         files = sorted(list(trades_dir.glob("*.parquet"))) if trades_dir.exists() else []
 
         with c3:
-            selected_file = st.selectbox("Select File", [f.name for f in files], key="bf_file") if files else None
+            selected_file = (
+                st.selectbox("Select File", [f.name for f in files], key="bf_file")
+                if files
+                else None
+            )
 
         if not selected_file:
             st.warning("No Parquet files found in TRADES directory.")
@@ -450,7 +467,7 @@ def render_history_tab(cfg, universe, *, lightweight_mode: bool = False):
                 # Reading small parquet is usually fast.
                 df = pd.read_parquet(file_path)
                 st.success(f"Loaded {len(df)} rows from {selected_file}")
-                
+
                 # Metrics
                 m1, m2, m3 = st.columns(3)
                 m1.metric("Rows", len(df))
@@ -459,16 +476,16 @@ def render_history_tab(cfg, universe, *, lightweight_mode: bool = False):
                     max_date = df["date"].max()
                     m2.metric("Start", str(min_date))
                     m3.metric("End", str(max_date))
-                
+
                 if lightweight_mode:
                     st.info("📱 Lightweight mode: data tables and charts are hidden.")
                 else:
                     # Table & Chart
                     t1, t2 = st.tabs(["Data Table", "Chart"])
-                    
+
                     with t1:
                         st.dataframe(df, use_container_width=True)
-                        
+
                     with t2:
                         if "close" in df.columns and "date" in df.columns:
                             chart = (
@@ -477,7 +494,7 @@ def render_history_tab(cfg, universe, *, lightweight_mode: bool = False):
                                 .encode(
                                     x="date:T",
                                     y=alt.Y("close:Q", scale=alt.Scale(zero=False)),
-                                    tooltip=["date", "open", "high", "low", "close", "volume"]
+                                    tooltip=["date", "open", "high", "low", "close", "volume"],
                                 )
                                 .properties(title=f"{bf_symbol} - {selected_file}")
                                 .interactive()
@@ -485,7 +502,7 @@ def render_history_tab(cfg, universe, *, lightweight_mode: bool = False):
                             st.altair_chart(chart, use_container_width=True)
                         else:
                             st.info("Chart requires 'date' and 'close' columns.")
-                        
+
             except Exception as e:
                 st.error(f"Failed to read parquet: {e}")
 
@@ -523,15 +540,13 @@ def render_operations_tab(*, lightweight_mode: bool = True):
 
     # Symbol Selection
     with st.expander("Symbol Selection", expanded=False):
-                selected_symbols = st.multiselect("Select Symbols (Empty = All)", universe, default=[])
+        selected_symbols = st.multiselect("Select Symbols (Empty = All)", universe, default=[])
 
     symbols_arg = selected_symbols if selected_symbols else None
     row_limit_default = 100 if lightweight_mode else 2000
 
     if lightweight_mode:
-        st.info(
-            "📱 Lightweight mode (mobile/5G): showing stats only, tables hidden."
-        )
+        st.info("📱 Lightweight mode (mobile/5G): showing stats only, tables hidden.")
 
     st.divider()
 
@@ -556,29 +571,29 @@ def render_operations_tab(*, lightweight_mode: bool = True):
         row1_c1, row1_c2 = st.columns(2)
         row1_c1.metric(
             "Intraday",
-            f"{intraday_stats.get('rows', 0):,}" if intraday_stats.get('exists') else "Missing",
-            delta="OK" if intraday_stats.get('exists') else "Missing",
-            delta_color="normal" if intraday_stats.get('exists') else "off",
+            f"{intraday_stats.get('rows', 0):,}" if intraday_stats.get("exists") else "Missing",
+            delta="OK" if intraday_stats.get("exists") else "Missing",
+            delta_color="normal" if intraday_stats.get("exists") else "off",
         )
         row1_c2.metric(
             "Close",
-            f"{close_stats.get('rows', 0):,}" if close_stats.get('exists') else "Missing",
-            delta="OK" if close_stats.get('exists') else "Missing",
-            delta_color="normal" if close_stats.get('exists') else "off",
+            f"{close_stats.get('rows', 0):,}" if close_stats.get("exists") else "Missing",
+            delta="OK" if close_stats.get("exists") else "Missing",
+            delta_color="normal" if close_stats.get("exists") else "off",
         )
 
         row2_c1, row2_c2 = st.columns(2)
         row2_c1.metric(
             "Daily",
-            f"{daily_stats.get('rows', 0):,}" if daily_stats.get('exists') else "Missing",
-            delta="OK" if daily_stats.get('exists') else "Pending",
-            delta_color="normal" if daily_stats.get('exists') else "off",
+            f"{daily_stats.get('rows', 0):,}" if daily_stats.get("exists") else "Missing",
+            delta="OK" if daily_stats.get("exists") else "Pending",
+            delta_color="normal" if daily_stats.get("exists") else "off",
         )
         row2_c2.metric(
             "OI Enrichment",
-            f"{enrich_stats.get('rows', 0):,}" if enrich_stats.get('exists') else "Missing",
-            delta="OK" if enrich_stats.get('exists') else "Pending",
-            delta_color="normal" if enrich_stats.get('exists') else "off",
+            f"{enrich_stats.get('rows', 0):,}" if enrich_stats.get("exists") else "Missing",
+            delta="OK" if enrich_stats.get("exists") else "Pending",
+            delta_color="normal" if enrich_stats.get("exists") else "off",
         )
 
         # Slot count
@@ -592,7 +607,9 @@ def render_operations_tab(*, lightweight_mode: bool = True):
     else:
         # Desktop mode: original 5-column layout
         intraday_exists = intraday_path.exists()
-        intraday_count = sum(1 for _ in intraday_path.glob("**/*.parquet")) if intraday_exists else 0
+        intraday_count = (
+            sum(1 for _ in intraday_path.glob("**/*.parquet")) if intraday_exists else 0
+        )
         close_exists = close_path.exists()
         daily_exists = daily_path.exists()
         enrich_exists = enrich_path.exists()
@@ -661,7 +678,7 @@ def render_operations_tab(*, lightweight_mode: bool = True):
     # -------------------------------------------------------------------------
     st.divider()
     st.subheader("🧪 Weekend Backfill Status (Experiment)")
-    
+
     backfill_path = Path("data_test/raw/ib/historical_bars_weekend")
     if not backfill_path.exists():
         st.info(f"No experimental backfill data found at {backfill_path}")
@@ -669,15 +686,15 @@ def render_operations_tab(*, lightweight_mode: bool = True):
         # Simple stats: count symbols
         bf_symbols = [x for x in backfill_path.iterdir() if x.is_dir()]
         count_syms = len(bf_symbols)
-        
+
         # Check if we have data for selected Date? No, backfill structure is Symbol/ConId/TRADES/file.parquet
         # It's not strictly date partitioned at top level.
         # But we can check if any file modification time is recent, or just general stats.
-        
+
         bf1, bf2 = st.columns(2)
         bf1.metric("Backfill Symbols", count_syms)
         bf1.caption(f"Path: {backfill_path}")
-        
+
         if count_syms > 0:
             if lightweight_mode:
                 bf2.info("Lightweight mode: deeper stats hidden.")
@@ -686,7 +703,7 @@ def render_operations_tab(*, lightweight_mode: bool = True):
                 # Just show a sample symbol
                 sample_sym = bf_symbols[0].name
                 bf2.info(f"Sample data available for {sample_sym}. View in 'History' tab.")
-    
+
     st.divider()
 
     if st.button("Run Intraday Snapshot", type="primary"):
@@ -894,7 +911,9 @@ def render_operations_tab(*, lightweight_mode: bool = True):
 
         close_exists = close_path.exists()
         if not close_exists:
-            st.warning("Close snapshot partition is missing for this date. Please run Close Snapshot.")
+            st.warning(
+                "Close snapshot partition is missing for this date. Please run Close Snapshot."
+            )
         else:
             close_stats_key = f"close_stats_{selected_date.isoformat()}_{','.join(symbols_arg) if symbols_arg else 'ALL'}"
             if st.button(
@@ -938,9 +957,7 @@ def render_operations_tab(*, lightweight_mode: bool = True):
             )
 
             if not load_close:
-                st.info(
-                    "Table not loaded. Enable the checkbox to fetch close snapshot data."
-                )
+                st.info("Table not loaded. Enable the checkbox to fetch close snapshot data.")
             else:
                 if st.button("Refresh Close Data"):
                     st.cache_data.clear()
@@ -983,11 +1000,12 @@ def render_operations_tab(*, lightweight_mode: bool = True):
                         "Check partitions or adjust filters."
                     )
                 else:
-                    st.caption(f"Row cap: {row_limit_default} (increase by disabling lightweight mode)")
+                    st.caption(
+                        f"Row cap: {row_limit_default} (increase by disabling lightweight mode)"
+                    )
                     st.dataframe(df_close, use_container_width=True)
 
         st.divider()
-
 
     # -------------------------------------------------------------------------
     # 2. Daily Rollup View (Desktop only)
@@ -1036,9 +1054,7 @@ def render_operations_tab(*, lightweight_mode: bool = True):
             )
 
             if not load_rollup:
-                st.info(
-                    "Table not loaded. Enable the checkbox to fetch rollup data."
-                )
+                st.info("Table not loaded. Enable the checkbox to fetch rollup data.")
             else:
                 cols_rollup = [
                     "trade_date",
@@ -1076,11 +1092,12 @@ def render_operations_tab(*, lightweight_mode: bool = True):
                 if df_rollup.empty:
                     st.info("Daily data file exists but is empty or unreadable.")
                 else:
-                    st.caption(f"Row cap: {row_limit_default} (increase by disabling lightweight mode)")
+                    st.caption(
+                        f"Row cap: {row_limit_default} (increase by disabling lightweight mode)"
+                    )
                     st.dataframe(df_rollup, use_container_width=True)
 
         st.divider()
-
 
     # -------------------------------------------------------------------------
     # 3. OI Enrichment View (Desktop only)
@@ -1170,7 +1187,9 @@ def render_operations_tab(*, lightweight_mode: bool = True):
                     df_oi = df_oi[df_oi["underlying"].isin(symbols_arg)]
 
                 if not df_oi.empty:
-                    st.caption(f"Row cap: {row_limit_default} (increase by disabling lightweight mode)")
+                    st.caption(
+                        f"Row cap: {row_limit_default} (increase by disabling lightweight mode)"
+                    )
                     st.dataframe(df_oi, use_container_width=True)
 
     st.divider()

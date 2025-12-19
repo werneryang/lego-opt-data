@@ -10,9 +10,11 @@
   - 调度时区必须是 ET：`TZ=America/New_York`（launchd/systemd 也要显式设置）。
   - 使用本地生产配置：`config/opt-data.local.toml`（从 `config/opt-data.toml` 复制并按本机修改；已在 `.gitignore`）。
 
-- 启动当天常驻调度（推荐在 09:20–09:29 ET 启动并保持进程常驻）：
-  - `python -m opt_data.cli schedule --live --config config/opt-data.local.toml`
-  - 常用参数：`--symbols AAPL,MSFT`（临时缩小范围）、`--date 2025-12-15`（跑指定交易日）
+- 启动调度（推荐在 09:20–09:29 ET 启动）：
+  - 手动值守（仅调度单个交易日，进程需保持到次日 04:30 enrichment 结束）：`python -m opt_data.cli schedule --live --config config/opt-data.local.toml`
+  - 无人值守（一次启动，交易日每天自动初始化 09:20 ET）：`python -m opt_data.cli schedule --live --continuous --config config/opt-data.local.toml`
+  - 定时器模式（适配 launchd/systemd timer/cron：跑完当日任务自动退出，第二天由定时器重启）：`python -m opt_data.cli schedule --live --exit-when-idle --config config/opt-data.local.toml`
+  - 常用参数：`--symbols AAPL,MSFT`（临时缩小范围）、`--date 2025-12-15`（跑指定交易日；不适用于 `--continuous`）
 
 - 开始前快速预演（只打印计划并立即执行当日任务，适合验证配置；不建议每天都跑）：
   - `python -m opt_data.cli schedule --simulate --config config/opt-data.local.toml`
@@ -24,6 +26,30 @@
 - 收盘后验收（生成 selfcheck/logscan/metrics 输出；失败会返回非零退出码）：
   - `python -m opt_data.cli selfcheck --date today --config config/opt-data.local.toml --log-max-total 1`
   - `python -m opt_data.cli logscan --date today --config config/opt-data.local.toml --max-total 1 --write-summary`
+
+## 无人值守运行（推荐）
+> 目标：机器重启/进程崩溃后自动拉起；无需每天手动重启调度。
+
+- 方案 A（**单进程常驻**）：使用 `--continuous`，进程每天 09:20 ET 自动初始化当日任务；再用 launchd/systemd 设置崩溃自动重启。
+  - `python -m opt_data.cli schedule --live --continuous --config config/opt-data.local.toml`
+- 方案 B（**每日一次性任务**）：使用 `--exit-when-idle`，跑完当日任务自动退出；用 launchd/systemd timer/cron 每天 09:20 ET 拉起一次。
+  - `python -m opt_data.cli schedule --live --exit-when-idle --config config/opt-data.local.toml`
+
+运维提示（两种方案都适用）：
+- launchd/systemd 必须显式设置 `TZ=America/New_York`，避免调度时区漂移。
+- 推荐将 `universe.file` 指向本机专用文件（如 `config/universe.local.csv`，受 `.gitignore` 保护），避免调度自动补 conId 时污染仓库文件。
+
+### macOS launchd（方式 B）最小配置
+- 复制模板：`docs/launchd/com.legosmos.opt-data.timer.plist` → `~/Library/LaunchAgents/com.legosmos.opt-data.timer.plist` 并将其中的 `/ABS/PATH/TO/opt-data` 替换为你的仓库绝对路径。
+- 确保脚本可执行：`chmod +x scripts/launchd/opt-data-daily.sh`
+- 启用（当前用户会话）：`launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/com.legosmos.opt-data.timer.plist`
+- 立刻跑一次：`launchctl kickstart -k gui/$(id -u)/com.legosmos.opt-data.timer`
+- 查看状态：`launchctl print gui/$(id -u)/com.legosmos.opt-data.timer`
+- 停用：`launchctl bootout gui/$(id -u) ~/Library/LaunchAgents/com.legosmos.opt-data.timer.plist`
+
+注意：
+- `StartCalendarInterval` 使用**系统本地时区**；若机器不在 ET，请将启动时间换算到本地时间，或将系统时区设为 `America/New_York`。
+- 若看到 “lock exists” 报错，说明上一次任务未结束（或异常退出遗留锁目录）；可检查进程后清理 `state/run_locks/opt-data-daily.lock` 再重试。
 
 ## 当前生产范围与运行参数
 - 覆盖范围：`config/universe.csv` 全量清单（已超过原 Stage 2/Top 10 目标）。

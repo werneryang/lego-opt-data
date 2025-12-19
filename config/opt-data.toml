@@ -16,7 +16,7 @@ lock_ttl_seconds = 7200    # 锁过期时间，避免异常退出后长时间占
 
 [timezone]
 name = "America/New_York"
-update_time = "17:00"
+update_time = "17:30"
 
 [paths]
 raw = "data/raw/ib/chain"
@@ -111,6 +111,7 @@ batch_size = 50  # For reqtickers mode: number of contracts per batch
 fields = ["open_interest"]
 oi_duration = "7 D"           # IB 历史接口窗口
 oi_use_rth = false             # OI 默认包含盘前/盘后
+run_time = "04:30"             # 调度时间（ET）：trade_date+1 的回补触发时间
 
 [qa]
 slot_coverage_threshold = 0.90

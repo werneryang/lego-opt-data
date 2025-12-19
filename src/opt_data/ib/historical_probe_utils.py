@@ -121,4 +121,3 @@ def sanitize_token(value: str) -> str:
     token = value.strip().replace(" ", "_")
     token = _SAFE_TOKEN_RE.sub("", token)
     return token or "na"
-

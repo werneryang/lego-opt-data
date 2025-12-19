@@ -4,7 +4,7 @@
 - **数据视图**：
   - `data/raw/ib/chain/view=intraday`：IB 快照原始字段。
   - `data/clean/ib/chain/view=intraday`：清洗后日内视图（含槽位、降级标记）。
-  - `data/clean/ib/chain/view=daily_clean`：按 17:00 ET rollup 的日级快照。
+  - `data/clean/ib/chain/view=daily_clean`：按 17:30 ET rollup 的日级快照。
   - `data/clean/ib/chain/view=daily_adjusted`：公司行动调整后的日级视图。
   - `data/clean/ib/chain/view=enrichment`（可选）：T+1 `open_interest` 等慢字段增补记录。
 - **分区键**：`date`（交易日，ET）、`underlying`（标的符号）、`exchange`（主要交易所）、`view`。
@@ -105,6 +105,6 @@
 - 调整分区或视图命名需同步更新 `docs/ADR-0001-storage.md`、`SCOPE.md`、`PLAN.md`。
 - `ingest_run_type` 取值规范：
   - `intraday`：30 分钟快照；
-  - `eod_rollup`：17:00 日终归档；
+  - `eod_rollup`：17:30 日终归档；
   - `enrichment`：次日慢字段回补；
   - 后续新增任务需扩展列表并更新契约。

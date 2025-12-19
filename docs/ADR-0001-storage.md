@@ -5,7 +5,7 @@
 - **作者**：项目组
 
 ## 背景
-项目切换为 30 分钟实时快照 + 17:00 日终归档流程，`view=intraday` 每日写入 14 个槽位（按标的/交易所拆分），若直接逐槽落单个 Parquet 文件，会导致小文件膨胀与元数据压力。需要在保证幂等性的前提下规划写入策略、压缩策略以及合并/降冷流程。
+项目切换为 30 分钟实时快照 + 17:30 日终归档流程，`view=intraday` 每日写入 14 个槽位（按标的/交易所拆分），若直接逐槽落单个 Parquet 文件，会导致小文件膨胀与元数据压力。需要在保证幂等性的前提下规划写入策略、压缩策略以及合并/降冷流程。
 
 ## 决策
 1. 所有视图（raw/clean/daily_adjusted/enrichment）均使用 Parquet，路径 `data/<layer>/ib/chain/view=<view>/date=YYYY-MM-DD/underlying=SYM/exchange=EXCH`。

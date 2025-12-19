@@ -156,6 +156,7 @@ class EnrichmentConfig:
     fields: list[str]
     oi_duration: str
     oi_use_rth: bool
+    run_time: str = "04:30"
 
 
 @dataclass
@@ -225,6 +226,23 @@ class AppConfig:
                 f"Invalid IB market_data_type: {self.ib.market_data_type} "
                 "(must be 1=Live, 2=Frozen, 3=Delayed, 4=Delayed-Frozen)"
             )
+
+        def _validate_hhmm(field: str, value: str) -> None:
+            parts = str(value).strip().split(":")
+            if len(parts) != 2:
+                errors.append(f"Invalid {field}: {value} (expected HH:MM)")
+                return
+            try:
+                hour = int(parts[0])
+                minute = int(parts[1])
+            except ValueError:
+                errors.append(f"Invalid {field}: {value} (expected HH:MM)")
+                return
+            if hour < 0 or hour > 23 or minute < 0 or minute > 59:
+                errors.append(f"Invalid {field}: {value} (expected HH:MM)")
+
+        _validate_hhmm("timezone.update_time", self.timezone.update_time)
+        _validate_hhmm("enrichment.run_time", self.enrichment.run_time)
 
         # Validate paths - paths will be created at runtime if needed
         # We only check that paths are properly resolved (no validation of existence)
@@ -499,7 +517,7 @@ def load_config(file: Optional[Path] = None) -> AppConfig:
 
     tz = TimezoneConfig(
         name=g("timezone", "name", "America/New_York"),
-        update_time=g("timezone", "update_time", "17:00"),
+        update_time=g("timezone", "update_time", "17:30"),
     )
 
     paths = PathsConfig(
@@ -639,6 +657,7 @@ def load_config(file: Optional[Path] = None) -> AppConfig:
         fields=enrichment_fields,
         oi_duration=g("enrichment", "oi_duration", "7 D"),
         oi_use_rth=bool(g("enrichment", "oi_use_rth", False)),
+        run_time=g("enrichment", "run_time", "04:30"),
     )
 
     qa = QAConfig(

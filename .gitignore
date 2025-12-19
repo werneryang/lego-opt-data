@@ -42,3 +42,4 @@ tests/fixtures/option_chains/*.csv
 
 # Local configuration
 config/opt-data.local.toml
+config/universe.local.csv

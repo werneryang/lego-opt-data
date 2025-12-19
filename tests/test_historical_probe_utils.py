@@ -70,4 +70,3 @@ def test_sanitize_token() -> None:
     assert sanitize_token("8 hours") == "8_hours"
     assert sanitize_token("BID/ASK") == "BIDASK"
     assert sanitize_token("") == "na"
-

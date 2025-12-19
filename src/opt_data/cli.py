@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import math
 import sys
+import threading
 import time
 from datetime import date, datetime, timedelta
 from zoneinfo import ZoneInfo
@@ -1371,6 +1372,24 @@ def schedule(
     simulate: bool = typer.Option(
         True, "--simulate/--live", help="Run jobs immediately for the day"
     ),
+    continuous: bool = typer.Option(
+        False,
+        "--continuous",
+        help=(
+            "Continuously schedule jobs each trading day (no daily restart). "
+            "Requires --live and --date today."
+        ),
+    ),
+    daily_init_time: str = typer.Option(
+        "09:20",
+        "--daily-init-time",
+        help="ET time (HH:MM) to initialize the day's jobs when using --continuous",
+    ),
+    exit_when_idle: bool = typer.Option(
+        False,
+        "--exit-when-idle",
+        help="Exit once all scheduled jobs for the day have finished (for cron/launchd timers)",
+    ),
     snapshots: bool = typer.Option(
         True, "--snapshots/--skip-snapshots", help="Include snapshot jobs"
     ),
@@ -1390,7 +1409,30 @@ def schedule(
         help="Automatically rebuild missing/invalid contracts cache before scheduling",
     ),
 ) -> None:
+    def parse_hhmm(value: str) -> tuple[int, int]:
+        parts = value.strip().split(":")
+        if len(parts) != 2:
+            raise typer.BadParameter("Expected HH:MM (e.g. 09:20)")
+        try:
+            hour = int(parts[0])
+            minute = int(parts[1])
+        except ValueError as exc:
+            raise typer.BadParameter("Expected HH:MM (e.g. 09:20)") from exc
+        if hour < 0 or hour > 23 or minute < 0 or minute > 59:
+            raise typer.BadParameter("Expected HH:MM in 24h clock (e.g. 09:20)")
+        return hour, minute
+
     cfg = load_config(Path(config) if config else None)
+    if continuous and simulate:
+        typer.echo("[schedule] --continuous requires --live", err=True)
+        raise typer.Exit(code=2)
+    if continuous and date_str != "today":
+        typer.echo("[schedule] --continuous only supports --date today", err=True)
+        raise typer.Exit(code=2)
+    if continuous and exit_when_idle:
+        typer.echo("[schedule] --exit-when-idle is not compatible with --continuous", err=True)
+        raise typer.Exit(code=2)
+
     trade_date = (
         to_et_date(datetime.now(ZoneInfo("UTC")))
         if date_str == "today"
@@ -1406,35 +1448,6 @@ def schedule(
     if snapshot_interval_minutes <= 0:
         typer.echo("--snapshot-interval-minutes must be positive", err=True)
         raise typer.Exit(code=2)
-
-    symbols_for_run: list[str] = []
-    effective_universe = (
-        cfg.universe.intraday_file
-        if cfg.universe.intraday_file and cfg.universe.intraday_file.exists()
-        else cfg.universe.file
-    )
-    universe_entries = load_universe(effective_universe) if snapshots else []
-    entries_by_symbol = {e.symbol: e for e in universe_entries}
-    if snapshots:
-        if symbol_list:
-            symbols_for_run = symbol_list
-        else:
-            if not universe_entries:
-                typer.echo(
-                    "[schedule] no symbols available from universe for snapshot precheck", err=True
-                )
-                raise typer.Exit(code=1)
-            symbols_for_run = [u.symbol for u in universe_entries]
-
-        _precheck_contract_caches(
-            cfg,
-            trade_date,
-            symbols_for_run,
-            entries_by_symbol,
-            universe_path=Path(effective_universe),
-            build_missing_cache=build_missing_cache,
-            prefix="schedule",
-        )
 
     def format_progress(kind: str):
         def _progress(symbol: str, status: str, extra: Dict[str, Any]) -> None:
@@ -1455,46 +1468,145 @@ def schedule(
 
         return _progress
 
-    snapshot_runner = SnapshotRunner(cfg, slot_minutes=snapshot_interval_minutes)
-    slots_today = snapshot_runner.available_slots(trade_date)
-    if not slots_today:
-        typer.echo(f"[schedule] no snapshot slots available for {trade_date}", err=True)
-        raise typer.Exit(code=1)
-    close_slot_idx = slots_today[-1].index
-    fallback_slot_idx = slots_today[-2].index if len(slots_today) >= 2 else close_slot_idx
-    rollup_runner = RollupRunner(cfg, close_slot=close_slot_idx, fallback_slot=fallback_slot_idx)
-
     snapshot_progress = format_progress("snapshot")
     close_snapshot_progress = format_progress("close-snapshot")
     rollup_progress = format_progress("rollup")
     enrichment_progress = format_progress("enrichment")
 
-    runner = ScheduleRunner(
-        cfg,
-        snapshot_runner=snapshot_runner,
-        rollup_runner=rollup_runner,
-    )
-    jobs = runner.plan_day(
-        trade_date,
-        symbols=symbol_list,
-        enrichment_fields=fields,
-        include_snapshots=snapshots,
-        include_rollup=rollup,
-        include_enrichment=enrichment,
-    )
+    def schedule_one_day(scheduler: Any, day: date) -> list[str]:
+        if not is_trading_day(day):
+            typer.echo(f"[schedule] {day} is not a trading day; nothing to schedule")
+            return []
 
-    if not jobs:
-        typer.echo(
-            f"[schedule] no jobs planned for {trade_date} (non-trading day or all tasks skipped)"
+        symbols_for_run: list[str] = []
+        effective_universe = (
+            cfg.universe.intraday_file
+            if cfg.universe.intraday_file and cfg.universe.intraday_file.exists()
+            else cfg.universe.file
         )
-        return
+        universe_entries = load_universe(effective_universe) if snapshots else []
+        entries_by_symbol = {e.symbol: e for e in universe_entries}
+        if snapshots:
+            if symbol_list:
+                symbols_for_run = symbol_list
+            else:
+                if not universe_entries:
+                    typer.echo(
+                        "[schedule] no symbols available from universe for snapshot precheck",
+                        err=True,
+                    )
+                    raise typer.Exit(code=1)
+                symbols_for_run = [u.symbol for u in universe_entries]
 
-    typer.echo(
-        f"[schedule] trade_date={trade_date} simulate={simulate} "
-        f"snapshots={snapshots} rollup={rollup} enrichment={enrichment} jobs={len(jobs)}"
-    )
+            _precheck_contract_caches(
+                cfg,
+                day,
+                symbols_for_run,
+                entries_by_symbol,
+                universe_path=Path(effective_universe),
+                build_missing_cache=build_missing_cache,
+                prefix="schedule",
+            )
+
+        snapshot_runner = SnapshotRunner(cfg, slot_minutes=snapshot_interval_minutes)
+        slots_for_day = snapshot_runner.available_slots(day)
+        if not slots_for_day:
+            typer.echo(f"[schedule] no snapshot slots available for {day}", err=True)
+            raise typer.Exit(code=1)
+        close_slot_idx = slots_for_day[-1].index
+        fallback_slot_idx = slots_for_day[-2].index if len(slots_for_day) >= 2 else close_slot_idx
+        rollup_runner = RollupRunner(
+            cfg, close_slot=close_slot_idx, fallback_slot=fallback_slot_idx
+        )
+
+        runner = ScheduleRunner(
+            cfg,
+            snapshot_runner=snapshot_runner,
+            rollup_runner=rollup_runner,
+        )
+        jobs = runner.plan_day(
+            day,
+            symbols=symbol_list,
+            enrichment_fields=fields,
+            include_snapshots=snapshots,
+            include_rollup=rollup,
+            include_enrichment=enrichment,
+        )
+
+        if not jobs:
+            typer.echo(
+                f"[schedule] no jobs planned for {day} (non-trading day or all tasks skipped)"
+            )
+            return []
+
+        typer.echo(
+            f"[schedule] trade_date={day} simulate={simulate} "
+            f"snapshots={snapshots} rollup={rollup} enrichment={enrichment} jobs={len(jobs)}"
+        )
+
+        # Ensure rescheduling is idempotent for the same trade date.
+        day_marker = f"-{day.isoformat()}-"
+        for existing in scheduler.get_jobs():
+            if existing.id and day_marker in existing.id:
+                scheduler.remove_job(existing.id)
+
+        job_ids = runner.schedule(
+            scheduler,
+            day,
+            symbols=symbol_list,
+            enrichment_fields=fields,
+            include_snapshots=snapshots,
+            include_rollup=rollup,
+            include_enrichment=enrichment,
+            misfire_grace_seconds=misfire_grace_seconds,
+            snapshot_progress=snapshot_progress,
+            close_snapshot_progress=close_snapshot_progress,
+            rollup_progress=rollup_progress,
+            enrichment_progress=enrichment_progress,
+        )
+        typer.echo(f"[schedule] scheduled jobs={len(job_ids)} ids={job_ids}")
+        return job_ids
 
     if simulate:
+        if not is_trading_day(trade_date):
+            typer.echo(f"[schedule] {trade_date} is not a trading day; nothing to run")
+            return
+
+        snapshot_runner = SnapshotRunner(cfg, slot_minutes=snapshot_interval_minutes)
+        slots_today = snapshot_runner.available_slots(trade_date)
+        if not slots_today:
+            typer.echo(f"[schedule] no snapshot slots available for {trade_date}", err=True)
+            raise typer.Exit(code=1)
+        close_slot_idx = slots_today[-1].index
+        fallback_slot_idx = slots_today[-2].index if len(slots_today) >= 2 else close_slot_idx
+        rollup_runner = RollupRunner(
+            cfg, close_slot=close_slot_idx, fallback_slot=fallback_slot_idx
+        )
+
+        runner = ScheduleRunner(
+            cfg,
+            snapshot_runner=snapshot_runner,
+            rollup_runner=rollup_runner,
+        )
+        jobs = runner.plan_day(
+            trade_date,
+            symbols=symbol_list,
+            enrichment_fields=fields,
+            include_snapshots=snapshots,
+            include_rollup=rollup,
+            include_enrichment=enrichment,
+        )
+        if not jobs:
+            typer.echo(
+                f"[schedule] no jobs planned for {trade_date} (non-trading day or all tasks skipped)"
+            )
+            return
+
+        typer.echo(
+            f"[schedule] trade_date={trade_date} simulate={simulate} "
+            f"snapshots={snapshots} rollup={rollup} enrichment={enrichment} jobs={len(jobs)}"
+        )
+
         summary = runner.run_simulation(
             trade_date,
             symbols=symbol_list,
@@ -1532,27 +1644,108 @@ def schedule(
 
     logging.getLogger("apscheduler").setLevel(logging.ERROR)
     scheduler = BackgroundScheduler(timezone=ZoneInfo(cfg.timezone.name))
-    job_ids = runner.schedule(
-        scheduler,
-        trade_date,
-        symbols=symbol_list,
-        enrichment_fields=fields,
-        include_snapshots=snapshots,
-        include_rollup=rollup,
-        include_enrichment=enrichment,
-        misfire_grace_seconds=misfire_grace_seconds,
-        snapshot_progress=snapshot_progress,
-        close_snapshot_progress=close_snapshot_progress,
-        rollup_progress=rollup_progress,
-        enrichment_progress=enrichment_progress,
-    )
 
-    typer.echo(f"[schedule] scheduled jobs={len(job_ids)} ids={job_ids}")
+    if continuous:
+        hour, minute = parse_hhmm(daily_init_time)
+        last_init_day: date | None = None
+
+        def init_today() -> None:
+            nonlocal last_init_day
+            today_et = to_et_date(datetime.now(ZoneInfo("UTC")))
+            if last_init_day == today_et:
+                return
+            last_init_day = today_et
+            try:
+                schedule_one_day(scheduler, today_et)
+            except Exception as exc:  # pragma: no cover - runtime/IB dependent
+                typer.echo(f"[schedule:init:error] date={today_et} error={exc}", err=True)
+
+        scheduler.add_job(
+            init_today,
+            trigger="cron",
+            hour=hour,
+            minute=minute,
+            id="daily-init",
+            replace_existing=True,
+            misfire_grace_time=3600,
+        )
+
+        init_today()
+        scheduler.start()
+        typer.echo(
+            f"[schedule] continuous mode started (daily-init {daily_init_time} ET); press Ctrl+C to stop"
+        )
+        try:
+            while True:
+                time.sleep(60)
+        except KeyboardInterrupt:
+            typer.echo("[schedule] stopping scheduler")
+        finally:
+            scheduler.shutdown()
+        return
+
+    job_ids = schedule_one_day(scheduler, trade_date)
+    if not job_ids:
+        return
+
+    job_state_lock = threading.Lock()
+    pending_job_ids: set[str] = set(job_ids)
+    running_job_ids: set[str] = set()
+    job_errors: list[str] = []
+
+    if exit_when_idle:
+        from apscheduler.events import (  # type: ignore[import-not-found]
+            EVENT_JOB_ERROR,
+            EVENT_JOB_EXECUTED,
+            EVENT_JOB_MISSED,
+            EVENT_JOB_SUBMITTED,
+        )
+
+        def _listener(event: Any) -> None:
+            job_id = getattr(event, "job_id", None)
+            if not job_id or job_id not in pending_job_ids:
+                return
+            with job_state_lock:
+                if event.code == EVENT_JOB_SUBMITTED:
+                    running_job_ids.add(job_id)
+                    return
+                if event.code in (EVENT_JOB_EXECUTED, EVENT_JOB_ERROR, EVENT_JOB_MISSED):
+                    pending_job_ids.discard(job_id)
+                    running_job_ids.discard(job_id)
+                if event.code == EVENT_JOB_MISSED:
+                    job_errors.append(
+                        f"{job_id} missed run_time={getattr(event, 'scheduled_run_time', None)}"
+                    )
+                if event.code == EVENT_JOB_ERROR:
+                    job_errors.append(f"{job_id} error={getattr(event, 'exception', None)}")
+
+        scheduler.add_listener(
+            _listener,
+            EVENT_JOB_SUBMITTED | EVENT_JOB_EXECUTED | EVENT_JOB_ERROR | EVENT_JOB_MISSED,
+        )
+
     scheduler.start()
-    typer.echo("[schedule] scheduler started; press Ctrl+C to stop")
+    if exit_when_idle:
+        typer.echo("[schedule] scheduler started; exiting when idle (--exit-when-idle)")
+    else:
+        typer.echo("[schedule] scheduler started; press Ctrl+C to stop")
+
     try:
         while True:
-            time.sleep(60)
+            if exit_when_idle:
+                with job_state_lock:
+                    done = not pending_job_ids and not running_job_ids
+                    errors = list(job_errors)
+                if done:
+                    if errors:
+                        for err in errors[:5]:
+                            typer.echo(f"[schedule:error] {err}", err=True)
+                        if len(errors) > 5:
+                            typer.echo(f"[schedule] ... {len(errors) - 5} more errors", err=True)
+                        raise typer.Exit(code=1)
+                    typer.echo("[schedule] all jobs completed; exiting")
+                    return
+            time.sleep(2)
     except KeyboardInterrupt:
         typer.echo("[schedule] stopping scheduler")
     finally:

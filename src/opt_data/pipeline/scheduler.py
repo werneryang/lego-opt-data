@@ -77,6 +77,16 @@ class ScheduleRunner:
         if not is_trading_day(trade_date):
             return []
 
+        def _parse_clock(value: str) -> time:
+            parts = str(value).strip().split(":")
+            if len(parts) != 2:
+                raise ValueError(f"Invalid clock value: {value} (expected HH:MM)")
+            hour = int(parts[0])
+            minute = int(parts[1])
+            if hour < 0 or hour > 23 or minute < 0 or minute > 59:
+                raise ValueError(f"Invalid clock value: {value} (expected HH:MM)")
+            return time(hour=hour, minute=minute)
+
         jobs: list[ScheduledJob] = []
         if include_snapshots:
             slots = self._snapshot_runner.available_slots(trade_date)
@@ -93,7 +103,8 @@ class ScheduleRunner:
                 )
 
         if include_rollup:
-            eod_time = datetime.combine(trade_date, time(17, 0), tzinfo=self._tz)
+            eod_clock = _parse_clock(self.cfg.timezone.update_time)
+            eod_time = datetime.combine(trade_date, eod_clock, tzinfo=self._tz)
             jobs.append(
                 ScheduledJob(
                     kind="close_snapshot_rollup",
@@ -106,8 +117,9 @@ class ScheduleRunner:
 
         if include_enrichment:
             target_fields = [f.lower() for f in (enrichment_fields or self.cfg.enrichment.fields)]
+            enrichment_clock = _parse_clock(self.cfg.enrichment.run_time)
             enrichment_time = datetime.combine(
-                trade_date + timedelta(days=1), time(4, 0), tzinfo=self._tz
+                trade_date + timedelta(days=1), enrichment_clock, tzinfo=self._tz
             )
             jobs.append(
                 ScheduledJob(
