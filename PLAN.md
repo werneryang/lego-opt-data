@@ -17,7 +17,7 @@
 - **延迟字段补全**：维护次日 04:30 ET `open_interest` enrichment 任务，按 `(trade_date, conid)` 幂等更新日级数据。
 - **存储与压缩**：Parquet `date/underlying/exchange` 分区；热数据 Snappy，冷数据 ZSTD，周度 compaction 目标 128–256MB；可选同日小文件合并（默认关闭）。
 - **QA 与监控**：槽位覆盖率 ≥90%、去重（`trade_date, sample_time, conid`）、IV/Greeks 范围、rollup 回退告警、pacing 监控、延迟行情与缺失字段标记。
-- **调度与运维**：CLI `snapshot`/`rollup`/`enrichment` 命令、配置模板、日志/状态目录、集中式错误日志（`state/run_logs/errors/`），故障恢复与扩容流程。
+- **调度与运维**：CLI `snapshot`/`rollup`/`enrichment` 命令、配置模板、日志/状态目录、集中式错误日志（`state/run_logs/errors/`），故障恢复与扩容流程；仓库卫生（对比/实验输出目录默认忽略，提供 `make clean-compare`）。
 
 ## 自我检查与验证
 - **Snapshot 自检**

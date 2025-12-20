@@ -17,6 +17,7 @@ dist/
 
 # Tooling
 .pytest_cache/
+.ruff_cache/
 .mypy_cache/
 .coverage
 coverage.xml
@@ -34,7 +35,12 @@ state/
 !state/.gitkeep
 state_test/
 outputs/
-data_test_compare/*.csv
+data_test_compare/
+state_test_compare/
+
+*.pkl
+*.pkl.gz
+*_yesterday_close.csv
 
 # Test fixtures - ignore CSV files but keep sample ones
 tests/fixtures/option_chains/*.csv
