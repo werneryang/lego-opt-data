@@ -84,10 +84,12 @@ if [[ -n "$SSH_OPTS" ]]; then
   SSH_BASE+=($SSH_OPTS)
 fi
 
-REMOTE_CMD=(
-  "set -euo pipefail"
-  "cd \"$REMOTE_REPO\""
-  "\"$REMOTE_SCRIPT\" --date \"$DATE_ARG\" --config \"$REMOTE_CONFIG\" --label \"$LABEL\""
+REMOTE_CMD_STR=$(
+  cat <<EOF
+set -euo pipefail
+cd "$REMOTE_REPO"
+"$REMOTE_SCRIPT" --date "$DATE_ARG" --config "$REMOTE_CONFIG" --label "$LABEL"
+EOF
 )
 
 echo "[remote] ${USER}@${HOST}:${REMOTE_REPO}"
@@ -95,7 +97,7 @@ echo "[remote] script: $REMOTE_SCRIPT"
 echo "[remote] date: $DATE_ARG config: $REMOTE_CONFIG label: $LABEL"
 
 set +e
-"${SSH_BASE[@]}" "${USER}@${HOST}" "bash -lc $(printf '%q ' "${REMOTE_CMD[@]}")" 2>&1 | tee "$LOCAL_STDOUT_LOG"
+"${SSH_BASE[@]}" "${USER}@${HOST}" "bash -lc $(printf '%q' "$REMOTE_CMD_STR")" 2>&1 | tee "$LOCAL_STDOUT_LOG"
 REMOTE_EXIT=${PIPESTATUS[0]}
 set -e
 
