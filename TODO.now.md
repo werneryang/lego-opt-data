@@ -1,6 +1,7 @@
 # 本周任务（滚动更新）
 
 ## 待办
+- [x] 新增生产机检查脚本与本机 wrapper：`scripts/ops/check_prod_schedule.sh` + `scripts/ops/check_prod_schedule_remote.sh`，用于 SSH 触发生产机调度检查并拉回报告。（2025-12-18）
 - [x] 无人值守调度：`schedule` 增加 `--continuous`/`--exit-when-idle`（每日自动初始化 / 定时器自动重启）并同步运维手册。（2025-12-18）
 - [x] 清理失效测试：移除当前与 snapshot+rollup 新架构不一致、导致本地 pytest 阻塞的旧测试文件（`tests/test_backfill_planner.py`、`tests/test_backfill_runner.py`、`tests/test_cleaning.py`、`tests/test_quality.py`、`tests/test_rollup_runner.py`、`tests/test_selfcheck_cli.py`、`tests/test_storage_layout.py`、`tests/test_universe_update.py`）。后续按新数据流重建对应测试基线与验收。（2025-12-12）
 - [x] 增加远程 IB Gateway OI 脚本：新增 `data_test/OI3_remote.py`（支持 `--host/--port`/环境变量），`data_test/OI3.py` 保留为兼容入口。（2025-12-12）

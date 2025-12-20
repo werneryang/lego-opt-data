@@ -115,6 +115,7 @@
 
 ## 进展快照（2025-12-18 更新）
 - 调度支持无人值守：`opt_data.cli schedule` 增加 `--continuous`（每日自动初始化）与 `--exit-when-idle`（便于 launchd/systemd timer 每日自动重启）。
+- 新增生产机检查脚本与本机 wrapper：`scripts/ops/check_prod_schedule.sh` + `scripts/ops/check_prod_schedule_remote.sh`，用于 SSH 触发生产机调度检查并拉回报告。
 
 ## 本周目标（2025-11-03 当周）
 - **M1 · 槽位与调度（早收盘感知）**
