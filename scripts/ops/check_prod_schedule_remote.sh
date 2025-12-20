@@ -95,7 +95,7 @@ echo "[remote] script: $REMOTE_SCRIPT"
 echo "[remote] date: $DATE_ARG config: $REMOTE_CONFIG label: $LABEL"
 
 set +e
-"${SSH_BASE[@]}" "${USER}@${HOST}" "bash -lc $(printf '%q ' "${REMOTE_CMD[@]}")" | tee "$LOCAL_STDOUT_LOG"
+"${SSH_BASE[@]}" "${USER}@${HOST}" "bash -lc $(printf '%q ' "${REMOTE_CMD[@]}")" 2>&1 | tee "$LOCAL_STDOUT_LOG"
 REMOTE_EXIT=${PIPESTATUS[0]}
 set -e
 
@@ -106,10 +106,16 @@ REPORT_PATH=""
 if [[ "$PULL_REPORT" -eq 1 ]]; then
   REPORT_PATH="$(awk '/^report: /{print $2}' "$LOCAL_STDOUT_LOG" | tail -n 1)"
   if [[ -z "$REPORT_PATH" ]]; then
-    echo "[local] report path not found in stdout log; skipping pull"
+    echo "[local] report path not found in stdout log; probing remote"
+    REPORT_PATH="$("${SSH_BASE[@]}" "${USER}@${HOST}" "ls -t \"$REMOTE_REPO/state/run_logs/ops_checks\"/prod_schedule_check_*.log 2>/dev/null | head -n 1")"
   else
     LOCAL_REPORT="$DEST_DIR/$(basename "$REPORT_PATH")"
     echo "[local] pulling report: $REPORT_PATH -> $LOCAL_REPORT"
+    scp "${USER}@${HOST}:$REPORT_PATH" "$LOCAL_REPORT"
+  fi
+  if [[ -n "$REPORT_PATH" && ! -f "${LOCAL_REPORT:-}" ]]; then
+    LOCAL_REPORT="$DEST_DIR/$(basename "$REPORT_PATH")"
+    echo "[local] pulling report (fallback): $REPORT_PATH -> $LOCAL_REPORT"
     scp "${USER}@${HOST}:$REPORT_PATH" "$LOCAL_REPORT"
   fi
 else
