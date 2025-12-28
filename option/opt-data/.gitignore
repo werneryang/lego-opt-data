@@ -1,0 +1,51 @@
+# Byte-compiled / optimized / DLL files
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Distribution / packaging
+build/
+dist/
+*.egg-info/
+.eggs/
+.wheelhouse/
+
+# Virtual environments
+.venv/
+.env/
+.env
+
+# Tooling
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+.coverage
+coverage.xml
+
+# IDEs and editors
+.vscode/
+.idea/
+.DS_Store
+
+# Local data and artifacts
+data/
+!data/.gitkeep
+data_test/
+state/
+!state/.gitkeep
+state_test/
+outputs/
+data_test_compare/
+state_test_compare/
+
+*.pkl
+*.pkl.gz
+*_yesterday_close.csv
+
+# Test fixtures - ignore CSV files but keep sample ones
+tests/fixtures/option_chains/*.csv
+!tests/fixtures/option_chains/sample_*.csv
+
+# Local configuration
+config/opt-data.local.toml
+config/universe.local.csv

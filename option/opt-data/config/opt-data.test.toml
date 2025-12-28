@@ -1,0 +1,126 @@
+# opt-data test configuration derived from the template; isolates smoke/full simulations from production data
+
+[ib]
+host = "127.0.0.1"
+port = 4001          # TWS 默认端口；如使用其他端口请在此调整.实盘:7496, 仿真:7497, IBgateway:实盘4001, 仿真4002   
+client_id = 101
+market_data_type = 2 # 1=实时（推荐用于 enrichment）, 2=冻结（适合收盘后冒烟）
+
+[timezone]
+name = "America/New_York"
+update_time = "17:00"
+
+[paths]
+raw = "data_test/raw/ib/chain"
+clean = "data_test/clean/ib/chain"
+state = "state_test"
+contracts_cache = "state_test/contracts_cache"
+run_logs = "state_test/run_logs"
+
+[universe]
+file = "config/universe.csv"              # 默认全量标的清单（Symbol,conid）
+intraday_file = "config/universe.intraday.csv"  # 盘中快照精简版（可选）
+close_file = ""                           # 收盘快照专用（为空则使用 file）
+refresh_days = 30                         # 可选：多少天后提醒更新成分
+
+[reference]
+corporate_actions = "config/corporate_actions.csv"
+
+[filters]
+moneyness_pct = 0.30             # ±30%
+expiry_types = ["weekly", "monthly", "quarterly"]
+expiry_months_ahead = 12         # 限制月度/季度到期距离（<=0 表示不限制）
+
+[rate_limits.discovery]
+per_minute = 5
+burst = 5
+
+[rate_limits.snapshot]
+# Rate limit configuration for snapshot collection
+# - per_minute: Maximum API calls per minute (token bucket refill rate)
+# - burst: Initial tokens available (handles bursts without waiting)
+# - max_concurrent: Maximum concurrent async tasks (should align with capacity)
+# Recommendation: Adjust these together after monitoring snapshot.token_wait.duration
+per_minute = 60
+burst = 20
+max_concurrent = 15
+
+[rate_limits.historical]
+per_minute = 20
+burst = 10
+
+[storage]
+hot_days = 14
+cold_codec = "zstd"
+cold_codec_level = 7
+hot_codec = "snappy"
+
+[compaction]
+enabled = true
+schedule = "weekly"
+weekday = "sunday"
+start_time = "03:00"            # 本地时区运行
+min_file_size_mb = 32
+max_file_size_mb = 256
+
+[logging]
+level = "INFO"
+format = "json"
+
+[acquisition]
+mode = "historical"
+duration = "1 D"
+bar_size = "1 day"
+what_to_show = "TRADES"
+use_rth = true
+max_strikes_per_expiry = 21
+fill_missing_greeks_with_zero = false
+historical_timeout = 30
+
+[cli]
+default_generic_ticks = "100,101,104,105,106,165,221,225,233,293,294,295" # 包含 IV、Greeks、OI 的通用 tick 列表
+snapshot_grace_seconds = 120                  # 允许在槽位开始后宽限秒数内归入当前槽
+rollup_close_slot = 13                        # 16:00 槽（09:30=0，16:00=13）
+rollup_fallback_slot = 12                     # 默认回退到 15:30 槽
+
+[snapshot]
+exchange = "SMART"
+fallback_exchanges = ["CBOE", "CBOEOPT"]
+generic_ticks = "100,101,104,105,106,165,221,225,233,293,294,295"
+strikes_per_side = 50
+subscription_timeout_sec = 30.0
+subscription_poll_interval = 0.25
+require_greeks = true
+# Market data type: 1=live, 2=frozen, 3=delayed, 4=delayed-frozen
+# Use frozen (2) for after-hours to get last available snapshot
+force_frozen_data = false  # If true, always use frozen regardless of trading hours
+# Fetch mode: streaming (legacy), snapshot (incompatible with Greeks), reqtickers (fastest, recommended)
+# Performance: reqtickers is 35% faster than streaming with 100% Greeks completeness
+fetch_mode = "reqtickers"  # Options: streaming, snapshot, reqtickers
+batch_size = 50  # For reqtickers mode: number of contracts per batch
+
+[enrichment]
+fields = ["open_interest"]
+oi_duration = "7 D"           # IB 历史接口窗口
+oi_use_rth = false             # OI 默认包含盘前/盘后
+
+[qa]
+slot_coverage_threshold = 0.90
+delayed_ratio_threshold = 0.10
+rollup_fallback_threshold = 0.05
+oi_enrichment_threshold = 0.95
+
+[observability]
+metrics_db_path = "state_test/metrics.db"
+webhook_url = ""  # Optional: Webhook URL for alerts
+
+[mcp]
+limit = 200
+days = 3
+allow_raw = true
+allow_clean = true
+
+[rollup]
+close_slot = 13                     # 16:00 槽位（默认收盘）
+fallback_slot = 12                  # 15:30 槽位（备选）
+allow_intraday_fallback = false     # close view 缺失时是否回退到 intraday（默认报错）
