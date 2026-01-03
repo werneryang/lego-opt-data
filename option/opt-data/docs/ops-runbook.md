@@ -40,15 +40,17 @@
 - 推荐将 `universe.file` 指向本机专用文件（如 `config/universe.local.csv`，受 `.gitignore` 保护），避免调度自动补 conId 时污染仓库文件。
 
 ### macOS launchd（方式 B）最小配置
-- 复制模板：`docs/launchd/com.legosmos.opt-data.timer.plist` → `~/Library/LaunchAgents/com.legosmos.opt-data.timer.plist` 并将其中的 `/ABS/PATH/TO/opt-data` 替换为你的仓库绝对路径。
+- 复制模板：`docs/launchd/com.legosmos.opt-data.timer.plist` → `~/Library/LaunchAgents/com.legosmos.opt-data.timer.plist`，如路径与本机不一致请替换为你的仓库绝对路径。
 - 确保脚本可执行：`chmod +x scripts/launchd/opt-data-daily.sh`
 - 启用（当前用户会话）：`launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/com.legosmos.opt-data.timer.plist`
 - 立刻跑一次：`launchctl kickstart -k gui/$(id -u)/com.legosmos.opt-data.timer`
 - 查看状态：`launchctl print gui/$(id -u)/com.legosmos.opt-data.timer`
 - 停用：`launchctl bootout gui/$(id -u) ~/Library/LaunchAgents/com.legosmos.opt-data.timer.plist`
+- 可选：在 plist 的 `EnvironmentVariables` 里设置 `OPT_DATA_ROOT`（仓库根目录），脚本会优先使用它；终端里也可临时 `export OPT_DATA_ROOT=/Users/michaely/projects/legosmos/option/opt-data`。
 
 注意：
 - `StartCalendarInterval` 使用**系统本地时区**；若机器不在 ET，请将启动时间换算到本地时间，或将系统时区设为 `America/New_York`。
+- 若 `launchctl print gui/$(id -u)/com.legosmos.opt-data.timer` 提示 “Could not find service …”，通常是 plist 已复制但尚未加载：重新执行 `launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/com.legosmos.opt-data.timer.plist`（或注销/登录一次）。
 - 若看到 “lock exists” 报错，说明上一次任务未结束（或异常退出遗留锁目录）；可检查进程后清理 `state/run_locks/opt-data-daily.lock` 再重试。
 
 ## 当前生产范围与运行参数

@@ -7,15 +7,17 @@
 
     <key>ProgramArguments</key>
     <array>
-      <string>/ABS/PATH/TO/opt-data/scripts/launchd/opt-data-daily.sh</string>
+      <string>/Users/michaely/projects/legosmos/option/opt-data/scripts/launchd/opt-data-daily.sh</string>
     </array>
 
     <key>EnvironmentVariables</key>
     <dict>
       <key>TZ</key>
       <string>America/New_York</string>
+      <key>OPT_DATA_ROOT</key>
+      <string>/Users/michaely/projects/legosmos/option/opt-data</string>
       <key>OPT_DATA_CONFIG</key>
-      <string>/ABS/PATH/TO/opt-data/config/opt-data.local.toml</string>
+      <string>/Users/michaely/projects/legosmos/option/opt-data/config/opt-data.local.toml</string>
     </dict>
 
     <key>StartCalendarInterval</key>
@@ -27,9 +29,8 @@
     </dict>
 
     <key>StandardOutPath</key>
-    <string>/ABS/PATH/TO/opt-data/state/run_logs/launchd_stdout.log</string>
+    <string>/Users/michaely/projects/legosmos/option/opt-data/state/run_logs/launchd_stdout.log</string>
     <key>StandardErrorPath</key>
-    <string>/ABS/PATH/TO/opt-data/state/run_logs/launchd_stderr.log</string>
+    <string>/Users/michaely/projects/legosmos/option/opt-data/state/run_logs/launchd_stderr.log</string>
   </dict>
 </plist>
-

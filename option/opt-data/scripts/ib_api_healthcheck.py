@@ -74,7 +74,7 @@ def _setup_logging(verbosity: int) -> None:
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="IB Gateway/TWS API healthcheck")
     parser.add_argument("--host", default="127.0.0.1")
-    parser.add_argument("--port", type=int, default=7497)
+    parser.add_argument("--port", type=int, default=4001)
     parser.add_argument("--client-id", type=int, default=210)
     parser.add_argument("--connect-timeout", type=float, default=15.0)
     parser.add_argument("--retries", type=int, default=2)

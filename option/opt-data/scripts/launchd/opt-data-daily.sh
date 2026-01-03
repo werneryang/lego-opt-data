@@ -7,10 +7,18 @@ set -euo pipefail
 #
 # Intended to be invoked by launchd at a fixed wall-clock time each day.
 
-REPO_ROOT="$(
-  cd "$(dirname "${BASH_SOURCE[0]}")/../.." >/dev/null 2>&1
-  pwd
-)"
+if [[ -n "${OPT_DATA_ROOT:-}" ]]; then
+  REPO_ROOT="$OPT_DATA_ROOT"
+  if [[ ! -d "$REPO_ROOT" ]]; then
+    echo "[opt-data-daily] OPT_DATA_ROOT not found: $REPO_ROOT" >&2
+    exit 1
+  fi
+else
+  REPO_ROOT="$(
+    cd "$(dirname "${BASH_SOURCE[0]}")/../.." >/dev/null 2>&1
+    pwd
+  )"
+fi
 
 cd "$REPO_ROOT"
 

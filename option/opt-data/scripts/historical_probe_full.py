@@ -30,10 +30,10 @@ class DateTimeEncoder(json.JSONEncoder):
 
 # ---- Fixed parameters -------------------------------------------------------
 HOST = "127.0.0.1"
-PORT = 4002
-CLIENT_ID = 202  # Different client ID
+PORT = 4001
+CLIENT_ID = 210  # Different client ID
 SYMBOLS = ["AAPL"]
-TRADE_DATE = "2025-12-05"
+TRADE_DATE = "2025-12-18"
 CONTRACTS_CACHE_ROOT = Path("state/contracts_cache")
 
 # All configurations to test

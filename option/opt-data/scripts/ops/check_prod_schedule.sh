@@ -12,6 +12,7 @@ Defaults:
   --date   today
   --config $OPT_DATA_CONFIG or ./config/opt-data.local.toml
   --label  com.legosmos.opt-data.timer
+  uses $OPT_DATA_ROOT as repo root when set
 
 Exit codes:
   0 OK (no obvious red flags)
@@ -33,10 +34,18 @@ while [[ $# -gt 0 ]]; do
   esac
 done
 
-REPO_ROOT="$(
-  cd "$(dirname "${BASH_SOURCE[0]}")/../.." >/dev/null 2>&1
-  pwd
-)"
+if [[ -n "${OPT_DATA_ROOT:-}" ]]; then
+  REPO_ROOT="$OPT_DATA_ROOT"
+  if [[ ! -d "$REPO_ROOT" ]]; then
+    echo "[WARN] OPT_DATA_ROOT not found: $REPO_ROOT"
+    exit 2
+  fi
+else
+  REPO_ROOT="$(
+    cd "$(dirname "${BASH_SOURCE[0]}")/../.." >/dev/null 2>&1
+    pwd
+  )"
+fi
 cd "$REPO_ROOT"
 
 export TZ="${TZ:-America/New_York}"
@@ -65,6 +74,19 @@ warn=0
   echo "== launchd status =="
   LAUNCHD_OUT="$(launchctl print "gui/$(id -u)/$LABEL" 2>&1 || true)"
   echo "$LAUNCHD_OUT"
+  if echo "$LAUNCHD_OUT" | grep -E "Could not find service|service.*not found" >/dev/null 2>&1; then
+    PLIST_PATH="$HOME/Library/LaunchAgents/$LABEL.plist"
+    if [[ -f "$PLIST_PATH" ]]; then
+      echo "[WARN] launchd service is not loaded (plist exists but not bootstrapped): $PLIST_PATH"
+      echo "[HINT] run:"
+      echo "  launchctl bootstrap gui/$(id -u) \"$PLIST_PATH\""
+      echo "  launchctl kickstart -k gui/$(id -u)/$LABEL"
+    else
+      echo "[WARN] launchd service is not loaded and plist is missing: $PLIST_PATH"
+      echo "[HINT] install the timer plist; see docs/ops-runbook.md (macOS launchd section)"
+    fi
+    warn=1
+  fi
   if echo "$LAUNCHD_OUT" | grep -E "last exit code = [1-9]" >/dev/null 2>&1; then
     echo "[WARN] launchd last exit code is non-zero"
     warn=1
