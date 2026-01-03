@@ -55,7 +55,7 @@
   - [x] Add `fallback_intraday` flag to data_quality_flag
 
 #### Documentation (Pending)
-- [x] Update `docs/ops-runbook.md` with close view section (summary + links)
+- [x] Update `docs/ops/ops-runbook.md` with close view section (summary + links)
 - [ ] Update `SCOPE.md` with dual list explanation
 
 #### Verification
@@ -174,5 +174,5 @@ opt-data rollup --date today
 ## Next Steps
 
 1. **手动验证**: 运行 `close-snapshot` 确认数据写入 `view=close`
-2. **文档更新**: 补充 `docs/ops-runbook.md` 中的收盘快照章节
+2. **文档更新**: 补充 `docs/ops/ops-runbook.md` 中的收盘快照章节
 3. **运维流程**: 确保调度器按时执行 `close-snapshot`

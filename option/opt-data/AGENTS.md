@@ -23,7 +23,7 @@
    - 直接构造 `Option(...)` 集合并使用批量 `qualifyContracts/qualifyContractsAsync` 获取 `conId`。
    - 不得在发现阶段调用 `reqContractDetails`；不得在发现阶段施加应用层限流（改为批量资格化并遵循 IB pacing）。
 
-- IB 连接默认值：`host=127.0.0.1`、`port=7497`，`clientId` 默认按角色池自动分配（prod 0-99，remote 100-199，test 200-250；如需固定可显式指定）。
+- IB 连接默认值：`host=127.0.0.1`、`port=4001`，`clientId` 默认按角色池自动分配（prod 0-99，remote 100-199，test 200-250；如需固定可显式指定）。
 - 运行环境：Python 3.11；开发时执行 `python3.11 -m venv .venv && pip install -e .[dev]`。
 - 采集窗口：S&P 500 成分股（以 `config/universe.csv` 为准），行权价带 ±30%，标准月度/季度合约。
 - 调度基于 `America/New_York` 时区：17:30 ET `close-snapshot` → `rollup`，次日 04:30 ET `enrichment`；盘中 09:30–16:00 每 30 分钟 `snapshot`。
@@ -51,13 +51,13 @@
 3. 开发 → 遵循模块化结构，提交前运行 `make fmt lint test`。
 4. 在执行大规模回填前，复制配置到测试目录（如 `config/opt-data.test.toml`），对 AAPL/MSFT 进行冒烟验证，确认输出完整后再切换正式目录。
 5. 文档分类与更新：
-   - 生产运维与正式流程：更新 `docs/ops-runbook.md` 及相关正式方案文档（如“基于 ib_insync 的TWS 期权链数据拉取正式方案.md”）。
+   - 生产运维与正式流程：更新 `docs/ops/ops-runbook.md` 及相关正式方案文档（研究材料本地归档，不纳入仓库）。
    - 开发/测试与实验脚本：更新 `docs/dev/` 下文档（如 `docs/dev/ops-runbook-dev.md`），以及相关 ADR 中的“实验性/仅限 data_test”说明。
    - 文档双向同步：更新项目文档时，需同步维护 `.agent/` 下的对应规则/摘要；同理，更新 `.agent/` 内规则时需回写到正式文档或目录（如 `docs/`、`SCOPE.md` 等）以保持一致。
-6. 部署 → 按 `docs/ops-runbook.md` 操作，并记录结果或问题。
+6. 部署 → 按 `docs/ops/ops-runbook.md` 操作，并记录结果或问题。
 
 附注：拉取 IBKR 期权链时，优先遵循以下文档与清单：
-- docs/ops-runbook.md 中“IBKR 期权链拉取最佳实践（AAPL/SPX）”
+- docs/ops/ops-runbook.md 中“IBKR 期权链拉取最佳实践（AAPL/SPX）”
 - SCOPE.md 中“期权链拉取简要清单（优先实践）”
 
 ## 审核与验收

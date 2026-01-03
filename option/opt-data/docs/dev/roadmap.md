@@ -33,7 +33,7 @@
   - 补充 Snapshot → Rollup → Enrichment 的端到端使用示例（当前已有基础示例，可加上自检/监控提示）。
   - 简要说明错误处理、自检（`selfcheck`）、日志扫描（`logscan`）与 QA 指标输出位置。
 - [ ] 在 `docs/dev/retry_usage_guide.md` 中补充与 IB 相关的重试使用示例（如 discovery、snapshot、rollup），并与实现保持一致。
-- [ ] 视需要在 `docs/troubleshooting.md` 中追加与 snapshot/rollup 新错误场景相关的排查条目。
+- [ ] 视需要在 `docs/ops/troubleshooting.md` 中追加与 snapshot/rollup 新错误场景相关的排查条目。
 
 ### 2. 测试覆盖增强
 
@@ -61,7 +61,7 @@
 - [ ] 为关键操作统一命名指标：如 `snapshot.fetch.*`、`rollup.run.*`、`enrichment.run.*`、`discovery.*`，并在 pipeline 中一致使用。
 - [ ] 评估使用 OpenTelemetry 做跨模块链路追踪的可行性（可参考 `docs/dev/retry_and_logging_implementation.md` 中的「未来规划」条目），包括 trace id 传递与采样策略。
 - [ ] 为日志输出增加结构化 JSON Lines 格式的可选开关，以便后续接入 ELK/Loki 等日志聚合与分析系统。
-- [ ] 根据监控与日志实践，更新 `docs/ops-runbook.md`，补充常见指标解释与告警处理流程。
+- [ ] 根据监控与日志实践，更新 `docs/ops/ops-runbook.md`，补充常见指标解释与告警处理流程。
 
 ### 5. 数据质量改进
 
@@ -110,4 +110,4 @@
 - 一旦某个改进方向被纳入近期计划，应：
   - 在 `PLAN.md` 中更新对应阶段/周的范围与目标；
   - 在 `TODO.now.md` 中拆分为具体可执行的任务项（含验收标准）。  
-- 重要架构或范围调整建议通过 ADR（例如 `docs/ADR-0001-storage.md` 的方式）记录决策过程与取舍。
+- 重要架构或范围调整建议通过 ADR（例如 `docs/adr/ADR-0001-storage.md` 的方式）记录决策过程与取舍。

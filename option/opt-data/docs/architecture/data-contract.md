@@ -102,7 +102,7 @@
 
 ## 兼容性与演进
 - 新增字段需在此处登记，并在 `SCOPE.md`、`config/opt-data.toml`（或模板）保持同步；默认对缺失字段赋空值，不中断流程。
-- 调整分区或视图命名需同步更新 `docs/ADR-0001-storage.md`、`SCOPE.md`、`PLAN.md`。
+- 调整分区或视图命名需同步更新 `docs/adr/ADR-0001-storage.md`、`SCOPE.md`、`PLAN.md`。
 - `ingest_run_type` 取值规范：
   - `intraday`：30 分钟快照；
   - `eod_rollup`：17:30 日终归档；

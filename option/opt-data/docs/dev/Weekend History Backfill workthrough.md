@@ -48,13 +48,13 @@ python scripts/weekend_history_backfill.py \
   --stage hours \
   --universe config/universe_history_202511.csv \
   --batch-count 8 --batch-index 0 \
-  --port 4002
+  --port 4001
 # Minutes: Active subset only
 python scripts/weekend_history_backfill.py \
   --stage minutes \
   --symbols "AAPL,MSFT" \
   --top-expiries 5 --strikes-per-side 3 \
-  --port 4002
+  --port 4001
 # Resume interrupted run
 python scripts/weekend_history_backfill.py \
   --stage hours --symbols "AAPL" --resume

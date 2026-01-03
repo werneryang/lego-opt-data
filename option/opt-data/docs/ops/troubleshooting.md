@@ -58,7 +58,7 @@ ConnectionRefusedError: [Errno 61] Connection refused
    ```toml
    [ib]
    host = "127.0.0.1"  # localhost for local IB Gateway
-   port = 4002         # 4001 for TWS, 4002 for Gateway
+   port = 4001         # 4001 for Gateway live, 4002 for paper, 7497 for TWS
    client_id = 1       # Must be unique per connection
    ```
 
@@ -247,7 +247,7 @@ Error 162: No data of type EODChart is available for the exchange 'BEST' and the
 
 **Solutions**:
 - Use **8-hour bars** (`barSizeSetting='8 hours'`) as a workaround for daily data.
-- See the detailed guide: [docs/ibkr-historical-data-guide.md](ibkr-historical-data-guide.md)
+- See the detailed guide: [docs/ops/ibkr-historical-data-guide.md](ibkr-historical-data-guide.md)
 
 ---
 

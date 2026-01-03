@@ -9,7 +9,7 @@ def test_load_config_from_custom_file(tmp_path: Path) -> None:
         """
         [ib]
         host = "127.0.0.2"
-        port = 7497
+        port = 4001
         client_id = 102
         market_data_type = 2
 

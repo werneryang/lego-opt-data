@@ -30,7 +30,7 @@ from opt_data.ib.discovery import discover_contracts_for_symbol
 
 def _cfg(tmp_path: Path) -> AppConfig:
     return AppConfig(
-        ib=IBConfig(host="127.0.0.1", port=7497, client_id=1, market_data_type=2),
+        ib=IBConfig(host="127.0.0.1", port=4001, client_id=1, market_data_type=2),
         timezone=TimezoneConfig(name="America/New_York", update_time="17:00"),
         paths=PathsConfig(
             raw=tmp_path / "raw",

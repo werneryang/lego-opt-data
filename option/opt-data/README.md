@@ -41,10 +41,10 @@ If you prefer `uv` or another package manager, adapt the commands accordingly; t
 ## Documentation
 
 - Docs index: `docs/README.md`
-- Project summary: `docs/project-summary.md`
-- Production ops & scheduling: `docs/ops-runbook.md`
+- Project summary: `docs/ops/project-summary.md`
+- Production ops & scheduling: `docs/ops/ops-runbook.md`
 - QA & smoke tests: `docs/dev/qa.md`
-- Data contract: `docs/data-contract.md`
+- Data contract: `docs/architecture/data-contract.md`
 - Dev docs: `docs/dev/README.md`
 
 ## Features
@@ -64,7 +64,7 @@ If you prefer `uv` or another package manager, adapt the commands accordingly; t
 - **Context Tracking**: Trade dates, symbols, and operation IDs in all logs
 - **Debug Support**: Enable detailed logging for troubleshooting
 
-See [docs/troubleshooting.md](docs/troubleshooting.md) for common issues and solutions.
+See [docs/ops/troubleshooting.md](docs/ops/troubleshooting.md) for common issues and solutions.
 
 ## Next steps
 

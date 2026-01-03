@@ -2,7 +2,7 @@
 description: Minimal-downtime repo structure migration (code/config first, data path unchanged)
 ---
 This workflow migrates repo structure without moving data directories.
-Source guide: `docs/migration-minimal-downtime.md`.
+Source guide: `docs/ops/migration-minimal-downtime.md`.
 
 1. GitHub repo
 - Create new package layout and update `pyproject.toml`/imports/entrypoints.

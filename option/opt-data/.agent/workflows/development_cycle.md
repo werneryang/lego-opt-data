@@ -25,7 +25,7 @@ This workflow outlines the steps for implementing new requirements or fixes, ens
    - Verify data output in `data/raw` and `data/clean`.
 
 6. **Documentation Update**
-   - Update `docs/ops-runbook.md` for production changes.
+   - Update `docs/ops/ops-runbook.md` for production changes.
    - Update `docs/dev/` for experimental scripts.
 
 7. **Review & Merge**

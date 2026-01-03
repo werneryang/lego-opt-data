@@ -1,11 +1,19 @@
 # 开发/测试运行手册（data_test）
 
-> 适用范围：本地/沙箱环境的调试与实验脚本（`data_test/*`），不用于生产调度。生产运维请参阅 `docs/ops-runbook.md`。
+> 适用范围：本地/沙箱环境的调试与实验脚本（`data_test/*`），不用于生产调度。生产运维请参阅 `docs/ops/ops-runbook.md`。
 
 ## 基本约定
-- 环境：TWS/Gateway 已启动，默认 `host=127.0.0.1`，`port=7497`，`clientId` 默认按角色池自动分配（prod 0-99，remote 100-199，test 200-250）；如需固定 ID 可在配置或环境变量中显式设置。
+- 环境：TWS/Gateway 已启动，默认 `host=127.0.0.1`，`port=4001`，`clientId` 默认按角色池自动分配（prod 0-99，remote 100-199，test 200-250）；如需固定 ID 可在配置或环境变量中显式设置。
 - 配置：建议复制 `config/opt-data.toml` 为测试版（如 `config/opt-data.test.toml`），并将数据/状态目录指向 `data_test/`、`state_test/`。
 - 行情类型：除特殊说明外，盘后/收盘实验请设 `IB_MARKET_DATA_TYPE=2`（Frozen），盘中/实时请设 `1`。
+
+## 生产/开发设备配置对照表（IB Gateway 连接）
+
+| 场景 | IB_HOST | IB_PORT | IB_CLIENT_ID | 配置位置 | 备注 |
+| --- | --- | --- | --- | --- | --- |
+| 生产设备（本地 Gateway） | 127.0.0.1 | 4001 | 0-99（prod pool） | `config/opt-data.local.toml` / 环境变量 | Gateway 在本机运行 |
+| 开发设备（远程 Gateway） | 100.71.7.100 | 4001 | 100-199（remote pool） | `config/opt-data.local.toml` / 环境变量 | 直连远端 |
+| 开发设备（SSH 转发） | 127.0.0.1 | 4001 | 100-199（remote pool） | `config/opt-data.local.toml` / 环境变量 | 通过 SSH 本地端口转发到远端 |
 
 ## 常用 data_test 脚本
 - AAPL 诊断/快照示例：
@@ -49,11 +57,11 @@
 - 风险提示：IB 对 snapshot/reqTickers 仍有 pacing 限制；多标的叠加或更高并发需重新评估。若计划推广到生产，需按 ADR 流程决策并完成标的回归。
 
 ## 结构迁移（本地/测试最小停机）
-详见独立手册：`docs/migration-minimal-downtime.md`。
+详见独立手册：`docs/ops/migration-minimal-downtime.md`。
 
 ## 参考
-- ADR：`docs/ADR-0002-SPY-snapshot-batch-concurrency.md`（背景、决策与后续行动）。
-- 生产运维：`docs/ops-runbook.md`。 
+- ADR：`docs/adr/ADR-0002-SPY-snapshot-batch-concurrency.md`（背景、决策与后续行动）。
+- 生产运维：`docs/ops/ops-runbook.md`。 
 
 ## 开发/调试脚本（手工工具）
 - `scripts/debug_parquet.py`：快速检查/打印 parquet 内容，辅助数据问题定位。

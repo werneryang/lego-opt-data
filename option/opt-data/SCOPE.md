@@ -81,4 +81,4 @@
 - 历史大规模回填或外部数据源混合（除非在 PLAN/ADR 中重新批准）。
 
 ## 期权链拉取最佳实践
-开发/诊断侧 best practices（Generic Ticks、就绪判定、并发策略、常见问题）详见 `docs/dev/ops-notes.md`；生产运维与值班入口以 `docs/ops-runbook.md` 为准。
+开发/诊断侧 best practices（Generic Ticks、就绪判定、并发策略、常见问题）详见 `docs/dev/ops-notes.md`；生产运维与值班入口以 `docs/ops/ops-runbook.md` 为准。

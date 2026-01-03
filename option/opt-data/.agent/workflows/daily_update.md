@@ -18,4 +18,4 @@ python -m opt_data.cli selfcheck --date today --config config/opt-data.local.tom
 python -m opt_data.cli logscan --date today --config config/opt-data.local.toml --max-total 1
 
 Notes:
-- For macOS unattended mode, use launchd + `--exit-when-idle` (template: `docs/launchd/com.legosmos.opt-data.timer.plist`).
+- For macOS unattended mode, use launchd + `--exit-when-idle` (template: `docs/ops/launchd/com.legosmos.opt-data.timer.plist`).

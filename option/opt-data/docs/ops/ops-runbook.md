@@ -6,7 +6,7 @@
 > 目标：一条命令启动当天调度；一条命令打开 UI；收盘后两条命令完成验收。
 
 - 环境前置：
-  - IB Gateway/TWS 已启动并登录；端口/账号与 `config/opt-data.local.toml` 一致（默认 `IB_HOST=127.0.0.1`、`IB_PORT=7497`）。
+- IB Gateway/TWS 已启动并登录；端口/账号与 `config/opt-data.local.toml` 一致（默认 `IB_HOST=127.0.0.1`、`IB_PORT=4001`）。
   - 调度时区必须是 ET：`TZ=America/New_York`（launchd/systemd 也要显式设置）。
   - 使用本地生产配置：`config/opt-data.local.toml`（从 `config/opt-data.toml` 复制并按本机修改；已在 `.gitignore`）。
 
@@ -40,7 +40,7 @@
 - 推荐将 `universe.file` 指向本机专用文件（如 `config/universe.local.csv`，受 `.gitignore` 保护），避免调度自动补 conId 时污染仓库文件。
 
 ### macOS launchd（方式 B）最小配置
-- 复制模板：`docs/launchd/com.legosmos.opt-data.timer.plist` → `~/Library/LaunchAgents/com.legosmos.opt-data.timer.plist`，如路径与本机不一致请替换为你的仓库绝对路径。
+- 复制模板：`docs/ops/launchd/com.legosmos.opt-data.timer.plist` → `~/Library/LaunchAgents/com.legosmos.opt-data.timer.plist`，如路径与本机不一致请替换为你的仓库绝对路径。
 - 确保脚本可执行：`chmod +x scripts/launchd/opt-data-daily.sh`
 - 启用（当前用户会话）：`launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/com.legosmos.opt-data.timer.plist`
 - 立刻跑一次：`launchctl kickstart -k gui/$(id -u)/com.legosmos.opt-data.timer`
@@ -61,7 +61,7 @@
 - 输出与日志：数据写入 `data/raw|clean/ib/chain/`（分 view/parquet），状态与日志位于 `state/run_logs/`（errors/selfcheck/metrics）。
 
 ## 运行前准备
-1. 启动 IB Gateway/TWS（默认：`127.0.0.1:7497`），确认登录账号具备美股期权**实时行情**权限；若仅有延迟权限，允许自动降级。
+1. 启动 IB Gateway/TWS（默认：`127.0.0.1:4001`），确认登录账号具备美股期权**实时行情**权限；若仅有延迟权限，允许自动降级。
 2. 推荐使用项目专用虚拟环境（避免污染 base Conda 并触发 NumPy 升级冲突）：
    - venv 路径：`python3.11 -m venv .venv && .venv/bin/pip install --upgrade pip && .venv/bin/pip install -e '.[dev]'`
    - 或 Conda 隔离：`conda create -n opt-data python=3.11 && conda activate opt-data && pip install -e '.[dev]'`
@@ -78,22 +78,29 @@
    - `require_greeks`：是否强制等待模型 Greeks；延迟/无权限时可设为 `false`。
    - CLI 可临时覆盖：`python -m opt_data.cli snapshot --exchange CBOE --fallback-exchanges CBOEOPT --strikes 2 --ticks 100,233 --timeout 15 --poll-interval 0.5`。
 5. 配置 `.env` / 环境变量：
-   - `IB_HOST`（默认 `127.0.0.1`）
-   - `IB_PORT`（默认 `7497`）
+   - `IB_HOST`（默认 `127.0.0.1`；remote IB Gateway: `100.71.7.100`）
+   - `IB_PORT`（默认 `4001`）
    - `IB_CLIENT_ID`（留空/未设时，按 `client_id_pool` 自动分配；默认范围：prod 0-99，remote 100-199，test 200-250；显式设置则固定使用该值）
    - `IB_MARKET_DATA_TYPE=1`（盘中默认实时；如需强制延迟改为 `3/4`）
    - **收盘快照**：运行前将 `IB_MARKET_DATA_TYPE=2`（盘后/回放模式），命令内部也会强制 `reqMarketDataType(2)` 以读取当日收盘数据
    - `TZ=America/New_York`（统一调度时区）
-6. 配置文件准备：
+6. 生产/开发设备配置对照表（IB Gateway 连接）：
+
+| 场景 | IB_HOST | IB_PORT | IB_CLIENT_ID | 配置位置 | 备注 |
+| --- | --- | --- | --- | --- | --- |
+| 生产设备（本地 Gateway） | 127.0.0.1 | 4001 | 0-99（prod pool） | `config/opt-data.local.toml` / 环境变量 | Gateway 在本机运行 |
+| 开发设备（远程 Gateway） | 100.71.7.100 | 4001 | 100-199（remote pool） | `config/opt-data.local.toml` / 环境变量 | 直连远端 |
+| 开发设备（SSH 转发） | 127.0.0.1 | 4001 | 100-199（remote pool） | `config/opt-data.local.toml` / 环境变量 | 通过 SSH 本地端口转发到远端 |
+7. 配置文件准备：
    - **本地/生产配置**：`cp config/opt-data.toml config/opt-data.local.toml`，在此文件中修改本地特定配置（如端口、路径），该文件已加入 `.gitignore`。
    - **测试配置**：`cp config/opt-data.toml config/opt-data.test.toml`，并将 `paths.raw/clean/state/contracts_cache/run_logs` 指向 `data_test/`、`state_test/`。
-7. 核对核心配置：
+8. 核对核心配置：
    - `[acquisition] mode="snapshot"`、`market_data_type=1`（默认实时，enrichment 必需）、`allow_fallback_to_delayed=true`
    - `slot_grace_seconds=120`、`rate_limits.snapshot.per_minute=30`、`max_concurrent_snapshots=14`
    - `[discovery] policy="session_freeze"`、`pre_open_time="09:25"`；若启用增量刷新，设 `midday_refresh_enabled=true` 且仅新增合约，并依赖已存在的当日缓存（不刷新/重建已有合约，发现缺失需先修复缓存再开启增量）
    - `intraday_retain_days=60`、`weekly_compaction_enabled=true`、`same_day_compaction_enabled=false`
-8. 确认交易日历（含早收盘）可用；调度器/cron 中必须显式设置 `America/New_York`。项目使用 `pandas-market-calendars` 获取 XNYS 会话时间：若运行环境缺少该依赖或无法访问历年日历，将自动回退到固定 09:30–16:00 槽位，并在日志标记 `early_close=False`。
-9. **合约缓存预检与自动重建（新）**  
+9. 确认交易日历（含早收盘）可用；调度器/cron 中必须显式设置 `America/New_York`。项目使用 `pandas-market-calendars` 获取 XNYS 会话时间：若运行环境缺少该依赖或无法访问历年日历，将自动回退到固定 09:30–16:00 槽位，并在日志标记 `early_close=False`。
+10. **合约缓存预检与自动重建（新）**  
    - `python -m opt_data.cli schedule` 在启动时会对本次运行的所有 symbols 预检 `paths.contracts_cache/<SYM>_<trade_date>.json`。  
    - 缺失/空/损坏时会用 IBSession 拉取标的收盘价，再调用 `discover_contracts_for_symbol` 重建缓存；重建失败将直接终止，不会跳过或继续运行。  
    - 如需强制严格模式（不自动重建），使用 `--fail-on-missing-cache`；默认自动重建以避免半程才发现缓存缺失。  
@@ -144,7 +151,7 @@
 - 收盘 `close-snapshot`：写入 `view=close`（默认使用 `config/universe.csv` 全量清单）。
 - `rollup`：默认优先读取 `view=close`；`allow_intraday_fallback=false` 时 close 缺失会失败（建议先补跑 `close-snapshot`）。
 - 关键配置项：`[universe].file/intraday_file/close_file`、`[rollup].close_slot/fallback_slot/allow_intraday_fallback`。
-- 详细设计与实现背景：`docs/dual-universe-implementation.md`。
+- 详细设计与实现背景：`docs/architecture/dual-universe-implementation.md`。
 
 ## 调度与部署（生产）
 - 推荐：直接在守护进程/终端常驻运行 `python -m opt_data.cli schedule --live --config config/opt-data.local.toml`。
@@ -208,7 +215,7 @@
    - 回退完成后重新执行自检，确认数据质量恢复，再评估重新扩容的时间窗口。
 
 ## 结构迁移（最小停机）
-迁移步骤已整理为独立手册，见 `docs/migration-minimal-downtime.md`。
+迁移步骤已整理为独立手册，见 `docs/ops/migration-minimal-downtime.md`。
 
 ## 例行维护
 - **每日**：rollup 后执行 `python -m opt_data.cli qa --date <trade_date>`，校验槽位覆盖率、延迟行情、rollup 回退率与 OI 补齐率并写入 `metrics_YYYYMMDD.json`；如 FAIL 立即补救。监控指标与 `logscan` 摘要一并纳入告警。
@@ -225,4 +232,4 @@
  
 ## 深入参考（开发/诊断）
 - IBKR 拉取 best practices、OI enrichment 优化路线图：`docs/dev/ops-notes.md`
-- 双 Universe / close view 实现说明：`docs/dual-universe-implementation.md`
+- 双 Universe / close view 实现说明：`docs/architecture/dual-universe-implementation.md`

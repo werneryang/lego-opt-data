@@ -1,6 +1,6 @@
 # IBKR 历史 Bars（经验边界）
 
-用于指导 `reqHistoricalData(durationStr, barSizeSetting, whatToShow)` 的默认参数选择与诊断；具体生产运维入口以 `docs/ops-runbook.md` 为准。
+用于指导 `reqHistoricalData(durationStr, barSizeSetting, whatToShow)` 的默认参数选择与诊断；具体生产运维入口以 `docs/ops/ops-runbook.md` 为准。
 
 ## 探针脚本
 - `scripts/historical_probe_quarterly_duration_ladder.py`

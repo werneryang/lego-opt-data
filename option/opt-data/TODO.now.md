@@ -1,7 +1,7 @@
 # 本周任务（滚动更新）
 
 ## 待办
-- [ ] 结构迁移执行：按 `docs/migration-minimal-downtime.md` 完成 GitHub 目录调整、入口/脚本路径更新与 `configs/` 迁移（2025-12-28）
+- [ ] 结构迁移执行：按 `docs/ops/migration-minimal-downtime.md` 完成 GitHub 目录调整、入口/脚本路径更新与 `configs/` 迁移（2025-12-28）
 - [ ] 结构迁移验证：开发机/生产机最小冒烟 + `selfcheck/logscan` 验证（2025-12-28）
 - [ ] MCP 只读接口（MVP）计划落地：确认数据范围（data/clean + data/raw）、运行状态来源（state/run_logs + data/metrics.db）、CLI 形态与工具清单。（2025-12-24）
 - [ ] MCP 适配层：实现 Parquet 只读读取（分区过滤 + limit）与 run_logs/metrics 聚合；写入 mcp_audit_log。（TBD）
@@ -46,8 +46,8 @@
 - [x] 错误日志落地：统一将 CLI 与调度任务异常写入 `state/run_logs/errors/errors_YYYYMMDD.log`，并提供关键字扫描脚本。
   - 验收：`python -m opt_data.cli logscan` 输出汇总 JSON，超阈值时退出码非零，并写入 `summary_YYYYMMDD.json`。
 - [x] 扩容策略确认：整理 AAPL → AAPL,MSFT → Top10 → 全量的上线门槛与限速调优流程，写入 `PLAN.md` 与 Runbook。
-- [x] 项目总结与文档梳理：记录当前生产范围已覆盖 `config/universe.csv` 全量（超出原 Stage 2），Stage 3 调优/扩容暂缓；同步更新 `PLAN.md`、`SCOPE.md`、`docs/ops-runbook.md`、`docs/dev/qa.md`、`docs/README.md`、`docs/project-summary.md` 与 `.agent` 摘要，确保生产/开发/测试文档分工明确、命令与参数清晰。（2025-12-13）
-- [x] 风险/依赖跟踪：实时行情权限与交易日历（早收盘）依赖已在 `TODO.now.md`（阻塞）、`SCOPE.md` 与 `docs/project-summary.md` 记录为持续跟踪项。（2025-12-13）
+- [x] 项目总结与文档梳理：记录当前生产范围已覆盖 `config/universe.csv` 全量（超出原 Stage 2），Stage 3 调优/扩容暂缓；同步更新 `PLAN.md`、`SCOPE.md`、`docs/ops/ops-runbook.md`、`docs/dev/qa.md`、`docs/README.md`、`docs/ops/project-summary.md` 与 `.agent` 摘要，确保生产/开发/测试文档分工明确、命令与参数清晰。（2025-12-13）
+- [x] 风险/依赖跟踪：实时行情权限与交易日历（早收盘）依赖已在 `TODO.now.md`（阻塞）、`SCOPE.md` 与 `docs/ops/project-summary.md` 记录为持续跟踪项。（2025-12-13）
 
 ## 进行中
 - 无
@@ -63,7 +63,7 @@
 
 ## Done 2025-11-04
 - [x] 早收盘感知槽位实现（含单测与文档）
-  - 验收：`python -m opt_data.cli schedule --simulate --date <早收盘日期> --config config/opt-data.test.toml` 显示最后一个槽位为真实收盘时刻；新增早收盘相关单测通过；`docs/ops-runbook.md` 更新依赖与回退说明。
+  - 验收：`python -m opt_data.cli schedule --simulate --date <早收盘日期> --config config/opt-data.test.toml` 显示最后一个槽位为真实收盘时刻；新增早收盘相关单测通过；`docs/ops/ops-runbook.md` 更新依赖与回退说明。
 
 ## 阻塞
 - 实时行情权限需本地 IB Gateway/TWS 账号开通；若仅有延迟权限需验证降级路径。
@@ -75,4 +75,4 @@
 - [x] 测试配置检查：使用 `config/opt-data.test.toml` 验证路径与参数
   - 验收：`python -m opt_data.cli inspect paths --config config/opt-data.test.toml` 显示 `data_test/` 与 `state_test/`
 - [x] 合约发现冒烟：AAPL/MSFT 缓存写入成功，覆盖标准月/季与 ±30% 行权价范围
-- [x] 文档同步：根据新的 snapshot + rollup 方案更新 `PLAN.md`、`SCOPE.md`、`docs/data-contract.md`、`docs/ADR-0001-storage.md`、`docs/ops-runbook.md`
+- [x] 文档同步：根据新的 snapshot + rollup 方案更新 `PLAN.md`、`SCOPE.md`、`docs/architecture/data-contract.md`、`docs/adr/ADR-0001-storage.md`、`docs/ops/ops-runbook.md`

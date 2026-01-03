@@ -45,5 +45,5 @@
 
 ## 后续行动
 - 在 `config/opt-data.toml` 暴露 `hot_days`、`target_file_size_mb`、`intraday_retain_days`、`same_day_compaction_enabled` 等配置。
-- 在 `docs/ops-runbook.md` 补充周度合并/保留流程、同日合并启用条件、故障恢复步骤。
+- 在 `docs/ops/ops-runbook.md` 补充周度合并/保留流程、同日合并启用条件、故障恢复步骤。
 - 定期评估文件规模、合并耗时，必要时 revisit 本决策或引入更强的表格式解决方案。

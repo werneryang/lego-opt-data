@@ -6,3 +6,7 @@
 # Optional shared data root (keep README only)
 data_lake/*
 !data_lake/README.md
+
+# Local-only docs
+option/opt-data/docs/research/
+option/opt-data/docs/reports/

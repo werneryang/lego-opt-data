@@ -9,7 +9,7 @@
 - **Snapshot**：采集期权链实时/延迟行情快照，输出 `view=intraday`（盘中）与 `view=close`（收盘）。
 - **Rollup**：优先使用 `view=close` 生成 `view=daily_clean`（并可生成 `view=daily_adjusted`），记录 `rollup_source_*` 与回退策略。
 - **Enrichment**：T+1 回补慢字段（如 `open_interest`），按 `(trade_date, conid)` 幂等更新。
-- **数据契约/分区/主键**：见 `docs/data-contract.md`。
+- **数据契约/分区/主键**：见 `docs/architecture/data-contract.md`。
 - **日志与状态**：统一在 `state/run_logs/`（errors/selfcheck/metrics 等）。
 
 ## 生产日常操作（值班）
@@ -18,7 +18,7 @@
 - 收盘后验收：
   - `python -m opt_data.cli selfcheck --date today --config config/opt-data.local.toml --log-max-total 1`
   - `python -m opt_data.cli logscan --date today --config config/opt-data.local.toml --max-total 1 --write-summary`
-- 生产运维入口：`docs/ops-runbook.md`（包含“一屏清单”、常见故障与数据/日志位置）。
+- 生产运维入口：`docs/ops/ops-runbook.md`（包含“一屏清单”、常见故障与数据/日志位置）。
 
 ## 验收标准（当前）
 - 槽位覆盖率 ≥90%
@@ -34,7 +34,7 @@
 
 ## 文档入口
 - 文档总目录：`docs/README.md`
-- 生产运维：`docs/ops-runbook.md`
+- 生产运维：`docs/ops/ops-runbook.md`
 - QA/测试：`docs/dev/qa.md`
 - 开发/诊断补充：`docs/dev/ops-notes.md`
 - 计划与范围：`PLAN.md`、`SCOPE.md`、`TODO.now.md`

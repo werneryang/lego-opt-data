@@ -83,7 +83,7 @@ warn=0
       echo "  launchctl kickstart -k gui/$(id -u)/$LABEL"
     else
       echo "[WARN] launchd service is not loaded and plist is missing: $PLIST_PATH"
-      echo "[HINT] install the timer plist; see docs/ops-runbook.md (macOS launchd section)"
+      echo "[HINT] install the timer plist; see docs/ops/ops-runbook.md (macOS launchd section)"
     fi
     warn=1
   fi

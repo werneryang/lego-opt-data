@@ -1,6 +1,6 @@
 # QA 与测试说明
 
-> 本文聚焦测试/验收与开发自检，生产调度请参阅 `docs/ops-runbook.md`；实验脚本与内部流程请继续放在 `docs/dev/` 目录。
+> 本文聚焦测试/验收与开发自检，生产调度请参阅 `docs/ops/ops-runbook.md`；实验脚本与内部流程请继续放在 `docs/dev/` 目录。
 
 ## 日常生产验收（全量 `config/universe.csv`）
 - 前置：IB Gateway/TWS 已登录，具备实时行情权限（无权限则关注 `delayed_fallback` 占比）；`TZ=America/New_York`；使用 `config/opt-data.toml`。

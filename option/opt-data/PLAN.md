@@ -18,7 +18,7 @@
 - **存储与压缩**：Parquet `date/underlying/exchange` 分区；热数据 Snappy，冷数据 ZSTD，周度 compaction 目标 128–256MB；可选同日小文件合并（默认关闭）。
 - **QA 与监控**：槽位覆盖率 ≥90%、去重（`trade_date, sample_time, conid`）、IV/Greeks 范围、rollup 回退告警、pacing 监控、延迟行情与缺失字段标记。
 - **调度与运维**：CLI `snapshot`/`rollup`/`enrichment` 命令、配置模板、日志/状态目录、集中式错误日志（`state/run_logs/errors/`），故障恢复与扩容流程；仓库卫生（对比/实验输出目录默认忽略，提供 `make clean-compare`）。
-- **结构迁移与多包布局**：按 `option/opt-data`、`option/opt-analysis`、`stock/stock-data`、`stock/stock-analysis`、`shared`、`configs` 拆分，多包独立但共用运行环境；数据根通过配置指向旧路径，`data_lake/` 仅占位；迁移步骤见 `docs/migration-minimal-downtime.md`。
+- **结构迁移与多包布局**：按 `option/opt-data`、`option/opt-analysis`、`stock/stock-data`、`stock/stock-analysis`、`shared`、`configs` 拆分，多包独立但共用运行环境；数据根通过配置指向旧路径，`data_lake/` 仅占位；迁移步骤见 `docs/ops/migration-minimal-downtime.md`。
 - **MCP 只读分析接口（MVP）**：本地 CLI 启动 server；只读 data/clean 与 data/raw；运行状态来源 state/run_logs + data/metrics.db；工具集 v1（health_overview、run_status_overview、list_recent_runs、get_partition_issues、get_chain_sample）；强制 limit/时间窗 + 统一 meta（limit/clamped/source）+ 审计日志。
 
 ## 自我检查与验证
@@ -110,7 +110,7 @@
 ## 进展快照（2025-12-15 更新）
 - 生产范围已覆盖 `config/universe.csv` 全量（超过原 Stage 2/Top 10 目标），运行配置保持 `snapshot per_minute=30`、`max_concurrent_snapshots=14`，调度链路为 09:30–16:00 snapshot、17:30 close-snapshot → rollup、次日 04:30 enrichment。
 - 后续并发/分批调度提升（原 Stage 3 目标：`per_minute=90`、`并发=20`、多批次）暂缓，待评审 Gateway 负载与稳定性。
-- 文档整理：新增 `docs/README.md` 文档索引与 `docs/project-summary.md` 阶段性总结；`docs/ops-runbook.md` 顶部提供“一屏清单”，开发/测试细节移至 `docs/dev/`。
+- 文档整理：新增 `docs/README.md` 文档索引与 `docs/ops/project-summary.md` 阶段性总结；`docs/ops/ops-runbook.md` 顶部提供“一屏清单”，开发/测试细节移至 `docs/dev/`。
 - 历史数据能力补充诊断：新增 `scripts/historical_probe_quarterly_duration_ladder.py`，用最近季度到期合约对 1min–8h bars 做 `durationStr` 梯度探测（含 `TRADES`），用于快速验证“单次请求可拉多长/可回溯到何时”的边界。
 - 历史数据批量探针：新增 `scripts/historical_probe_quarterly_universe_stage.py`，支持按 `config/universe_history_202511.csv` 分批（`--batch-index/batch-count`）与分阶段（`--stage minutes|hours`）运行，并通过 `probe.json` 复用探针合约，便于按周末逐步拉取 1m–8h bars。
 - 周末历史回填（实验）需求确认：minutes 阶段仅拉“活跃子集”（先用近 ATM K/E 规则），TRADES `no data` 不做自动 fallback，合约集合以“最近交易日 contracts cache”为准；仅用于 `data_test/` 实验与参数验证，不纳入生产调度（详见 `docs/dev/history-weekend-backfill.md`）。
@@ -120,14 +120,14 @@
 - 新增生产机检查脚本与本机 wrapper：`scripts/ops/check_prod_schedule.sh` + `scripts/ops/check_prod_schedule_remote.sh`，用于 SSH 触发生产机调度检查并拉回报告。
 
 ## 进展快照（2025-12-28 更新）
-- 结构迁移与多包布局定稿：新增独立迁移手册 `docs/migration-minimal-downtime.md`，并在 `docs/ops-runbook.md`、`docs/dev/ops-runbook-dev.md` 中改为引用链接；同步 `.agent/workflows/structure-migration-minimal-downtime.md`。
+- 结构迁移与多包布局定稿：新增独立迁移手册 `docs/ops/migration-minimal-downtime.md`，并在 `docs/ops/ops-runbook.md`、`docs/dev/ops-runbook-dev.md` 中改为引用链接；同步 `.agent/workflows/structure-migration-minimal-downtime.md`。
 
 ## 本周目标（2025-11-03 当周）
 - **M1 · 槽位与调度（早收盘感知）**
   - 在 `src/opt_data/util/calendar.py` 增加会话开/收盘获取（优先使用 `pandas-market-calendars`，无依赖则 Mon–Fri 回退）。
   - 更新 `src/opt_data/pipeline/snapshot.py` 的 `_slot_schedule` 以会话收盘裁剪槽位（含 16:00 以外早收盘）。
   - 在 `tests/` 增加早收盘用例，覆盖 `available_slots` 与 `schedule --simulate` 输出。
-  - 在 `docs/ops-runbook.md` 补充依赖与早收盘说明。
+  - 在 `docs/ops/ops-runbook.md` 补充依赖与早收盘说明。
 - **M2 · 调度与验证**
   - 运行 `make fmt lint test`，并使用 `python -m opt_data.cli schedule --simulate --date <早收盘日>` 验证最后一个槽位为真实收盘时刻。
   - 执行一次 AAPL 冒烟（测试目录）：`snapshot` → `rollup` → `enrichment` → `qa/selfcheck`，记录指标文件路径。

@@ -36,7 +36,7 @@ def build_config(tmp_path: Path) -> AppConfig:
     universe_file.write_text("symbol,conid\nAAPL,123456\n", encoding="utf-8")
 
     return AppConfig(
-        ib=IBConfig(host="127.0.0.1", port=7497, client_id=101, market_data_type=1),
+        ib=IBConfig(host="127.0.0.1", port=4001, client_id=101, market_data_type=1),
         timezone=TimezoneConfig(name="America/New_York", update_time="17:00"),
         paths=PathsConfig(
             raw=raw_root,
