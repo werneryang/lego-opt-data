@@ -15,6 +15,9 @@ option/opt-data/docs/reports/
 stock/stock-data/data/
 stock/stock-data/state/
 
+# local config
+stock/stock-data/config/stock-data.remote.toml
+
 # python cache
 __pycache__/
 *.pyc
