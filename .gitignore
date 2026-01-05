@@ -10,3 +10,11 @@ data_lake/*
 # Local-only docs
 option/opt-data/docs/research/
 option/opt-data/docs/reports/
+
+# stock-data outputs
+stock/stock-data/data/
+stock/stock-data/state/
+
+# python cache
+__pycache__/
+*.pyc
