@@ -27,6 +27,22 @@
   - `python -m opt_data.cli selfcheck --date today --config config/opt-data.local.toml --log-max-total 1`
   - `python -m opt_data.cli logscan --date today --config config/opt-data.local.toml --max-total 1 --write-summary`
 
+## 远程查看生产设备状态
+> 目标：不登录桌面也能看调度/采集是否正常。
+
+- 方案 A（推荐，Dashboard）：在生产机启动 UI，并通过 SSH 端口转发访问
+  - 生产机：`streamlit run src/opt_data/dashboard/app.py --server.address 0.0.0.0`
+  - 本机：`ssh -N -L 8501:127.0.0.1:8501 <user>@<prod_host>`
+  - 浏览器访问：`http://127.0.0.1:8501`
+- 方案 B（日志 + 快照）：用 SSH 直查运行日志
+  - 本机：terminal运行：ssh datareader@100.71.7.100
+  - 调度 stdout/stderr：`state/run_logs/launchd_stdout.log` / `state/run_logs/launchd_stderr.log`
+  - 任务日志：`state/run_logs/<task>/`（snapshot/rollup/enrichment）
+  - 错误汇总：`state/run_logs/errors/errors_YYYYMMDD.log` 与 `state/run_logs/errors/summary_YYYYMMDD.json`
+- 方案 C（验收信号）：远程运行验收命令并观察退出码
+  - `python -m opt_data.cli selfcheck --date today --config config/opt-data.local.toml --log-max-total 1`
+  - `python -m opt_data.cli logscan --date today --config config/opt-data.local.toml --max-total 1 --write-summary`
+
 ## 无人值守运行（推荐）
 > 目标：机器重启/进程崩溃后自动拉起；无需每天手动重启调度。
 

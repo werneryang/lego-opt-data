@@ -14,3 +14,9 @@ Monorepo for market data collection and analysis (options + stocks).
 ## Where to start
 - See option/opt-data/README.md for setup and runbook pointers.
 - Migration guide: option/opt-data/docs/migration-minimal-downtime.md
+
+## Planning
+- Monorepo plan: PLAN.md
+- Monorepo TODO: TODO.now.md
+- Options plan: option/opt-data/PLAN.md
+- Stock implementation plan: stock/stock-data/IMPLEMENTATION_PLAN.md

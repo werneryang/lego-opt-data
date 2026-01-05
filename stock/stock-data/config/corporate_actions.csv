@@ -1,0 +1,3 @@
+symbol,event_date,event_type,ratio,cash_amount,notes
+# Example: AAPL,2024-11-01,split,2.0,,
+# Example: AAPL,2024-11-14,dividend,,0.24,Quarterly dividend

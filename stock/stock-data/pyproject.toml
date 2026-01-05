@@ -1,0 +1,36 @@
+[build-system]
+requires = ["hatchling>=1.26"]
+build-backend = "hatchling.build"
+
+[project]
+name = "stock-data"
+version = "0.1.0"
+description = "Utilities for collecting stock market datasets."
+readme = "README.md"
+requires-python = ">=3.11"
+license = {text = "MIT"}
+authors = [
+  {name = "Michael Yang"}
+]
+keywords = ["stocks", "data", "analysis"]
+dependencies = [
+  "pandas>=2.2",
+  "pyarrow>=16.0",
+  "typer>=0.12",
+  "ib-insync>=0.9",
+  "requests>=2.32",
+  "python-dotenv>=1.0",
+  "tomli>=2.0; python_version < '3.11'"
+]
+
+[project.optional-dependencies]
+dev = [
+  "pytest>=7.4",
+  "ruff>=0.5"
+]
+mcp = [
+  "mcp>=1.0"
+]
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/stock_data"]

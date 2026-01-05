@@ -431,6 +431,34 @@ def _as_path(p: str | Path) -> Path:
     return Path(p).expanduser().resolve()
 
 
+def _load_repo_dotenv() -> None:
+    base = Path(__file__).resolve()
+    if base.is_file():
+        base = base.parent
+
+    repo_root = None
+    for candidate in [base, *base.parents]:
+        if (candidate / ".git").exists():
+            repo_root = candidate
+            break
+
+    if repo_root:
+        env_path = repo_root / ".env"
+        if env_path.exists():
+            load_dotenv(env_path)
+        else:
+            load_dotenv()
+        return
+
+    for candidate in [base, *base.parents]:
+        env_path = candidate / ".env"
+        if env_path.exists():
+            load_dotenv(env_path)
+            return
+
+    load_dotenv()
+
+
 def load_config(file: Optional[Path] = None) -> AppConfig:
     """Load configuration from a TOML file with environment overrides.
 
@@ -440,7 +468,7 @@ def load_config(file: Optional[Path] = None) -> AppConfig:
     3. Built-in defaults (from template if missing keys)
     """
 
-    load_dotenv()  # load .env if present
+    _load_repo_dotenv()  # load repo .env if present
 
     cfg_path = (
         _as_path(file) if file else _as_path(os.getenv("OPT_DATA_CONFIG", "config/opt-data.toml"))

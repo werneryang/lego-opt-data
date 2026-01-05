@@ -93,6 +93,39 @@ python -m opt_data.cli selfcheck --date today --config config/opt-data.local.tom
 python -m opt_data.cli logscan --date today --config config/opt-data.local.toml --max-total 1
 ```
 
+## iMac 生产迁移清单（本机）
+
+前置约定：
+- 仓库根路径：`/users/michaely/projects/legosmos`
+- data_lake 根路径：`/users/michaely/projects/legosmos/data_lake`（gitignored；如迁移到外置盘请改为绝对路径）
+- Python/venv：与开发机一致
+- IB Gateway：本机 `127.0.0.1:4001`
+- 调度方式：launchd
+- 保留远程检查脚本：`scripts/ops/check_prod_schedule_remote.sh`
+
+步骤（最小可运行路径）：
+1. 同步代码与 venv（按本手册“生产机”章节）。
+2. 生成本机生产配置：确认 `config/opt-data.local.toml` 已存在（不存在则 `cp config/opt-data.toml config/opt-data.local.toml`），并将 `paths.*` 改为绝对路径（示例按仓库根）：
+
+```toml
+[paths]
+raw = "/users/michaely/projects/legosmos/option/opt-data/data/raw/ib/chain"
+clean = "/users/michaely/projects/legosmos/option/opt-data/data/clean/ib/chain"
+state = "/users/michaely/projects/legosmos/option/opt-data/state"
+contracts_cache = "/users/michaely/projects/legosmos/option/opt-data/state/contracts_cache"
+run_logs = "/users/michaely/projects/legosmos/option/opt-data/state/run_logs"
+```
+
+> 如需统一到 data_lake，可将 `raw/clean` 改为 `.../data_lake/option/raw/ib/chain` 与 `.../data_lake/option/clean/ib/chain`。
+
+3. launchd 配置：复制 `docs/ops/launchd/com.legosmos.opt-data.timer.plist` 到 `~/Library/LaunchAgents/`，把仓库路径替换为 `/users/michaely/projects/legosmos`，并确保 `TZ=America/New_York`。
+4. 启用 launchd（按 `docs/ops/ops-runbook.md` 的 macOS launchd 小节），并在安全窗口完成一次轻量验证（close-snapshot → rollup → selfcheck/logscan）。
+5. 远程检查（从开发机执行）：
+
+```bash
+scripts/ops/check_prod_schedule_remote.sh --host <imac_host> --repo /users/michaely/projects/legosmos/option/opt-data
+```
+
 ## 验证与回滚（必须同步）
 - MUST：验证 `state/run_logs/`、分区完整性、`selfcheck/logscan` 结果为 PASS。
 - MUST：保留旧结构的 tag/备份配置；若失败，回滚到旧入口并恢复原配置。

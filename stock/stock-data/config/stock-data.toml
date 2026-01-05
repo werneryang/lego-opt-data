@@ -1,0 +1,43 @@
+# stock-data config template
+
+[ib]
+host = "127.0.0.1"
+port = 4001
+client_id = -1
+market_data_type = 1
+
+[ib.client_id_pool]
+role = "stock"
+range = [300, 399]
+randomize = true
+state_dir = "state/client_ids"
+lock_ttl_seconds = 7200
+
+[timezone]
+name = "America/New_York"
+update_time = "17:30"
+
+[paths]
+raw = "../../data_lake/stock/raw/ib/stk"
+clean = "../../data_lake/stock/clean/ib/stk"
+state = "state"
+
+[reference]
+corporate_actions = "config/corporate_actions.csv"
+
+[universe]
+file = "config/universe.csv"
+refresh_days = 30
+
+[storage]
+hot_days = 14
+cold_codec = "zstd"
+cold_codec_level = 7
+hot_codec = "snappy"
+
+[mcp]
+limit = 200
+days = 3
+allow_raw = true
+allow_clean = true
+audit_db = "state/run_logs/mcp_audit.db"
