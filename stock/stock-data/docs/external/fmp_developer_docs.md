@@ -1,4 +1,6 @@
 # Financial Modeling Prep API 离线手册 (含 Python 源码)
+# 需要 FMP API Key的权限！！！
+
 
 ## Stock Symbol SearchAPI
 

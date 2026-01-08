@@ -184,6 +184,34 @@ Note: validate availability per symbol and subscription; fallback to `useRTH=Tru
 - IV/HV availability may be inconsistent for some equities.
 - Scheduling after close must respect trading calendar and early close days.
 
+## 11. Runbook (Daily + Backfill)
+
+### Daily bars (incremental, 1-year window)
+```bash
+python -m stock_data.cli daily-bars \
+  --config stock/stock-data/config/stock-data.toml \
+  --mode backfill \
+  --end-date today \
+  --days 365 \
+  --throttle-sec 0.7 \
+  --batch-size 50
+```
+
+### Volatility (incremental, 1-year window)
+```bash
+python -m stock_data.cli volatility \
+  --config stock/stock-data/config/stock-data.toml \
+  --mode backfill \
+  --end-date today \
+  --days 365 \
+  --throttle-sec 0.7 \
+  --batch-size 50
+```
+
+Notes:
+- Leaving `--symbols` empty will use `stock/stock-data/config/universe.csv`.
+- `--throttle-sec` and `--batch-size` can be adjusted to stay under IB pacing limits.
+
 ## 10. Open Questions
 
 1. Exact schema and priority fields for the fundamentals normalization table?

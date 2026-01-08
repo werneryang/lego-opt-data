@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+import logging
 import socket
 from urllib.parse import urlparse
 import typer
@@ -20,6 +21,11 @@ from .universe import load_universe
 
 
 app = typer.Typer(add_completion=False, help="stock-data CLI entrypoint")
+
+
+@app.callback()
+def _main() -> None:
+    logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
 
 
 def _resolve_config_path(path: str) -> Path:
@@ -73,26 +79,48 @@ def _check_fmp_dns(base_url: str) -> None:
 @app.command("daily-bars")
 def daily_bars(
     config: str = "config/stock-data.toml",
+    mode: str = "snapshot",
     trade_date: str = "today",
+    end_date: str = "today",
+    days: int = 365,
     symbols: str = "",
     exchange: str = "SMART",
     currency: str = "USD",
     what_to_show: str = "TRADES",
     use_rth: bool = True,
+    throttle_sec: float = 0.7,
+    batch_size: int = 50,
 ) -> None:
     """Fetch daily bars and write parquet output."""
     cfg = _load_cfg(config)
-    target_date = _parse_trade_date(trade_date, cfg.timezone.name)
     symbol_list = [s.strip().upper() for s in symbols.split(",") if s.strip()] or None
-    runner = DailyBarsRunner(cfg)
-    result = runner.run(
-        trade_date=target_date,
-        symbols=symbol_list,
-        exchange=exchange,
-        currency=currency,
-        what_to_show=what_to_show,
-        use_rth=use_rth,
-    )
+    runner = DailyBarsRunner(cfg, throttle_sec=throttle_sec)
+    mode_norm = mode.strip().lower()
+    if mode_norm == "snapshot":
+        target_date = _parse_trade_date(trade_date, cfg.timezone.name)
+        result = runner.run(
+            trade_date=target_date,
+            symbols=symbol_list,
+            exchange=exchange,
+            currency=currency,
+            what_to_show=what_to_show,
+            use_rth=use_rth,
+            batch_size=batch_size,
+        )
+    elif mode_norm == "backfill":
+        target_end = _parse_trade_date(end_date, cfg.timezone.name)
+        result = runner.run_backfill(
+            end_date=target_end,
+            days=days,
+            symbols=symbol_list,
+            exchange=exchange,
+            currency=currency,
+            what_to_show=what_to_show,
+            use_rth=use_rth,
+            batch_size=batch_size,
+        )
+    else:
+        raise typer.BadParameter("mode must be 'snapshot' or 'backfill'")
     typer.echo(f"ingest_id={result.ingest_id}")
     typer.echo(f"rows_written={result.rows_written}")
     if result.errors:
@@ -112,10 +140,12 @@ def volatility(
     generic_ticks: str = "106",
     timeout: float = 12.0,
     poll_interval: float = 0.25,
+    throttle_sec: float = 0.7,
+    batch_size: int = 50,
 ) -> None:
     """Fetch daily IV/HV snapshot or backfill history."""
     cfg = _load_cfg(config)
-    runner = VolatilityRunner(cfg)
+    runner = VolatilityRunner(cfg, throttle_sec=throttle_sec)
     symbol_list = [s.strip().upper() for s in symbols.split(",") if s.strip()] or None
 
     mode_norm = mode.strip().lower()
@@ -129,6 +159,7 @@ def volatility(
             generic_ticks=generic_ticks,
             timeout=timeout,
             poll_interval=poll_interval,
+            batch_size=batch_size,
         )
     elif mode_norm == "backfill":
         target_end = _parse_trade_date(end_date, cfg.timezone.name)
@@ -138,6 +169,7 @@ def volatility(
             symbols=symbol_list,
             exchange=exchange,
             currency=currency,
+            batch_size=batch_size,
         )
     else:
         raise typer.BadParameter("mode must be 'snapshot' or 'backfill'")
