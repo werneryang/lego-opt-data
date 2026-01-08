@@ -214,6 +214,10 @@ class RollupRunner:
                 selected["asof_ts"], utc=True, errors="coerce"
             ).dt.tz_convert(None)
 
+            for price_col in ("bid", "ask"):
+                if price_col in selected.columns:
+                    selected[price_col] = selected[price_col].mask(selected[price_col] < 0)
+
             anomaly_flags = detect_anomalies(selected)
             selected["data_quality_flag"] = [
                 list(set(existing + new))
