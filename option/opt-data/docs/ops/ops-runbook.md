@@ -15,6 +15,7 @@
   - 无人值守（一次启动，交易日每天自动初始化 09:20 ET）：`python -m opt_data.cli schedule --live --continuous --config config/opt-data.local.toml`
   - 定时器模式（适配 launchd/systemd timer/cron：跑完当日任务自动退出，第二天由定时器重启）：`python -m opt_data.cli schedule --live --exit-when-idle --config config/opt-data.local.toml`
   - 常用参数：`--symbols AAPL,MSFT`（临时缩小范围）、`--date 2025-12-15`（跑指定交易日；不适用于 `--continuous`）
+- 启动盘中 streaming 订阅（交易日 09:35–16:00 ET，独立进程）：由 timer 在 09:35 ET 拉起 `python -m opt_data.cli streaming --config config/opt-data.local.toml --duration 23100`
 
 - 开始前快速预演（只打印计划并立即执行当日任务，适合验证配置；不建议每天都跑）：
   - `python -m opt_data.cli schedule --simulate --config config/opt-data.local.toml`
@@ -68,6 +69,15 @@
 - `StartCalendarInterval` 使用**系统本地时区**；若机器不在 ET，请将启动时间换算到本地时间，或将系统时区设为 `America/New_York`。
 - 若 `launchctl print gui/$(id -u)/com.legosmos.opt-data.timer` 提示 “Could not find service …”，通常是 plist 已复制但尚未加载：重新执行 `launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/com.legosmos.opt-data.timer.plist`（或注销/登录一次）。
 - 若看到 “lock exists” 报错，说明上一次任务未结束（或异常退出遗留锁目录）；可检查进程后清理 `state/run_locks/opt-data-daily.lock` 再重试。
+
+## Streaming 订阅无人值守运行
+> 目标：交易日 09:35–16:00 ET 启动，收盘后自动退出。
+
+- 方式：使用 launchd/systemd timer/cron 在 09:35 ET 拉起 `scripts/launchd/opt-data-streaming.sh`，脚本会调用 `scripts/ops/streaming_duration.py` 自动计算 `--duration` 并在收盘后退出。
+- macOS launchd：复制模板 `docs/ops/launchd/com.legosmos.opt-data.streaming.plist` 到 `~/Library/LaunchAgents/` 并按本机路径调整。
+- 手动运行示例：`python -m opt_data.cli streaming --config config/opt-data.local.toml --duration 23100`
+- 交易日控制：timer/cron 需配合交易日历（节假日/早收盘）跳过或缩短运行；早收盘识别依赖 `pandas-market-calendars`，缺失时默认按 16:00 计算。
+- 时区：与调度一样，确保运行环境显式设置 `TZ=America/New_York`。
 
 ## 当前生产范围与运行参数
 - 覆盖范围：`config/universe.csv` 全量清单（已超过原 Stage 2/Top 10 目标）。

@@ -58,6 +58,9 @@
 ## 进行中
 - 无
 
+## Done 2026-01-08
+- [x] Streaming 无人值守运行窗口（交易日 09:35–16:00 ET）与 launchd 模板、自动时长脚本同步到运维手册与计划。（2026-01-08）
+
 ## Done 2025-11-26
 - [x] 错误处理健壮性改进：统一 snapshot 错误标记（`snapshot_error`/`error_type`/`error_message`），修复 rollup 在错误行与缺失列上的崩溃路径，并为 discovery 关键 IB 调用添加重试；对应实现与验证见 `docs/dev/error_handling_robustness_fixes.md` 与错误处理验证报告。
 - [x] 重试机制与日志/性能增强落地：实现通用 `retry_with_backoff`、性能计时与日志上下文工具，并应用于 IB 会话、snapshot、rollup、enrichment 等关键路径；开发文档更新至 `docs/dev/retry_and_logging_implementation.md` 与 `docs/dev/retry_usage_guide.md`。

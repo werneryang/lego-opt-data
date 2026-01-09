@@ -1,0 +1,38 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+  <dict>
+    <key>Label</key>
+    <string>com.legosmos.opt-data.streaming</string>
+
+    <key>ProgramArguments</key>
+    <array>
+      <string>/Users/michaely/projects/legosmos/option/opt-data/scripts/launchd/opt-data-streaming.sh</string>
+    </array>
+
+    <key>EnvironmentVariables</key>
+    <dict>
+      <key>TZ</key>
+      <string>America/New_York</string>
+      <key>OPT_DATA_ROOT</key>
+      <string>/Users/michaely/projects/legosmos/option/opt-data</string>
+      <key>OPT_DATA_CONFIG</key>
+      <string>/Users/michaely/projects/legosmos/option/opt-data/config/opt-data.local.toml</string>
+      <key>OPT_DATA_STREAMING_START</key>
+      <string>09:35</string>
+    </dict>
+
+    <key>StartCalendarInterval</key>
+    <dict>
+      <key>Hour</key>
+      <integer>9</integer>
+      <key>Minute</key>
+      <integer>35</integer>
+    </dict>
+
+    <key>StandardOutPath</key>
+    <string>/Users/michaely/projects/legosmos/option/opt-data/state/run_logs/launchd_streaming_stdout.log</string>
+    <key>StandardErrorPath</key>
+    <string>/Users/michaely/projects/legosmos/option/opt-data/state/run_logs/launchd_streaming_stderr.log</string>
+  </dict>
+</plist>

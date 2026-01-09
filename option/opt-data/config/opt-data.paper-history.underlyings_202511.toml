@@ -5,7 +5,7 @@
 
 [ib]
 host = "127.0.0.1"
-port = 4001
+port = 7496
 client_id = 303
 market_data_type = 2  # 1=实时, 2=冻结（盘后/历史烟囱）
 
