@@ -27,6 +27,12 @@ from .pipeline.enrichment import EnrichmentRunner
 from .pipeline.history import HistoryRunner
 from .pipeline.scheduler import ScheduleRunner
 from .pipeline.qa import QAMetricsCalculator
+from .streaming.selection import (
+    select_expiries,
+    select_strikes_around_spot,
+    strike_step,
+)
+from .streaming.runner import StreamingRunner
 from .util.calendar import to_et_date, is_trading_day
 from .util.logscanner import scan_logs
 from .universe import UniverseEntry, load_universe
@@ -1206,6 +1212,162 @@ def oi_probe(
     df.to_csv(out_path, index=False)
     typer.echo(f"[oi_probe] written_csv={out_path}")
 
+
+@app.command("streaming-plan")
+def streaming_plan(
+    symbols: Optional[str] = typer.Option(
+        None,
+        "--symbols",
+        help="Comma separated symbols (defaults to streaming.underlyings)",
+    ),
+    date_str: str = typer.Option("today", "--date", help="Trade date in ET or 'today'"),
+    config: Optional[str] = typer.Option(None, help="Path to config TOML"),
+    spot: Optional[float] = typer.Option(
+        None,
+        "--spot",
+        help="Override underlying spot price (defaults to IB snapshot)",
+    ),
+    strikes_per_side: Optional[int] = typer.Option(
+        None,
+        "--strikes-per-side",
+        help="Override strikes per side (defaults to streaming config)",
+    ),
+    rights: Optional[str] = typer.Option(
+        None,
+        "--rights",
+        help="Comma separated rights (C,P) override",
+    ),
+) -> None:
+    """Print a streaming subscription plan for the configured underlyings."""
+
+    cfg = load_config(Path(config) if config else None)
+    streaming_cfg = cfg.streaming
+    trade_date = (
+        to_et_date(datetime.now(ZoneInfo("UTC")))
+        if date_str == "today"
+        else date.fromisoformat(date_str)
+    )
+
+    symbol_list = (
+        [s.strip().upper() for s in symbols.split(",") if s.strip()]
+        if symbols
+        else streaming_cfg.underlyings
+    )
+    if not symbol_list:
+        typer.echo("[streaming-plan] no symbols provided", err=True)
+        raise typer.Exit(code=2)
+
+    per_side = strikes_per_side or streaming_cfg.strikes_per_side
+    rights_list = (
+        [r.strip().upper() for r in rights.split(",") if r.strip()]
+        if rights
+        else streaming_cfg.rights
+    )
+    universe_entries = load_universe(Path(cfg.universe.file))
+    conid_map = {entry.symbol: entry.conid for entry in universe_entries}
+
+    def _select_chain(params, symbol: str, exchange: str):
+        if not params:
+            return None
+        exch = exchange.upper()
+        exch_matches = [p for p in params if (getattr(p, "exchange", "") or "").upper() == exch]
+        if exch_matches:
+            return max(exch_matches, key=lambda p: len(getattr(p, "strikes", []) or []))
+        tc_matches = [
+            p
+            for p in params
+            if (getattr(p, "tradingClass", "") or "").upper() == symbol.upper()
+        ]
+        if tc_matches:
+            return max(tc_matches, key=lambda p: len(getattr(p, "strikes", []) or []))
+        return max(params, key=lambda p: len(getattr(p, "strikes", []) or []))
+
+    session = IBSession(
+        host=cfg.ib.host,
+        port=cfg.ib.port,
+        client_id=cfg.ib.client_id,
+        client_id_pool=cfg.ib.client_id_pool,
+        market_data_type=cfg.ib.market_data_type,
+    )
+    with session as sess:
+        ib = sess.ensure_connected()
+        for symbol in symbol_list:
+            try:
+                if spot is None:
+                    spot_value = fetch_underlying_close(ib, symbol, trade_date)
+                else:
+                    spot_value = float(spot)
+            except Exception as exc:  # pragma: no cover - runtime dependent
+                typer.echo(f"[streaming-plan] {symbol} spot fetch failed: {exc}", err=True)
+                raise typer.Exit(code=1)
+
+            params = sec_def_params(ib, symbol, underlying_conid=conid_map.get(symbol))
+            chain = _select_chain(params, symbol, streaming_cfg.exchange)
+            if chain is None:
+                typer.echo(f"[streaming-plan] {symbol} no secdef params returned", err=True)
+                raise typer.Exit(code=1)
+
+            expiries = select_expiries(getattr(chain, "expirations", []), trade_date)
+            strikes = select_strikes_around_spot(
+                getattr(chain, "strikes", []),
+                spot_value,
+                per_side,
+            )
+            step = strike_step(getattr(chain, "strikes", []), spot_value)
+            threshold = step * streaming_cfg.rebalance_threshold_steps
+            contracts = len(expiries) * len(strikes) * max(len(rights_list), 1)
+
+            expiries_text = ",".join(d.isoformat() for d in expiries) if expiries else "none"
+            strikes_text = f"{len(strikes)} {min(strikes, default=0)}-{max(strikes, default=0)}"
+            typer.echo(
+                "[streaming-plan] "
+                f"symbol={symbol} spot={spot_value:.2f} "
+                f"expiries={expiries_text} strikes={strikes_text} "
+                f"step={step:.2f} threshold={threshold:.2f} "
+                f"rights={','.join(rights_list) or 'N/A'} "
+                f"contracts={contracts}"
+            )
+            if strikes:
+                preview = ", ".join(f"{s:.2f}" for s in strikes[:6])
+                tail = ", ".join(f"{s:.2f}" for s in strikes[-6:])
+                typer.echo(f"[streaming-plan] {symbol} strikes_head={preview}")
+                if len(strikes) > 6:
+                    typer.echo(f"[streaming-plan] {symbol} strikes_tail={tail}")
+
+
+@app.command()
+def streaming(
+    symbols: Optional[str] = typer.Option(
+        None, "--symbols", help="Comma separated symbols (defaults to streaming.underlyings)"
+    ),
+    config: Optional[str] = typer.Option(None, help="Path to config TOML"),
+    duration: Optional[float] = typer.Option(
+        None, "--duration", help="Stop after N seconds (default: run until interrupted)"
+    ),
+    flush_interval: float = typer.Option(
+        15.0, "--flush-interval", help="Flush buffered ticks every N seconds"
+    ),
+    rebalance_interval: float = typer.Option(
+        1.0, "--rebalance-interval", help="Check rebalance condition every N seconds"
+    ),
+) -> None:
+    cfg = load_config(Path(config) if config else None)
+    symbol_list = [s.strip().upper() for s in symbols.split(",") if s.strip()] if symbols else None
+
+    runner = StreamingRunner(cfg)
+    result = runner.run(
+        symbols=symbol_list,
+        duration_seconds=duration,
+        flush_interval=max(flush_interval, 1.0),
+        rebalance_check_interval=max(rebalance_interval, 0.5),
+    )
+    typer.echo(
+        "[streaming] "
+        f"ingest_id={result.ingest_id} option_rows={result.option_rows} "
+        f"spot_rows={result.spot_rows} bar_rows={result.bar_rows} "
+        f"rebalances={result.rebalances} "
+        f"started_at={result.started_at.isoformat()} ended_at={result.ended_at.isoformat()}"
+    )
 
 @app.command()
 def rollup(

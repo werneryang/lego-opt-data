@@ -1,34 +1,38 @@
-# opt-data test configuration derived from the template; isolates smoke/full simulations from production data
+# opt-data 配置模板
+# 复制为 config/opt-data.local.toml 或通过环境变量覆盖
 
 [ib]
 host = "127.0.0.1"
-port = 7496          # TWS 常见端口；如使用其他端口请在此调整.实盘:7496, 仿真:7497, IBgateway:实盘4001, 仿真4002   
-client_id = 101
-market_data_type = 2 # 1=实时（推荐用于 enrichment）, 2=冻结（适合收盘后冒烟）
+port = 7496          # TWS 默认端口；如使用其他端口请在此调整.实盘:7496, 仿真:7497, IBgateway:实盘4001, 仿真4002   
+client_id = -1
+market_data_type = 1 # 1=实时（推荐用于 enrichment）, 2=冻结, 3=延迟, 4=延迟冻结
+
+[ib.client_id_pool]
+role = "prod"
+range = [0, 49]
+randomize = false
 
 [timezone]
 name = "America/New_York"
-update_time = "17:00"
+update_time = "17:30"
 
 [paths]
-raw = "data_test/raw/ib/chain"
-clean = "data_test/clean/ib/chain"
-state = "state_test"
-contracts_cache = "state_test/contracts_cache"
-run_logs = "state_test/run_logs"
+raw = "data/raw/ib/chain"
+clean = "data/clean/ib/chain"
+state = "state"
+contracts_cache = "state/contracts_cache"
+run_logs = "state/run_logs"
 
 [universe]
-file = "config/universe.csv"              # 默认全量标的清单（Symbol,conid）
-intraday_file = "config/universe.intraday.csv"  # 盘中快照精简版（可选）
-close_file = ""                           # 收盘快照专用（为空则使用 file）
-refresh_days = 30                         # 可选：多少天后提醒更新成分
+file = "config/universe.csv"    # 标的清单（Symbol,conid）
+refresh_days = 30                # 可选：多少天后提醒更新成分
 
 [reference]
 corporate_actions = "config/corporate_actions.csv"
 
 [filters]
 moneyness_pct = 0.30             # ±30%
-expiry_types = ["weekly", "monthly", "quarterly"]
+expiry_types = ["monthly", "quarterly"]
 expiry_months_ahead = 12         # 限制月度/季度到期距离（<=0 表示不限制）
 
 [rate_limits.discovery]
@@ -101,7 +105,7 @@ batch_size = 50  # For reqtickers mode: number of contracts per batch
 
 [streaming]
 underlyings = ["SPY"]
-spot_symbols = ["SPY", "VIX"]
+spot_symbols = ["SPY"]
 bars_symbols = ["SPY"]
 expiries_policy = "this_friday_next_monthly"
 strikes_per_side = 10
@@ -123,16 +127,5 @@ rollup_fallback_threshold = 0.05
 oi_enrichment_threshold = 0.95
 
 [observability]
-metrics_db_path = "state_test/metrics.db"
+metrics_db_path = "state/metrics.db"
 webhook_url = ""  # Optional: Webhook URL for alerts
-
-[mcp]
-limit = 200
-days = 3
-allow_raw = true
-allow_clean = true
-
-[rollup]
-close_slot = 13                     # 16:00 槽位（默认收盘）
-fallback_slot = 12                  # 15:30 槽位（备选）
-allow_intraday_fallback = false     # close view 缺失时是否回退到 intraday（默认报错）

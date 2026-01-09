@@ -1,6 +1,12 @@
 # 本周任务（滚动更新）
 
 ## 待办
+- [ ] 盘中实时订阅方案落地：明确数据源/接口、订阅清单与落盘 schema（SPY spot/5s/VIX spot + 2 expiries × 20 strikes）。（TBD）
+- [ ] 合约选择实现：拉取期权链，筛选到期日（本周五 + 下个月月度），计算行权价步进与 ATM 上下 10 档，生成 40 合约订阅列表。（TBD）
+- [ ] 动态调整逻辑实现（Hysteresis）：价格移动 >3 个行权价步进触发；取消 6 个旧合约、订阅 6 个新合约；确保幂等与节流。（TBD）
+- [ ] 配置项新增：`streaming.underlyings`、`streaming.expiries_policy`、`streaming.strikes_per_side`、`streaming.rebalance_threshold_steps`、`streaming.fields`、`streaming.bars_interval=5s`。（TBD）
+- [ ] 监控与 QA：订阅数量、重平衡次数、延迟/缺字段比例；异常阈值与告警记录。（TBD）
+- [ ] 冒烟验证：盘中启动订阅，触发一次重平衡，检查数据落盘与字段完整性。（TBD）
 - [ ] 结构迁移执行：按 `docs/ops/migration-minimal-downtime.md` 完成 GitHub 目录调整、入口/脚本路径更新与 `configs/` 迁移（2025-12-28）
 - [ ] 结构迁移验证：开发机/生产机最小冒烟 + `selfcheck/logscan` 验证（2025-12-28）
 - [ ] MCP 只读接口（MVP）计划落地：确认数据范围（data/clean + data/raw）、运行状态来源（state/run_logs + data/metrics.db）、CLI 形态与工具清单。（2025-12-24）

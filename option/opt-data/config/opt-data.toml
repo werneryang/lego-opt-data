@@ -3,7 +3,7 @@
 
 [ib]
 host = "127.0.0.1"
-port = 4001          # 实盘:7496, 仿真:7497, IBGateway: 实盘4001, 仿真4002   
+port = 7496          # 实盘:7496, 仿真:7497, IBGateway: 实盘4001, 仿真4002   
 client_id = -1       # 设为 -1 或 "auto" 则使用 client_id_pool 自动分配；设为整数则固定使用该值
 market_data_type = 1 # 1=实时（推荐用于 enrichment）, 2=冻结（盘后/close 用）, 3=延迟, 4=延迟冻结
 
@@ -106,6 +106,18 @@ force_frozen_data = false  # If true, always use frozen regardless of trading ho
 # Performance: reqtickers is 35% faster than streaming with 100% Greeks completeness
 fetch_mode = "reqtickers"  # Options: streaming, snapshot, reqtickers
 batch_size = 50  # For reqtickers mode: number of contracts per batch
+
+[streaming]
+underlyings = ["SPY"]
+spot_symbols = ["SPY", "VIX"]
+bars_symbols = ["SPY"]
+expiries_policy = "this_friday_next_monthly"
+strikes_per_side = 10
+rebalance_threshold_steps = 3
+rights = ["C", "P"]
+fields = ["bid", "ask", "last", "iv", "greeks"]
+bars_interval = "5s"
+exchange = "SMART"
 
 [enrichment]
 fields = ["open_interest"]

@@ -146,6 +146,20 @@ class SnapshotConfig:
 
 
 @dataclass
+class StreamingConfig:
+    underlyings: list[str]
+    spot_symbols: list[str]
+    bars_symbols: list[str]
+    expiries_policy: str
+    strikes_per_side: int
+    rebalance_threshold_steps: int
+    rights: list[str]
+    fields: list[str]
+    bars_interval: str
+    exchange: str = "SMART"
+
+
+@dataclass
 class AcquisitionConfig:
     mode: str
     duration: str
@@ -198,6 +212,7 @@ class AppConfig:
     mcp: MCPConfig
     cli: CLIConfig
     snapshot: SnapshotConfig
+    streaming: StreamingConfig
     enrichment: EnrichmentConfig
     qa: QAConfig
     acquisition: AcquisitionConfig
@@ -375,6 +390,37 @@ class AppConfig:
         if self.snapshot.batch_size <= 0:
             errors.append(f"Invalid snapshot.batch_size: {self.snapshot.batch_size} (must be > 0)")
 
+        valid_expiries_policy = {"this_friday_next_monthly"}
+        if self.streaming.expiries_policy not in valid_expiries_policy:
+            errors.append(
+                f"Invalid streaming.expiries_policy: {self.streaming.expiries_policy}. "
+                f"Valid policies: {valid_expiries_policy}"
+            )
+
+        if self.streaming.strikes_per_side <= 0:
+            errors.append(
+                f"Invalid streaming.strikes_per_side: {self.streaming.strikes_per_side} "
+                "(must be > 0)"
+            )
+
+        if self.streaming.rebalance_threshold_steps <= 0:
+            errors.append(
+                "Invalid streaming.rebalance_threshold_steps: "
+                f"{self.streaming.rebalance_threshold_steps} (must be > 0)"
+            )
+
+        if not self.streaming.rights:
+            errors.append("Invalid streaming.rights: must include at least one of C/P")
+        else:
+            invalid_rights = {r.upper() for r in self.streaming.rights} - {"C", "P"}
+            if invalid_rights:
+                errors.append(
+                    f"Invalid streaming.rights: {sorted(invalid_rights)} (allowed: C, P)"
+                )
+
+        if not self.streaming.bars_interval:
+            errors.append("Invalid streaming.bars_interval: must be non-empty")
+
         # Validate CLI configuration
         if self.cli.snapshot_grace_seconds < 0:
             errors.append(
@@ -509,6 +555,17 @@ def load_config(file: Optional[Path] = None) -> AppConfig:
                 sec = {}
                 break
         return sec.get(key, default) if isinstance(sec, dict) else default
+
+    def _normalize_list(value: Any, *, upper: bool = False) -> list[str]:
+        if value is None:
+            return []
+        if isinstance(value, str):
+            items = [token.strip() for token in value.split(",") if token.strip()]
+        else:
+            items = [str(token).strip() for token in value if str(token).strip()]
+        if upper:
+            return [item.upper() for item in items]
+        return items
 
     def _pool_range(role: str, range_raw: Any) -> tuple[int, int]:
         default_ranges = {
@@ -694,6 +751,19 @@ def load_config(file: Optional[Path] = None) -> AppConfig:
         batch_size=int(g("snapshot", "batch_size", 50)),
     )
 
+    streaming = StreamingConfig(
+        underlyings=_normalize_list(g("streaming", "underlyings", ["SPY"]), upper=True),
+        spot_symbols=_normalize_list(g("streaming", "spot_symbols", ["SPY", "VIX"]), upper=True),
+        bars_symbols=_normalize_list(g("streaming", "bars_symbols", ["SPY"]), upper=True),
+        expiries_policy=g("streaming", "expiries_policy", "this_friday_next_monthly"),
+        strikes_per_side=int(g("streaming", "strikes_per_side", 10)),
+        rebalance_threshold_steps=int(g("streaming", "rebalance_threshold_steps", 3)),
+        rights=_normalize_list(g("streaming", "rights", ["C", "P"]), upper=True),
+        fields=_normalize_list(g("streaming", "fields", ["bid", "ask", "last", "iv", "greeks"])),
+        bars_interval=g("streaming", "bars_interval", "5s"),
+        exchange=g("streaming", "exchange", "SMART"),
+    )
+
     enrichment_fields_raw = g("enrichment", "fields", ["open_interest"])
     if isinstance(enrichment_fields_raw, str):
         enrichment_fields = [
@@ -751,6 +821,7 @@ def load_config(file: Optional[Path] = None) -> AppConfig:
         mcp=mcp,
         cli=cli,
         snapshot=snapshot_cfg,
+        streaming=streaming,
         enrichment=enrichment,
         qa=qa,
         acquisition=acquisition,
