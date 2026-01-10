@@ -4,9 +4,15 @@ A lightweight Python toolkit for loading, inspecting, and transforming options m
 
 ## Getting started
 
-1. Create a Python 3.11 virtual environment: `python3.11 -m venv .venv`
-2. Activate it and install dependencies: `source .venv/bin/activate` then `pip install -e .[dev]`
+1. Create a Python 3.11 virtual environment (from repo root): `python3.11 -m venv .venv`
+2. Activate it and install locked dependencies:
+   - `source .venv/bin/activate`
+   - `pip install -r requirements-dev.lock`
+   - `pip install -e option/opt-data --no-deps`
 3. Run the test suite: `pytest`
+
+If you prefer a per-subproject venv, keep the same lockfile but reference it from this folder:
+`pip install -r ../../requirements-dev.lock && pip install -e . --no-deps`
 4. **Smoke Test (Snapshot + Rollup)**:
    ```bash
    # 1. Take a snapshot (using test config)
@@ -23,15 +29,18 @@ If you prefer `uv` or another package manager, adapt the commands accordingly; t
 
 ### Environment notes (recommended)
 
-- Use a dedicated virtualenv for this project. Installing into a global/base Conda environment may cause dependency solver upgrades (e.g., NumPy 2.x) that conflict with other scientific packages (scipy/numba/astropy). The safest path is a local venv:
-  - `python3.11 -m venv .venv && source .venv/bin/activate && pip install -U pip && pip install -e .[dev]`
-- If you prefer Conda, create an isolated env first, then use pip inside it for this project’s extras:
-  - `conda create -n opt-data python=3.11 && conda activate opt-data && pip install -e .[dev]`
-- CLI dependencies (Typer/APScheduler) are included via the `[dev]` extra. If they’re missing, some CLI tests may be skipped; installing with `-e .[dev]` ensures they’re present.
+- Use a dedicated virtualenv for this project. Installing into a global/base Conda environment may cause dependency solver upgrades (e.g., NumPy 2.x) that conflict with other scientific packages (scipy/numba/astropy). The safest path is a local venv (repo root):
+  - `python3.11 -m venv .venv && source .venv/bin/activate && pip install -U pip && pip install -r requirements-dev.lock && pip install -e option/opt-data --no-deps`
+- If you prefer Conda, create an isolated env first, then use pip inside it for the monorepo lockfile:
+  - `conda create -n opt-data python=3.11 && conda activate opt-data && pip install -r requirements-dev.lock && pip install -e option/opt-data --no-deps`
+- CLI dependencies (Typer/APScheduler) are included in the repo-root `requirements-dev.lock`. If they’re missing, some CLI tests may be skipped.
+- If you change `pyproject.toml`, regenerate lock files with root `make lock` and commit them.
 
 ## Project layout
 
 - `pyproject.toml` – project metadata, dependencies, and tool configuration
+- repo-root `requirements.lock` – pinned runtime dependencies (shared across subprojects)
+- repo-root `requirements-dev.lock` – pinned runtime + dev/test dependencies (shared across subprojects)
 - `src/opt_data/` – primary Python package with runtime code
 - `tests/` – pytest-based test suite and fixtures
 - `data/` – optional folder (ignored by git) for local/raw datasets

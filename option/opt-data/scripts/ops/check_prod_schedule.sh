@@ -10,7 +10,7 @@ Usage:
 
 Defaults:
   --date   today
-  --config $OPT_DATA_CONFIG or ./config/opt-data.local.toml
+  --config $OPT_DATA_CONFIG or ./config/opt-data.snapshot.local.toml
   --label  com.legosmos.opt-data.timer
   uses $OPT_DATA_ROOT as repo root when set
 
@@ -22,7 +22,7 @@ EOF
 
 DATE_ARG="today"
 LABEL="com.legosmos.opt-data.timer"
-CONFIG_PATH="${OPT_DATA_CONFIG:-./config/opt-data.local.toml}"
+CONFIG_PATH="${OPT_DATA_CONFIG:-./config/opt-data.snapshot.local.toml}"
 
 while [[ $# -gt 0 ]]; do
   case "$1" in

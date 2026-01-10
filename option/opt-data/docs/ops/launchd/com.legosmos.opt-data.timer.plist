@@ -17,7 +17,7 @@
       <key>OPT_DATA_ROOT</key>
       <string>/Users/michaely/projects/legosmos/option/opt-data</string>
       <key>OPT_DATA_CONFIG</key>
-      <string>/Users/michaely/projects/legosmos/option/opt-data/config/opt-data.local.toml</string>
+      <string>/Users/michaely/projects/legosmos/option/opt-data/config/opt-data.snapshot.local.toml</string>
     </dict>
 
     <key>StartCalendarInterval</key>

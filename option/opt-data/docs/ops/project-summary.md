@@ -13,11 +13,11 @@
 - **日志与状态**：统一在 `state/run_logs/`（errors/selfcheck/metrics 等）。
 
 ## 生产日常操作（值班）
-- 启动常驻调度：`python -m opt_data.cli schedule --live --config config/opt-data.local.toml`
+- 启动常驻调度：`python -m opt_data.cli schedule --live --config config/opt-data.snapshot.local.toml`
 - 打开 UI：`streamlit run src/opt_data/dashboard/app.py`
 - 收盘后验收：
-  - `python -m opt_data.cli selfcheck --date today --config config/opt-data.local.toml --log-max-total 1`
-  - `python -m opt_data.cli logscan --date today --config config/opt-data.local.toml --max-total 1 --write-summary`
+  - `python -m opt_data.cli selfcheck --date today --config config/opt-data.snapshot.local.toml --log-max-total 1`
+  - `python -m opt_data.cli logscan --date today --config config/opt-data.snapshot.local.toml --max-total 1 --write-summary`
 - 生产运维入口：`docs/ops/ops-runbook.md`（包含“一屏清单”、常见故障与数据/日志位置）。
 
 ## 验收标准（当前）

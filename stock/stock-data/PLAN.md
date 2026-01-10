@@ -7,6 +7,7 @@
 - Fundamentals (FMP stable: profile, key-metrics-ttm, ratios-ttm, statements).
 - Corporate actions (dividends, splits).
 - MCP read-only exposure for downstream consumers.
+- Dependencies locked via repo-root `requirements.lock` / `requirements-dev.lock`.
 
 ## References
 - Implementation plan: stock/stock-data/IMPLEMENTATION_PLAN.md

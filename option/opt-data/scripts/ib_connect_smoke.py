@@ -16,7 +16,7 @@ from ib_insync import IB  # type: ignore
 def main() -> int:
     parser = argparse.ArgumentParser(description="Minimal IB connect smoke test")
     parser.add_argument("--host", default="127.0.0.1")
-    parser.add_argument("--port", type=int, default=4001)
+    parser.add_argument("--port", type=int, default=7496)
     parser.add_argument("--client-id", type=int, default=230)
     parser.add_argument("--timeout", type=float, default=15.0)
     args = parser.parse_args()

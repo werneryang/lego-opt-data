@@ -13,8 +13,9 @@
 
 ## 代码与数据规范
 - Python 3.10+，遵循 `pyproject.toml` 中的 Ruff/pytest 配置，默认启用类型标注与 `from __future__ import annotations`。
+- 依赖锁定：以仓库根目录 `requirements.lock` / `requirements-dev.lock` 为唯一依赖来源；变更 `pyproject.toml` 后必须运行根目录 `make lock` 并提交锁文件。
 - 模块布局：`src/opt_data/ib`、`pipeline`、`storage`、`cli`、`config` 等子包，测试放在 `tests/`，使用 `pytest`。
-- 禁止将真实凭据、原始敏感数据写入仓库；本地 `.env` 与 `config/opt-data.local.toml` 由 `.gitignore` 保护。
+- 禁止将真实凭据、原始敏感数据写入仓库；本地 `.env`、`config/opt-data.snapshot.local.toml`、`config/opt-data.streaming.local.toml` 由 `.gitignore` 保护。
 - 数据输出区分：`data/raw` 保存 IB 原样数据；`data/clean` 保存清洗与公司行动调整后的 Parquet 数据。
 
 - IBKR 接入规范：统一使用 `ib_insync` 封装进行会话、订约与行情订阅；禁止在项目代码中直接依赖或导入 `ibapi.*`。如需底层特性，请通过 `ib_insync` 的 `IB.client` 暴露接口封装为内部工具后再使用。
@@ -25,7 +26,7 @@
    - 不得在发现阶段调用 `reqContractDetails`；不得在发现阶段施加应用层限流（改为批量资格化并遵循 IB pacing）。
 
 - IB 连接默认值：`host=127.0.0.1`、`port=4001`，`clientId` 默认按角色池自动分配（prod 0-99，remote 100-199，test 200-250；如需固定可显式指定）。
-- 运行环境：Python 3.11；开发时执行 `python3.11 -m venv .venv && pip install -e .[dev]`。
+- 运行环境：Python 3.11；开发时执行 `python3.11 -m venv .venv && pip install -r ../../requirements-dev.lock && pip install -e . --no-deps`（或从仓库根目录 `make install`）。
 - 采集窗口：S&P 500 成分股（以 `config/universe.csv` 为准），行权价带 ±30%，标准月度/季度合约。
 - 调度基于 `America/New_York` 时区：17:30 ET `close-snapshot` → `rollup`，次日 04:30 ET `enrichment`；盘中 09:30–16:00 每 30 分钟 `snapshot`。
 - 当前 Stage 1（AAPL+MSFT）生产限速为 `snapshot per_minute=30`、`max_concurrent_snapshots=14`（45/12 为后续调优目标）。

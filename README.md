@@ -15,6 +15,11 @@ Monorepo for market data collection and analysis (options + stocks).
 - See option/opt-data/README.md for setup and runbook pointers.
 - Migration guide: option/opt-data/docs/migration-minimal-downtime.md
 
+## Unified environment (monorepo)
+- Create venv: `python3.11 -m venv .venv && source .venv/bin/activate`
+- Install locked deps + editable packages: `make install`
+- Update locks after any `pyproject.toml` change: `make lock`
+
 ## Planning
 - Monorepo plan: PLAN.md
 - Monorepo TODO: TODO.now.md

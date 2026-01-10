@@ -8,4 +8,4 @@
 - Link top-level planning docs in `README.md`.
 
 ## Done
-- None
+- 2026-01-09: Centralize dependency locks at repo root (`requirements.lock` / `requirements-dev.lock`) for cross-project installs.

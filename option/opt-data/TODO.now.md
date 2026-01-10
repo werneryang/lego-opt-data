@@ -58,6 +58,9 @@
 ## 进行中
 - 无
 
+## Done 2026-01-09
+- [x] 依赖锁定：引入仓库根目录 `requirements.lock`/`requirements-dev.lock`，并统一安装与更新流程（根目录 `make install`/`make lock`）。
+
 ## Done 2026-01-08
 - [x] Streaming 无人值守运行窗口（交易日 09:35–16:00 ET）与 launchd 模板、自动时长脚本同步到运维手册与计划。（2026-01-08）
 

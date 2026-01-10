@@ -473,8 +473,11 @@ class AppConfig:
         return errors
 
 
-def _as_path(p: str | Path) -> Path:
-    return Path(p).expanduser().resolve()
+def _as_path(p: str | Path, *, base: Path | None = None) -> Path:
+    path = Path(p).expanduser()
+    if base is not None and not path.is_absolute():
+        path = base / path
+    return path.resolve()
 
 
 def _load_repo_dotenv() -> None:
@@ -519,6 +522,8 @@ def load_config(file: Optional[Path] = None) -> AppConfig:
     cfg_path = (
         _as_path(file) if file else _as_path(os.getenv("OPT_DATA_CONFIG", "config/opt-data.toml"))
     )
+    cfg_dir = cfg_path.parent
+    base_dir = cfg_dir.parent if cfg_dir.name == "config" else cfg_dir
     with open(cfg_path, "rb") as fh:
         raw: Dict[str, Any] = toml.load(fh)
 
@@ -587,7 +592,9 @@ def load_config(file: Optional[Path] = None) -> AppConfig:
     pool_range_raw = g("ib.client_id_pool", "range", None)
     pool_range = _pool_range(pool_role, pool_range_raw)
     pool_randomize = bool(g("ib.client_id_pool", "randomize", True))
-    pool_state_dir = _as_path(g("ib.client_id_pool", "state_dir", "state/client_ids"))
+    pool_state_dir = _as_path(
+        g("ib.client_id_pool", "state_dir", "state/client_ids"), base=base_dir
+    )
     pool_lock_ttl = int(g("ib.client_id_pool", "lock_ttl_seconds", 7200))
 
     client_id_pool = IBClientIdPoolConfig(
@@ -621,11 +628,11 @@ def load_config(file: Optional[Path] = None) -> AppConfig:
     )
 
     paths = PathsConfig(
-        raw=_as_path(g("paths", "raw", "data/raw/ib/chain")),
-        clean=_as_path(g("paths", "clean", "data/clean/ib/chain")),
-        state=_as_path(g("paths", "state", "state")),
-        contracts_cache=_as_path(g("paths", "contracts_cache", "state/contracts_cache")),
-        run_logs=_as_path(g("paths", "run_logs", "state/run_logs")),
+        raw=_as_path(g("paths", "raw", "data/raw/ib/chain"), base=base_dir),
+        clean=_as_path(g("paths", "clean", "data/clean/ib/chain"), base=base_dir),
+        state=_as_path(g("paths", "state", "state"), base=base_dir),
+        contracts_cache=_as_path(g("paths", "contracts_cache", "state/contracts_cache"), base=base_dir),
+        run_logs=_as_path(g("paths", "run_logs", "state/run_logs"), base=base_dir),
     )
 
     # Universe config with optional intraday/close files
@@ -633,15 +640,15 @@ def load_config(file: Optional[Path] = None) -> AppConfig:
     close_file_raw = g("universe", "close_file", "")
 
     universe = UniverseConfig(
-        file=_as_path(g("universe", "file", "config/universe.csv")),
+        file=_as_path(g("universe", "file", "config/universe.csv"), base=base_dir),
         refresh_days=g("universe", "refresh_days", 30),
-        intraday_file=_as_path(intraday_file_raw) if intraday_file_raw else None,
-        close_file=_as_path(close_file_raw) if close_file_raw else None,
+        intraday_file=_as_path(intraday_file_raw, base=base_dir) if intraday_file_raw else None,
+        close_file=_as_path(close_file_raw, base=base_dir) if close_file_raw else None,
     )
 
     reference = ReferenceConfig(
         corporate_actions=_as_path(
-            g("reference", "corporate_actions", "config/corporate_actions.csv")
+            g("reference", "corporate_actions", "config/corporate_actions.csv"), base=base_dir
         ),
     )
 
@@ -704,7 +711,9 @@ def load_config(file: Optional[Path] = None) -> AppConfig:
     )
 
     observability = ObservabilityConfig(
-        metrics_db_path=_as_path(g("observability", "metrics_db_path", "data/metrics.db")),
+        metrics_db_path=_as_path(
+            g("observability", "metrics_db_path", "data/metrics.db"), base=base_dir
+        ),
         webhook_url=g("observability", "webhook_url", None),
     )
     mcp = MCPConfig(
@@ -753,7 +762,7 @@ def load_config(file: Optional[Path] = None) -> AppConfig:
 
     streaming = StreamingConfig(
         underlyings=_normalize_list(g("streaming", "underlyings", ["SPY"]), upper=True),
-        spot_symbols=_normalize_list(g("streaming", "spot_symbols", ["SPY", "VIX"]), upper=True),
+        spot_symbols=_normalize_list(g("streaming", "spot_symbols", ["SPY"]), upper=True),
         bars_symbols=_normalize_list(g("streaming", "bars_symbols", ["SPY"]), upper=True),
         expiries_policy=g("streaming", "expiries_policy", "this_friday_next_monthly"),
         strikes_per_side=int(g("streaming", "strikes_per_side", 10)),

@@ -1,13 +1,18 @@
-.PHONY: install fmt lint test qa backfill update compact clean clean-compare mcp-smoke
+.PHONY: install fmt lint test qa lock backfill update compact clean clean-compare mcp-smoke
 
 VENV=.venv
 PYTHON=$(VENV)/bin/python
 PIP=$(VENV)/bin/pip
+ROOT_DIR=$(abspath $(CURDIR)/../..)
+LOCK=$(ROOT_DIR)/requirements.lock
+LOCK_DEV=$(ROOT_DIR)/requirements-dev.lock
 
 install:
 	python3 -m venv $(VENV)
 	$(PIP) install --upgrade pip
-	$(PIP) install -e .[dev]
+	@test -f $(LOCK_DEV) || (echo "Missing $(LOCK_DEV). Run 'make lock' first." && exit 1)
+	$(PIP) install -r $(LOCK_DEV)
+	$(PIP) install -e . --no-deps
 
 fmt:
 	$(PYTHON) -m ruff format src tests
@@ -20,6 +25,9 @@ test:
 	$(PYTHON) scripts/mcp_smoke_test.py --config config/opt-data.test.toml
 
 qa: fmt lint test
+
+lock:
+	$(MAKE) -C $(ROOT_DIR) lock
 
 backfill:
 	$(if $(START),,$(error 请提供 START=YYYY-MM-DD))

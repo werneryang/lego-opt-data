@@ -1,5 +1,5 @@
 # opt-data 配置模板
-# 复制为 config/opt-data.local.toml 或通过环境变量覆盖
+# 复制为 config/opt-data.snapshot.local.toml 或通过环境变量覆盖
 
 [ib]
 host = "127.0.0.1"

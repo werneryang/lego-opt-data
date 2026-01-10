@@ -9,6 +9,7 @@
 - Stock pipeline: `stock/stock-data/IMPLEMENTATION_PLAN.md`
 
 ## Cross-Project Milestones (Next 4-8 Weeks)
+- Unified dependency locks at repo root for shared environments.
 - Stock data MVP: daily bars + daily IV/HV + fundamentals + corporate actions (post-close).
 - Stock IV/HV history backfill: 1 year, then daily increments.
 - MCP exposure for stock datasets (read-only, consistent with opt-data).

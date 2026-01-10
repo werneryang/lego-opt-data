@@ -30,6 +30,9 @@ from opt_data.pipeline.enrichment import EnrichmentRunner
 from opt_data.pipeline.history import HistoryRunner
 from opt_data.ib.session import IBSession
 
+APP_ROOT = Path(__file__).resolve().parents[3]
+CONFIG_DIR = APP_ROOT / "config"
+
 # Page config
 st.set_page_config(
     page_title="Opt-Data Dashboard",
@@ -46,6 +49,18 @@ def load_universe_data(config_path):
         return cfg, univ
     except Exception:
         return None, []
+
+
+def _config_options() -> list[Path]:
+    candidates = [
+        "opt-data.snapshot.local.toml",
+        "opt-data.toml",
+        "opt-data.test.toml",
+    ]
+    options = [CONFIG_DIR / name for name in candidates if (CONFIG_DIR / name).exists()]
+    if not options:
+        options = [CONFIG_DIR / "opt-data.toml", CONFIG_DIR / "opt-data.test.toml"]
+    return options
 
 
 def _ui_client_id_pool(cfg):
@@ -74,7 +89,7 @@ def _ui_session_factory(cfg, *, market_data_type=None):
 
 def get_recent_errors(limit=50):
     """Load recent errors from jsonl logs."""
-    error_dir = Path("state/run_logs/errors")
+    error_dir = APP_ROOT / "state/run_logs/errors"
     if not error_dir.exists():
         return pd.DataFrame()
 
@@ -254,7 +269,8 @@ def render_history_tab(cfg, universe, *, lightweight_mode: bool = False):
         with c1:
             # Symbol selection
             univ_symbols = [u.symbol for u in universe] if universe else []
-            selected_symbols = st.multiselect("Symbols", univ_symbols, default=["AAPL"])
+            default_symbols = ["AAPL"] if "AAPL" in univ_symbols else (univ_symbols[:1] if univ_symbols else [])
+            selected_symbols = st.multiselect("Symbols", univ_symbols, default=default_symbols)
 
             if not selected_symbols:
                 st.warning("⚠️ No symbols selected. This will fetch the ENTIRE universe.")
@@ -514,8 +530,13 @@ def render_operations_tab(*, lightweight_mode: bool = True):
     col_cfg, col_date, col_date_btn = st.columns([2, 1, 2])
 
     with col_cfg:
-        config_options = ["config/opt-data.toml", "config/opt-data.test.toml"]
-        selected_config = st.selectbox("Config File", config_options, index=0)
+        config_options = _config_options()
+        selected_config = st.selectbox(
+            "Config File",
+            config_options,
+            index=0,
+            format_func=lambda path: Path(path).name,
+        )
 
     cfg, universe = load_universe_data(selected_config)
     if not cfg:
@@ -554,10 +575,11 @@ def render_operations_tab(*, lightweight_mode: bool = True):
     st.subheader(f"Data Status: {selected_date}")
 
     # Paths - CORRECTED to ib/chain
-    intraday_path = Path(f"data/clean/ib/chain/view=intraday/date={selected_date}")
-    close_path = Path(f"data/clean/ib/chain/view=close/date={selected_date}")
-    daily_path = Path(f"data/clean/ib/chain/view=daily_clean/date={selected_date}")
-    enrich_path = Path(f"data/clean/ib/chain/view=enrichment/date={selected_date}")
+    clean_base = Path(cfg.paths.clean)
+    intraday_path = clean_base / "view=intraday" / f"date={selected_date}"
+    close_path = clean_base / "view=close" / f"date={selected_date}"
+    daily_path = clean_base / "view=daily_clean" / f"date={selected_date}"
+    enrich_path = clean_base / "view=enrichment" / f"date={selected_date}"
 
     # Use fast stats in lightweight mode, skip expensive file counting
     if lightweight_mode:
@@ -679,7 +701,7 @@ def render_operations_tab(*, lightweight_mode: bool = True):
     st.divider()
     st.subheader("🧪 Weekend Backfill Status (Experiment)")
 
-    backfill_path = Path("data_test/raw/ib/historical_bars_weekend")
+    backfill_path = APP_ROOT / "data_test/raw/ib/historical_bars_weekend"
     if not backfill_path.exists():
         st.info(f"No experimental backfill data found at {backfill_path}")
     else:
@@ -1207,7 +1229,7 @@ def main():
 
     with tab_hist:
         # Load config for history tab
-        cfg_hist, univ_hist = load_universe_data("config/opt-data.toml")
+        cfg_hist, univ_hist = load_universe_data(_config_options()[0])
         render_history_tab(cfg_hist, univ_hist, lightweight_mode=lightweight_mode)
 
 

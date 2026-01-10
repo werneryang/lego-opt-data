@@ -47,5 +47,6 @@ tests/fixtures/option_chains/*.csv
 !tests/fixtures/option_chains/sample_*.csv
 
 # Local configuration
-config/opt-data.local.toml
+config/opt-data.snapshot.local.toml
+config/opt-data.streaming.local.toml
 config/universe.local.csv

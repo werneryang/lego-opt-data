@@ -5,6 +5,7 @@
 - Create ops/dev docs and runbook placeholders.
 
 ## Done
+- 2026-01-09: Adopt repo-root `requirements.lock` / `requirements-dev.lock` for shared environments.
 - Add stock config template (IB settings, paths, schedules).
 - Define stock universe file for S&P 500 (symbols + optional conid).
 - Implement daily bars fetcher and storage layout.

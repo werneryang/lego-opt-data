@@ -11,9 +11,9 @@
 
 | 场景 | IB_HOST | IB_PORT | IB_CLIENT_ID | 配置位置 | 备注 |
 | --- | --- | --- | --- | --- | --- |
-| 生产设备（本地 Gateway） | 127.0.0.1 | 4001 | 0-99（prod pool） | `config/opt-data.local.toml` / 环境变量 | Gateway 在本机运行 |
-| 开发设备（远程 Gateway） | 100.71.7.100 | 4001 | 100-199（remote pool） | `config/opt-data.local.toml` / 环境变量 | 直连远端 |
-| 开发设备（SSH 转发） | 127.0.0.1 | 4001 | 100-199（remote pool） | `config/opt-data.local.toml` / 环境变量 | 通过 SSH 本地端口转发到远端 |
+| 生产设备（本地 Gateway） | 127.0.0.1 | 4001 | 0-99（prod pool） | `config/opt-data.snapshot.local.toml` / 环境变量 | Gateway 在本机运行 |
+| 开发设备（远程 Gateway） | 100.71.7.100 | 4001 | 100-199（remote pool） | `config/opt-data.snapshot.local.toml` / 环境变量 | 直连远端 |
+| 开发设备（SSH 转发） | 127.0.0.1 | 4001 | 100-199（remote pool） | `config/opt-data.snapshot.local.toml` / 环境变量 | 通过 SSH 本地端口转发到远端 |
 
 ## 常用 data_test 脚本
 - AAPL 诊断/快照示例：
@@ -25,7 +25,7 @@
 
 ## MCP 本地只读接口（开发/测试）
 - 用途：仅在本地提供只读查询层，不影响生产采集与写入。
-- 安装（可选）：`pip install -e '.[mcp]'`
+- 安装（可选）：先完成仓库根目录 `requirements-dev.lock` 安装，再执行 `pip install -e '.[mcp]'`
 - 启动：`python -m opt_data.cli mcp-server --config config/opt-data.test.toml`
 - 默认读取：`data/clean`、`data/raw`、`state/run_logs`、`data/metrics.db`
 - 审计日志：`state/run_logs/mcp_audit.db`

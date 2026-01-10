@@ -33,7 +33,7 @@ legosmos/
 
 ## 开发机（必须同步）
 - MUST：拉取新结构代码，单一虚拟环境内执行多包 `pip install -e`。
-- MUST：本地配置继续指向旧数据路径（例如 `config/opt-data.local.toml`）。
+- MUST：本地配置继续指向旧数据路径（例如 `config/opt-data.snapshot.local.toml`）。
 - MUST：跑最小冒烟（AAPL/MSFT snapshot/rollup 任一链路）确认写入正常。
 - SHOULD：更新 IDE 路径、脚本入口与快捷命令。
 
@@ -45,6 +45,7 @@ cd /ABS/PATH/TO/legosmos
 python3.11 -m venv .venv
 source .venv/bin/activate
 pip install --upgrade pip
+pip install -r requirements.lock
 pip install -e option/opt-data -e option/opt-analysis -e shared
 # 可选：如果已创建 stock 包
 pip install -e stock/stock-data -e stock/stock-analysis
@@ -54,7 +55,7 @@ pip install -e stock/stock-data -e stock/stock-analysis
 # 进入 opt-data 子项目目录
 cd /ABS/PATH/TO/legosmos/option/opt-data
 # 配置准备（当前仍在 config/）
-cp config/opt-data.toml config/opt-data.local.toml
+cp config/opt-data.toml config/opt-data.snapshot.local.toml
 cp config/opt-data.toml config/opt-data.test.toml
 ```
 
@@ -79,6 +80,7 @@ cd /ABS/PATH/TO/legosmos
 python3.11 -m venv .venv
 source .venv/bin/activate
 pip install --upgrade pip
+pip install -r requirements.lock
 pip install -e option/opt-data -e option/opt-analysis -e shared
 ```
 
@@ -87,10 +89,10 @@ pip install -e option/opt-data -e option/opt-analysis -e shared
 cd /ABS/PATH/TO/legosmos/option/opt-data
 # 轻量验证（安全窗口执行，贴近日常：close-snapshot → rollup）
 export IB_MARKET_DATA_TYPE=2
-python -m opt_data.cli close-snapshot --date today --config config/opt-data.local.toml
-python -m opt_data.cli rollup --date today --config config/opt-data.local.toml
-python -m opt_data.cli selfcheck --date today --config config/opt-data.local.toml --log-max-total 1
-python -m opt_data.cli logscan --date today --config config/opt-data.local.toml --max-total 1
+python -m opt_data.cli close-snapshot --date today --config config/opt-data.snapshot.local.toml
+python -m opt_data.cli rollup --date today --config config/opt-data.snapshot.local.toml
+python -m opt_data.cli selfcheck --date today --config config/opt-data.snapshot.local.toml --log-max-total 1
+python -m opt_data.cli logscan --date today --config config/opt-data.snapshot.local.toml --max-total 1
 ```
 
 ## iMac 生产迁移清单（本机）
@@ -105,7 +107,7 @@ python -m opt_data.cli logscan --date today --config config/opt-data.local.toml 
 
 步骤（最小可运行路径）：
 1. 同步代码与 venv（按本手册“生产机”章节）。
-2. 生成本机生产配置：确认 `config/opt-data.local.toml` 已存在（不存在则 `cp config/opt-data.toml config/opt-data.local.toml`），并将 `paths.*` 改为绝对路径（示例按仓库根）：
+2. 生成本机生产配置：确认 `config/opt-data.snapshot.local.toml` 已存在（不存在则 `cp config/opt-data.toml config/opt-data.snapshot.local.toml`），并将 `paths.*` 改为绝对路径（示例按仓库根）：
 
 ```toml
 [paths]
@@ -136,8 +138,8 @@ scripts/ops/check_prod_schedule_remote.sh --host <imac_host> --repo /users/micha
 ```bash
 # shell alias（示例）
 export LEGOSMOS_ROOT="/ABS/PATH/TO/legosmos"
-alias opt-data-schedule='(cd "$LEGOSMOS_ROOT/option/opt-data" && python -m opt_data.cli schedule --live --config config/opt-data.local.toml)'
-alias opt-data-close='(cd "$LEGOSMOS_ROOT/option/opt-data" && python -m opt_data.cli close-snapshot --date today --config config/opt-data.local.toml)'
+alias opt-data-schedule='(cd "$LEGOSMOS_ROOT/option/opt-data" && python -m opt_data.cli schedule --live --config config/opt-data.snapshot.local.toml)'
+alias opt-data-close='(cd "$LEGOSMOS_ROOT/option/opt-data" && python -m opt_data.cli close-snapshot --date today --config config/opt-data.snapshot.local.toml)'
 ```
 
 ```bash

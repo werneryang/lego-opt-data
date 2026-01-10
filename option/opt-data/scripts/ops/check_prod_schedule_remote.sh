@@ -15,7 +15,7 @@ Required:
 Options:
   --user USER             SSH user (default: michaely)
   --date DATE             today or YYYY-MM-DD (default: today)
-  --config PATH           Remote config path (default: REMOTE_REPO/config/opt-data.local.toml)
+  --config PATH           Remote config path (default: REMOTE_REPO/config/opt-data.snapshot.local.toml)
   --label LABEL           launchd label (default: com.legosmos.opt-data.timer)
   --remote-script PATH    Remote check script path (default: REMOTE_REPO/scripts/ops/check_prod_schedule.sh)
   --dest DIR              Local directory to save report (default: ./state/run_logs/ops_checks)
@@ -69,7 +69,7 @@ if [[ -z "$HOST" || -z "$REMOTE_REPO" ]]; then
 fi
 
 REMOTE_SCRIPT="${REMOTE_SCRIPT:-$REMOTE_REPO/scripts/ops/check_prod_schedule.sh}"
-REMOTE_CONFIG="${REMOTE_CONFIG:-$REMOTE_REPO/config/opt-data.local.toml}"
+REMOTE_CONFIG="${REMOTE_CONFIG:-$REMOTE_REPO/config/opt-data.snapshot.local.toml}"
 
 mkdir -p "$DEST_DIR"
 STAMP_UTC="$(date -u +%Y%m%dT%H%M%SZ)"

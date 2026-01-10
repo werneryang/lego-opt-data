@@ -22,6 +22,10 @@
 - Do not mix configs between subprojects.
 - Ops runbooks and schedules must be maintained per subproject.
 
+## Dependency locking
+- Repo-root `requirements.lock` and `requirements-dev.lock` are the canonical lockfiles for shared environments.
+- Any subproject `pyproject.toml` change requires regenerating root locks and updating affected docs.
+
 ## Change hygiene
 - Keep changes scoped to the subproject unless explicitly cross-project.
 - If a change affects both, document it in both subproject PLAN.md files and in the root rollup (if used).

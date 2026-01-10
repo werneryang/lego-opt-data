@@ -36,11 +36,11 @@ trap cleanup EXIT INT TERM HUP
 PYTHON="$REPO_ROOT/.venv/bin/python"
 if [[ ! -x "$PYTHON" ]]; then
   echo "[opt-data-streaming] missing venv python: $PYTHON" >&2
-  echo "[opt-data-streaming] create it with: python3.11 -m venv .venv && .venv/bin/pip install -e '.[dev]'" >&2
+  echo "[opt-data-streaming] create it with: python3.11 -m venv .venv && .venv/bin/pip install -r ../../requirements-dev.lock && .venv/bin/pip install -e . --no-deps" >&2
   exit 1
 fi
 
-CONFIG_PATH="${OPT_DATA_CONFIG:-$REPO_ROOT/config/opt-data.local.toml}"
+CONFIG_PATH="${OPT_DATA_CONFIG:-$REPO_ROOT/config/opt-data.streaming.local.toml}"
 if [[ ! -f "$CONFIG_PATH" ]]; then
   echo "[opt-data-streaming] config not found: $CONFIG_PATH" >&2
   exit 1
