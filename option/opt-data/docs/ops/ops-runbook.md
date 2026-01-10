@@ -6,27 +6,30 @@
 > 目标：一条命令启动当天调度；一条命令打开 UI；收盘后两条命令完成验收。
 
 - 环境前置：
-- IB Gateway/TWS 已启动并登录；端口/账号与 `config/opt-data.local.toml` 一致（默认 `IB_HOST=127.0.0.1`、`IB_PORT=4001`）。
+- IB Gateway/TWS 已启动并登录；端口/账号与 `config/opt-data.snapshot.local.toml` 一致（默认 `IB_HOST=127.0.0.1`、`IB_PORT=4001`）。
   - 调度时区必须是 ET：`TZ=America/New_York`（launchd/systemd 也要显式设置）。
-  - 使用本地生产配置：`config/opt-data.local.toml`（从 `config/opt-data.toml` 复制并按本机修改；已在 `.gitignore`）。
+  - 使用本地生产配置：`config/opt-data.snapshot.local.toml`（从 `config/opt-data.toml` 复制并按本机修改；已在 `.gitignore`）。
 
 - 启动调度（推荐在 09:20–09:29 ET 启动）：
-  - 手动值守（仅调度单个交易日，进程需保持到次日 04:30 enrichment 结束）：`python -m opt_data.cli schedule --live --config config/opt-data.local.toml`
-  - 无人值守（一次启动，交易日每天自动初始化 09:20 ET）：`python -m opt_data.cli schedule --live --continuous --config config/opt-data.local.toml`
-  - 定时器模式（适配 launchd/systemd timer/cron：跑完当日任务自动退出，第二天由定时器重启）：`python -m opt_data.cli schedule --live --exit-when-idle --config config/opt-data.local.toml`
+  - 手动值守（仅调度单个交易日，进程需保持到次日 04:30 enrichment 结束）：`python -m opt_data.cli schedule --live --config config/opt-data.snapshot.local.toml`
+  - 无人值守（一次启动，交易日每天自动初始化 09:20 ET）：`python -m opt_data.cli schedule --live --continuous --config config/opt-data.snapshot.local.toml`
+  - 定时器模式（适配 launchd/systemd timer/cron：跑完当日任务自动退出，第二天由定时器重启）：`python -m opt_data.cli schedule --live --exit-when-idle --config config/opt-data.snapshot.local.toml`
   - 常用参数：`--symbols AAPL,MSFT`（临时缩小范围）、`--date 2025-12-15`（跑指定交易日；不适用于 `--continuous`）
-- 启动盘中 streaming 订阅（交易日 09:35–16:00 ET，独立进程）：由 timer 在 09:35 ET 拉起 `python -m opt_data.cli streaming --config config/opt-data.local.toml --duration 23100`
+- 启动盘中 streaming 订阅（交易日 09:35–16:15 ET，独立进程）：推荐用 `scripts/ops/streaming_loop.py` 长期运行；或由 timer 在 09:35 ET 拉起 `python -m opt_data.cli streaming --config config/opt-data.streaming.local.toml --duration 23100`
+- 纯终端长期值守（不依赖 launchd，需开两个终端窗口）：
+  - 终端 1（snapshot 调度）：`TZ=America/New_York .venv/bin/python -m opt_data.cli schedule --live --continuous --config config/opt-data.snapshot.local.toml`
+  - 终端 2（streaming）：`./scripts/ops/streaming_loop.py`
 
 - 开始前快速预演（只打印计划并立即执行当日任务，适合验证配置；不建议每天都跑）：
-  - `python -m opt_data.cli schedule --simulate --config config/opt-data.local.toml`
+  - `python -m opt_data.cli schedule --simulate --config config/opt-data.snapshot.local.toml`
 
 - 打开 UI（Dashboard/Operations 面板）：
   - `streamlit run src/opt_data/dashboard/app.py`
   - `streamlit run src/opt_data/dashboard/app.py --server.address 0.0.0.0`
 
 - 收盘后验收（生成 selfcheck/logscan/metrics 输出；失败会返回非零退出码）：
-  - `python -m opt_data.cli selfcheck --date today --config config/opt-data.local.toml --log-max-total 1`
-  - `python -m opt_data.cli logscan --date today --config config/opt-data.local.toml --max-total 1 --write-summary`
+  - `python -m opt_data.cli selfcheck --date today --config config/opt-data.snapshot.local.toml --log-max-total 1`
+  - `python -m opt_data.cli logscan --date today --config config/opt-data.snapshot.local.toml --max-total 1 --write-summary`
 
 ## 远程查看生产设备状态
 > 目标：不登录桌面也能看调度/采集是否正常。
@@ -41,16 +44,16 @@
   - 任务日志：`state/run_logs/<task>/`（snapshot/rollup/enrichment）
   - 错误汇总：`state/run_logs/errors/errors_YYYYMMDD.log` 与 `state/run_logs/errors/summary_YYYYMMDD.json`
 - 方案 C（验收信号）：远程运行验收命令并观察退出码
-  - `python -m opt_data.cli selfcheck --date today --config config/opt-data.local.toml --log-max-total 1`
-  - `python -m opt_data.cli logscan --date today --config config/opt-data.local.toml --max-total 1 --write-summary`
+  - `python -m opt_data.cli selfcheck --date today --config config/opt-data.snapshot.local.toml --log-max-total 1`
+  - `python -m opt_data.cli logscan --date today --config config/opt-data.snapshot.local.toml --max-total 1 --write-summary`
 
 ## 无人值守运行（推荐）
 > 目标：机器重启/进程崩溃后自动拉起；无需每天手动重启调度。
 
 - 方案 A（**单进程常驻**）：使用 `--continuous`，进程每天 09:20 ET 自动初始化当日任务；再用 launchd/systemd 设置崩溃自动重启。
-  - `python -m opt_data.cli schedule --live --continuous --config config/opt-data.local.toml`
+  - `python -m opt_data.cli schedule --live --continuous --config config/opt-data.snapshot.local.toml`
 - 方案 B（**每日一次性任务**）：使用 `--exit-when-idle`，跑完当日任务自动退出；用 launchd/systemd timer/cron 每天 09:20 ET 拉起一次。
-  - `python -m opt_data.cli schedule --live --exit-when-idle --config config/opt-data.local.toml`
+  - `python -m opt_data.cli schedule --live --exit-when-idle --config config/opt-data.snapshot.local.toml`
 
 运维提示（两种方案都适用）：
 - launchd/systemd 必须显式设置 `TZ=America/New_York`，避免调度时区漂移。
@@ -71,12 +74,13 @@
 - 若看到 “lock exists” 报错，说明上一次任务未结束（或异常退出遗留锁目录）；可检查进程后清理 `state/run_locks/opt-data-daily.lock` 再重试。
 
 ## Streaming 订阅无人值守运行
-> 目标：交易日 09:35–16:00 ET 启动，收盘后自动退出。
+> 目标：交易日 09:35–16:15 ET 启动，收盘后自动退出。
 
-- 方式：使用 launchd/systemd timer/cron 在 09:35 ET 拉起 `scripts/launchd/opt-data-streaming.sh`，脚本会调用 `scripts/ops/streaming_duration.py` 自动计算 `--duration` 并在收盘后退出。
+- 方式 A（纯 Python 常驻）：运行 `scripts/ops/streaming_loop.py`，每天 09:35 ET 自动启动，并调用 `scripts/ops/streaming_duration.py` 计算 `--duration` 在收盘后退出。
+- 方式 B（定时器）：使用 launchd/systemd timer/cron 在 09:35 ET 拉起 `scripts/launchd/opt-data-streaming.sh`，脚本会调用 `scripts/ops/streaming_duration.py` 自动计算 `--duration` 并在收盘后退出。
 - macOS launchd：复制模板 `docs/ops/launchd/com.legosmos.opt-data.streaming.plist` 到 `~/Library/LaunchAgents/` 并按本机路径调整。
-- 手动运行示例：`python -m opt_data.cli streaming --config config/opt-data.local.toml --duration 23100`
-- 交易日控制：timer/cron 需配合交易日历（节假日/早收盘）跳过或缩短运行；早收盘识别依赖 `pandas-market-calendars`，缺失时默认按 16:00 计算。
+- 手动运行示例：`python -m opt_data.cli streaming --config config/opt-data.streaming.local.toml --duration 23100`
+- 交易日控制：timer/cron 需配合交易日历（节假日/早收盘）跳过或缩短运行；早收盘识别依赖 `pandas-market-calendars`。
 - 时区：与调度一样，确保运行环境显式设置 `TZ=America/New_York`。
 
 ## 当前生产范围与运行参数
@@ -89,12 +93,12 @@
 ## 运行前准备
 1. 启动 IB Gateway/TWS（默认：`127.0.0.1:4001`），确认登录账号具备美股期权**实时行情**权限；若仅有延迟权限，允许自动降级。
 2. 推荐使用项目专用虚拟环境（避免污染 base Conda 并触发 NumPy 升级冲突）：
-   - venv 路径：`python3.11 -m venv .venv && .venv/bin/pip install --upgrade pip && .venv/bin/pip install -e '.[dev]'`
-   - 或 Conda 隔离：`conda create -n opt-data python=3.11 && conda activate opt-data && pip install -e '.[dev]'`
-   - 也可运行 `make install`（确保 `python3` 指向 3.11）。
+   - venv 路径（仓库根目录执行）：`python3.11 -m venv .venv && .venv/bin/pip install --upgrade pip && .venv/bin/pip install -r requirements-dev.lock && .venv/bin/pip install -e option/opt-data --no-deps`
+   - 或 Conda 隔离：`conda create -n opt-data python=3.11 && conda activate opt-data && pip install -r requirements-dev.lock && pip install -e option/opt-data --no-deps`
+   - 也可运行仓库根目录 `make install`（确保 `python3` 指向 3.11）。
 3. 依赖与 SDK 规范：
    - 统一使用 `ib_insync` 作为 IBKR Python 接入层；项目不直接使用 `ibapi` 原生包。
-   - 安装：`pip install -e .[dev]` 已包含 `ib-insync`；无需额外安装 `ibapi`。
+   - 安装：仓库根目录 `requirements-dev.lock` 已包含 `ib-insync`；无需额外安装 `ibapi`。
 4. Snapshot 配置与合约发现（2025 升级）：
    - 发现阶段（Discovery）：使用 `reqSecDefOptParams()` + 批量 `qualifyContracts/qualifyContractsAsync`（仅 `SMART`）。不再调用 `reqContractDetails`；不对发现阶段施加应用层限流，采用批量（建议每批 25–50 个）资格化并遵循 IB pacing。
    - 采集阶段（Snapshot）：`exchange` / `fallback_exchanges` 为订阅首选与备用路由（默认 `SMART`，必要时回退 `CBOE`,`CBOEOPT`）。
@@ -114,11 +118,11 @@
 
 | 场景 | IB_HOST | IB_PORT | IB_CLIENT_ID | 配置位置 | 备注 |
 | --- | --- | --- | --- | --- | --- |
-| 生产设备（本地 Gateway） | 127.0.0.1 | 4001 | 0-99（prod pool） | `config/opt-data.local.toml` / 环境变量 | Gateway 在本机运行 |
-| 开发设备（远程 Gateway） | 100.71.7.100 | 4001 | 100-199（remote pool） | `config/opt-data.local.toml` / 环境变量 | 直连远端 |
-| 开发设备（SSH 转发） | 127.0.0.1 | 4001 | 100-199（remote pool） | `config/opt-data.local.toml` / 环境变量 | 通过 SSH 本地端口转发到远端 |
+| 生产设备（本地 Gateway） | 127.0.0.1 | 4001 | 0-99（prod pool） | `config/opt-data.snapshot.local.toml` / 环境变量 | Gateway 在本机运行 |
+| 开发设备（远程 Gateway） | 100.71.7.100 | 4001 | 100-199（remote pool） | `config/opt-data.snapshot.local.toml` / 环境变量 | 直连远端 |
+| 开发设备（SSH 转发） | 127.0.0.1 | 4001 | 100-199（remote pool） | `config/opt-data.snapshot.local.toml` / 环境变量 | 通过 SSH 本地端口转发到远端 |
 7. 配置文件准备：
-   - **本地/生产配置**：`cp config/opt-data.toml config/opt-data.local.toml`，在此文件中修改本地特定配置（如端口、路径），该文件已加入 `.gitignore`。
+   - **本地/生产配置**：`cp config/opt-data.toml config/opt-data.snapshot.local.toml`，在此文件中修改本地特定配置（如端口、路径），该文件已加入 `.gitignore`。
    - **测试配置**：`cp config/opt-data.toml config/opt-data.test.toml`，并将 `paths.raw/clean/state/contracts_cache/run_logs` 指向 `data_test/`、`state_test/`。
 8. 核对核心配置：
    - `[acquisition] mode="snapshot"`、`market_data_type=1`（默认实时，enrichment 必需）、`allow_fallback_to_delayed=true`
@@ -160,8 +164,8 @@
 
 ## MCP 只读分析接口（本地）
 - 目的：为模型/排障提供只读查询层（不直连 IB、不写库）。可读范围：`data/clean`、`data/raw`、`state/run_logs`、`data/metrics.db`。
-- 依赖安装（可选）：`pip install -e '.[mcp]'`
-- 启动（stdio 模式）：`python -m opt_data.cli mcp-server --config config/opt-data.local.toml`
+- 依赖安装（可选）：先完成仓库根目录 `requirements-dev.lock` 安装，再执行 `pip install -e '.[mcp]'`
+- 启动（stdio 模式）：`python -m opt_data.cli mcp-server --config config/opt-data.snapshot.local.toml`
 - 常用参数：`--allow-raw/--allow-clean`、`--audit-db <path>`、`--log-level INFO|DEBUG`
 - 审计落地：默认 `state/run_logs/mcp_audit.db`
 - 工具清单（MVP）：`health_overview`、`run_status_overview`、`list_recent_runs`、`get_partition_issues`、`get_chain_sample`
@@ -180,7 +184,7 @@
 - 详细设计与实现背景：`docs/architecture/dual-universe-implementation.md`。
 
 ## 调度与部署（生产）
-- 推荐：直接在守护进程/终端常驻运行 `python -m opt_data.cli schedule --live --config config/opt-data.local.toml`。
+- 推荐：直接在守护进程/终端常驻运行 `python -m opt_data.cli schedule --live --config config/opt-data.snapshot.local.toml`。
 - 时间表（ET）：09:30–16:00 每 30 分钟 snapshot；17:30 close-snapshot → rollup；次日 04:30 enrichment；收盘后跑 `selfcheck/logscan`。
 - 若需系统级守护：用 launchd/systemd 包装同一条命令，并在环境中设置 `TZ=America/New_York`、`IB_*` 与虚拟环境 `PATH`；日志指向 `state/run_logs/`。
 

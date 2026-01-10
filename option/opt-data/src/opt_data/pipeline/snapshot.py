@@ -103,7 +103,7 @@ def _slot_schedule(trade_date: date, tz_name: str, slot_minutes: int = 30) -> li
     end_dt = session.market_close.astimezone(tz)
 
     if end_dt <= start:
-        end_dt = datetime.combine(trade_date, dtime(hour=16, minute=0), tzinfo=tz)
+        end_dt = datetime.combine(trade_date, dtime(hour=16, minute=15), tzinfo=tz)
         start = datetime.combine(trade_date, dtime(hour=9, minute=30), tzinfo=tz)
 
     slots: list[SnapshotSlot] = []

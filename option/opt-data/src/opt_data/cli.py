@@ -287,6 +287,7 @@ def backfill(
     ),
 ) -> None:
     cfg = load_config(Path(config) if config else None)
+    logging.basicConfig(level=cfg.logging.level.upper())
 
     def parse_date(value: str) -> date:
         if value == "today":
@@ -1350,8 +1351,12 @@ def streaming(
     rebalance_interval: float = typer.Option(
         1.0, "--rebalance-interval", help="Check rebalance condition every N seconds"
     ),
+    metrics_interval: float = typer.Option(
+        300.0, "--metrics-interval", help="Log buffer/flush metrics every N seconds"
+    ),
 ) -> None:
     cfg = load_config(Path(config) if config else None)
+    logging.basicConfig(level=cfg.logging.level.upper(), force=True)
     symbol_list = [s.strip().upper() for s in symbols.split(",") if s.strip()] if symbols else None
 
     runner = StreamingRunner(cfg)
@@ -1360,6 +1365,7 @@ def streaming(
         duration_seconds=duration,
         flush_interval=max(flush_interval, 1.0),
         rebalance_check_interval=max(rebalance_interval, 0.5),
+        metrics_interval=max(metrics_interval, 0.0),
     )
     typer.echo(
         "[streaming] "

@@ -29,6 +29,7 @@ logger = logging.getLogger(__name__)
 DEFAULT_FLUSH_INTERVAL = 15.0
 DEFAULT_REBALANCE_INTERVAL = 1.0
 DEFAULT_MAX_BUFFER_ROWS = 5000
+DEFAULT_METRICS_INTERVAL = 300.0
 
 
 @dataclass
@@ -64,6 +65,7 @@ class StreamingRunner:
         base_root = Path(cfg.paths.raw).parent / "streaming"
         self._writer = writer or StreamingWriter(cfg, base_root)
         self._now_fn = now_fn or datetime.utcnow
+        self._et_tz = ZoneInfo("America/New_York")
 
         self._buffers: dict[str, list[dict]] = {"options": [], "spot": [], "bars": []}
         self._lock = threading.Lock()
@@ -83,6 +85,8 @@ class StreamingRunner:
         self._spot_rows = 0
         self._bar_rows = 0
         self._rebalances = 0
+        self._last_flush_rows = 0
+        self._last_flush_at: datetime | None = None
 
     def run(
         self,
@@ -93,6 +97,7 @@ class StreamingRunner:
         flush_interval: float = DEFAULT_FLUSH_INTERVAL,
         rebalance_check_interval: float = DEFAULT_REBALANCE_INTERVAL,
         max_buffer_rows: int = DEFAULT_MAX_BUFFER_ROWS,
+        metrics_interval: float = DEFAULT_METRICS_INTERVAL,
     ) -> StreamingResult:
         ingest_id = uuid.uuid4().hex
         started_at = datetime.utcnow()
@@ -128,6 +133,7 @@ class StreamingRunner:
 
             next_flush = self._now_fn()
             next_rebalance = self._now_fn()
+            next_metrics = self._now_fn()
             end_time = (
                 self._now_fn() + _timedelta_seconds(duration_seconds)
                 if duration_seconds
@@ -153,6 +159,22 @@ class StreamingRunner:
                         self._flush_buffers()
                         next_flush = now + _timedelta_seconds(flush_interval)
                     self._flush_if_large(max_buffer_rows)
+                    if metrics_interval > 0 and now >= next_metrics:
+                        buffer_rows = self._buffer_rows()
+                        last_flush_et = None
+                        if self._last_flush_at:
+                            last_flush_et = (
+                                self._last_flush_at.replace(tzinfo=ZoneInfo("UTC"))
+                                .astimezone(self._et_tz)
+                                .isoformat()
+                            )
+                        logger.info(
+                            "[streaming:metrics] buffer_rows=%s last_flush_rows=%s last_flush_at=%s",
+                            buffer_rows,
+                            self._last_flush_rows,
+                            last_flush_et or "none",
+                        )
+                        next_metrics = now + _timedelta_seconds(metrics_interval)
                     ib.sleep(0.5)
             except KeyboardInterrupt:
                 logger.info("Streaming interrupted by user")
@@ -545,6 +567,7 @@ class StreamingRunner:
                 if buf:
                     drained[kind] = buf[:]
                     self._buffers[kind] = []
+        flushed_rows = 0
         for kind, rows in drained.items():
             count = self._writer.write_records(kind, rows)
             if kind == "options":
@@ -553,6 +576,14 @@ class StreamingRunner:
                 self._spot_rows += count
             elif kind == "bars":
                 self._bar_rows += count
+            flushed_rows += count
+        if flushed_rows:
+            self._last_flush_rows = flushed_rows
+            self._last_flush_at = self._now_fn()
+
+    def _buffer_rows(self) -> int:
+        with self._lock:
+            return sum(len(buf) for buf in self._buffers.values())
 
     def _flush_if_large(self, max_rows: int) -> None:
         if max_rows <= 0:

@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import datetime, date, time
+from datetime import datetime, date, time, timedelta
 from zoneinfo import ZoneInfo
 
 try:  # optional for offline environments
@@ -13,6 +13,7 @@ except Exception:  # pragma: no cover
 ET = ZoneInfo("America/New_York")
 DEFAULT_OPEN_TIME = time(hour=9, minute=30)
 DEFAULT_CLOSE_TIME = time(hour=16, minute=0)
+INTRADAY_CLOSE_GRACE_MINUTES = 15
 
 
 @dataclass(frozen=True)
@@ -41,6 +42,7 @@ def get_trading_session(d: date) -> TradingSession:
 
     default_open = datetime.combine(d, DEFAULT_OPEN_TIME, tzinfo=ET)
     default_close = datetime.combine(d, DEFAULT_CLOSE_TIME, tzinfo=ET)
+    default_close = default_close + timedelta(minutes=INTRADAY_CLOSE_GRACE_MINUTES)
 
     if mcal is None:
         return TradingSession(default_open, default_close, False)
@@ -53,10 +55,11 @@ def get_trading_session(d: date) -> TradingSession:
 
     row = schedule.iloc[0]
     market_open = row["market_open"].tz_convert(ET).to_pydatetime()
-    market_close = row["market_close"].tz_convert(ET).to_pydatetime()
+    market_close_raw = row["market_close"].tz_convert(ET).to_pydatetime()
 
-    if market_close <= market_open:
+    if market_close_raw <= market_open:
         return TradingSession(default_open, default_close, False)
 
-    early_close = market_close.time() < DEFAULT_CLOSE_TIME
+    early_close = market_close_raw.time() < DEFAULT_CLOSE_TIME
+    market_close = market_close_raw + timedelta(minutes=INTRADAY_CLOSE_GRACE_MINUTES)
     return TradingSession(market_open, market_close, early_close)
