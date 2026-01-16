@@ -30,7 +30,7 @@ class DateTimeEncoder(json.JSONEncoder):
 
 # ---- Fixed parameters -------------------------------------------------------
 HOST = "127.0.0.1"
-PORT = 4001
+PORT = 7496
 CLIENT_ID = 210  # Different client ID
 SYMBOLS = ["AAPL"]
 TRADE_DATE = "2025-12-18"

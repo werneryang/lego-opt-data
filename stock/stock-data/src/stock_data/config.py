@@ -73,6 +73,7 @@ class MCPConfig:
     days: int
     allow_raw: bool
     allow_clean: bool
+    enabled_tools: list[str]
     audit_db: Path
 
 
@@ -182,7 +183,7 @@ def load_config(path: Path) -> AppConfig:
 
     ib = IBConfig(
         host=str(ib_cfg.get("host", "127.0.0.1")),
-        port=int(ib_cfg.get("port", 4001)),
+        port=int(ib_cfg.get("port", 7496)),
         client_id=_parse_client_id(ib_cfg.get("client_id", -1)),
         market_data_type=int(ib_cfg.get("market_data_type", 1)),
         client_id_pool=client_id_pool,
@@ -203,7 +204,7 @@ def load_config(path: Path) -> AppConfig:
         ),
     )
     universe = UniverseConfig(
-        file=_resolve_path(base, universe_cfg.get("file", "config/universe.csv")),
+        file=_resolve_path(base, universe_cfg.get("file", "config/stock-universe.csv")),
         refresh_days=int(universe_cfg.get("refresh_days", 30)),
     )
     storage = StorageConfig(
@@ -217,6 +218,12 @@ def load_config(path: Path) -> AppConfig:
         days=int(mcp_cfg.get("days", 3)),
         allow_raw=bool(mcp_cfg.get("allow_raw", True)),
         allow_clean=bool(mcp_cfg.get("allow_clean", True)),
+        enabled_tools=str(
+            mcp_cfg.get(
+                "enabled_tools",
+                "health_overview,run_status_overview,list_recent_runs",
+            )
+        ).split(","),
         audit_db=_resolve_path(base, mcp_cfg.get("audit_db", "state/run_logs/mcp_audit.db")),
     )
 

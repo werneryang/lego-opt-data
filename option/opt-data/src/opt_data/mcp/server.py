@@ -22,9 +22,7 @@ def _load_mcp_sdk() -> tuple[Any, Any, Any, Any]:
         from mcp.server.stdio import stdio_server  # type: ignore
         from mcp.types import Tool, TextContent  # type: ignore
     except Exception as exc:  # pragma: no cover - optional dependency
-        raise RuntimeError(
-            "MCP SDK not installed. Install with: pip install -e .[mcp]"
-        ) from exc
+        raise RuntimeError("MCP SDK not installed. Install with: pip install -e .[mcp]") from exc
     return Server, stdio_server, Tool, TextContent
 
 

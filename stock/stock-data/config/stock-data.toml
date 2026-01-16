@@ -2,7 +2,7 @@
 
 [ib]
 host = "127.0.0.1"
-port = 4001
+port = 7496
 client_id = -1
 market_data_type = 1
 
@@ -26,7 +26,7 @@ state = "state"
 corporate_actions = "config/corporate_actions.csv"
 
 [universe]
-file = "config/universe.csv"
+file = "config/stock-universe.csv"
 refresh_days = 30
 
 [storage]
@@ -40,4 +40,5 @@ limit = 200
 days = 3
 allow_raw = true
 allow_clean = true
+enabled_tools = ["health_overview", "run_status_overview", "list_recent_runs"]
 audit_db = "state/run_logs/mcp_audit.db"

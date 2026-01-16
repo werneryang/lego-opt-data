@@ -3,7 +3,7 @@
 Minimal IB Gateway/TWS connect smoke test (ib_insync).
 
 Usage:
-  python scripts/ib_connect_smoke.py --host 127.0.0.1 --port 4001 --client-id 230
+  python scripts/ib_connect_smoke.py --host 127.0.0.1 --port 7496 --client-id 230
 """
 
 from __future__ import annotations
@@ -34,4 +34,3 @@ def main() -> int:
 
 if __name__ == "__main__":
     raise SystemExit(main())
-

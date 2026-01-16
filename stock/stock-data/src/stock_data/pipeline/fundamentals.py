@@ -11,7 +11,7 @@ import uuid
 from dataclasses import dataclass
 from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
-from typing import Any, Callable, Iterable, List
+from typing import Any, Iterable, List
 from zoneinfo import ZoneInfo
 
 import pandas as pd
@@ -85,9 +85,7 @@ def _parse_min_fields(report_type: str, payload: Any) -> dict[str, Any]:
             or metrics.get("peTTM")
         ),
         "eps_ttm": _float(
-            ratios.get("netIncomePerShareTTM")
-            or metrics.get("epsTTM")
-            or metrics.get("eps")
+            ratios.get("netIncomePerShareTTM") or metrics.get("epsTTM") or metrics.get("eps")
         ),
         "sector": profile.get("sector"),
         "industry": profile.get("industry"),

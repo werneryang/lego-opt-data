@@ -391,7 +391,7 @@ def main() -> None:
         help="Fail if the requested --strike cannot be qualified for the selected expiry",
     )
     parser.add_argument("--host", default=os.getenv("IB_HOST", "127.0.0.1"))
-    parser.add_argument("--port", type=int, default=int(os.getenv("IB_PORT", "4001")))
+    parser.add_argument("--port", type=int, default=int(os.getenv("IB_PORT", "7496")))
     parser.add_argument("--client-id", type=int, default=int(os.getenv("IB_CLIENT_ID", "210")))
     parser.add_argument(
         "--connect-timeout-sec",

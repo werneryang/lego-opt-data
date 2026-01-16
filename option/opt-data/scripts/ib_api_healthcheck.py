@@ -74,7 +74,7 @@ def _setup_logging(verbosity: int) -> None:
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="IB Gateway/TWS API healthcheck")
     parser.add_argument("--host", default="127.0.0.1")
-    parser.add_argument("--port", type=int, default=4001)
+    parser.add_argument("--port", type=int, default=7496)
     parser.add_argument("--client-id", type=int, default=210)
     parser.add_argument("--connect-timeout", type=float, default=15.0)
     parser.add_argument("--retries", type=int, default=2)
@@ -146,7 +146,7 @@ def main(argv: list[str] | None = None) -> int:
     logger.error(
         "If TCP connects but ib_insync times out, check IB Gateway/TWS UI:\n"
         "- Configure -> API -> Settings: enable 'ActiveX and Socket Clients'\n"
-        "- Confirm the socket port matches --port (live default 4001; paper default 4002; TWS default 7497)\n"
+        "- Confirm the socket port matches --port (TWS live default 7496; TWS paper 7497; IB Gateway live 4001; paper 4002)\n"
         "- Ensure Gateway is fully logged in (not waiting on 2FA/CHALLENGE) and not locked\n"
         "- If 'Use SSL' for API is enabled, disable it (ib_insync expects the plain socket API)"
     )
@@ -155,4 +155,3 @@ def main(argv: list[str] | None = None) -> int:
 
 if __name__ == "__main__":
     raise SystemExit(main())
-

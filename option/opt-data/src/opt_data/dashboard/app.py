@@ -269,7 +269,9 @@ def render_history_tab(cfg, universe, *, lightweight_mode: bool = False):
         with c1:
             # Symbol selection
             univ_symbols = [u.symbol for u in universe] if universe else []
-            default_symbols = ["AAPL"] if "AAPL" in univ_symbols else (univ_symbols[:1] if univ_symbols else [])
+            default_symbols = (
+                ["AAPL"] if "AAPL" in univ_symbols else (univ_symbols[:1] if univ_symbols else [])
+            )
             selected_symbols = st.multiselect("Symbols", univ_symbols, default=default_symbols)
 
             if not selected_symbols:
@@ -412,7 +414,7 @@ def render_history_tab(cfg, universe, *, lightweight_mode: bool = False):
                         tab_data, tab_chart = st.tabs(["Data Table", "Visualization"])
 
                         with tab_data:
-                            st.dataframe(df, use_container_width=True)
+                            st.dataframe(df, width="stretch")
 
                         with tab_chart:
                             if "close" in df.columns:
@@ -428,7 +430,7 @@ def render_history_tab(cfg, universe, *, lightweight_mode: bool = False):
                                     )
                                     .properties(title="Close Price Distribution (Sampled)")
                                 )
-                                st.altair_chart(c, use_container_width=True)
+                                st.altair_chart(c, width="stretch")
                             else:
                                 st.info("No 'close' column to chart.")
 
@@ -500,7 +502,7 @@ def render_history_tab(cfg, universe, *, lightweight_mode: bool = False):
                     t1, t2 = st.tabs(["Data Table", "Chart"])
 
                     with t1:
-                        st.dataframe(df, use_container_width=True)
+                        st.dataframe(df, width="stretch")
 
                     with t2:
                         if "close" in df.columns and "date" in df.columns:
@@ -515,7 +517,7 @@ def render_history_tab(cfg, universe, *, lightweight_mode: bool = False):
                                 .properties(title=f"{bf_symbol} - {selected_file}")
                                 .interactive()
                             )
-                            st.altair_chart(chart, use_container_width=True)
+                            st.altair_chart(chart, width="stretch")
                         else:
                             st.info("Chart requires 'date' and 'close' columns.")
 
@@ -1025,7 +1027,7 @@ def render_operations_tab(*, lightweight_mode: bool = True):
                     st.caption(
                         f"Row cap: {row_limit_default} (increase by disabling lightweight mode)"
                     )
-                    st.dataframe(df_close, use_container_width=True)
+                    st.dataframe(df_close, width="stretch")
 
         st.divider()
 
@@ -1117,7 +1119,7 @@ def render_operations_tab(*, lightweight_mode: bool = True):
                     st.caption(
                         f"Row cap: {row_limit_default} (increase by disabling lightweight mode)"
                     )
-                    st.dataframe(df_rollup, use_container_width=True)
+                    st.dataframe(df_rollup, width="stretch")
 
         st.divider()
 
@@ -1212,7 +1214,7 @@ def render_operations_tab(*, lightweight_mode: bool = True):
                     st.caption(
                         f"Row cap: {row_limit_default} (increase by disabling lightweight mode)"
                     )
-                    st.dataframe(df_oi, use_container_width=True)
+                    st.dataframe(df_oi, width="stretch")
 
     st.divider()
 

@@ -28,6 +28,7 @@
 - **QA 与监控**：槽位覆盖率 ≥90%、去重（`trade_date, sample_time, conid`）、IV/Greeks 范围、rollup 回退告警、pacing 监控、延迟行情与缺失字段标记。
 - **调度与运维**：CLI `snapshot`/`rollup`/`enrichment` 命令、配置模板、日志/状态目录、集中式错误日志（`state/run_logs/errors/`），故障恢复与扩容流程；仓库卫生（对比/实验输出目录默认忽略，提供 `make clean-compare`）。
 - **结构迁移与多包布局**：按 `option/opt-data`、`option/opt-analysis`、`stock/stock-data`、`stock/stock-analysis`、`shared`、`configs` 拆分，多包独立但共用运行环境；依赖统一锁定为仓库根目录 `requirements.lock`/`requirements-dev.lock`；数据根通过配置指向旧路径，`data_lake/` 仅占位；迁移步骤见 `docs/ops/migration-minimal-downtime.md`。
+- **CI/质量门禁**：GitHub Actions 在仓库根目录执行 `make install`，并分别在 `option/opt-data` 与 `stock/stock-data` 运行 lint/test，确保锁文件与子项目配置一致。
 - **MCP 只读分析接口（MVP）**：本地 CLI 启动 server；只读 data/clean 与 data/raw；运行状态来源 state/run_logs + data/metrics.db；工具集 v1（health_overview、run_status_overview、list_recent_runs、get_partition_issues、get_chain_sample）；强制 limit/时间窗 + 统一 meta（limit/clamped/source）+ 审计日志。
 
 ## 自我检查与验证

@@ -67,7 +67,20 @@ def _cfg(tmp_path: Path) -> AppConfig:
         observability=ObservabilityConfig(
             metrics_db_path=tmp_path / "metrics.db", webhook_url=None
         ),
-        mcp=MCPConfig(limit=200, days=3, allow_raw=True, allow_clean=True),
+        mcp=MCPConfig(
+            limit=200,
+            days=3,
+            allow_raw=True,
+            allow_clean=True,
+            enabled_tools=[
+                "health_overview",
+                "run_status_overview",
+                "list_recent_runs",
+                "get_partition_issues",
+                "get_chain_sample",
+            ],
+            audit_db=tmp_path / "state/run_logs/mcp_audit.db",
+        ),
         cli=CLIConfig(
             default_generic_ticks="100",
             snapshot_grace_seconds=120,
