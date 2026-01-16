@@ -4,6 +4,9 @@
 - Daily stock data after market close.
 - Daily bars (OHLCV).
 - Daily IV/HV snapshot and 1-year historical backfill.
+- Backfill CLI supports auto-from-latest resume per symbol.
+- Scheduled daily backfill command with configurable run time.
+- Monthly compaction cleanup command to merge price/volatility with log + verification tooling.
 - Fundamentals (FMP stable: profile, key-metrics-ttm, ratios-ttm, statements).
 - Corporate actions (dividends, splits).
 - MCP read-only exposure for downstream consumers.

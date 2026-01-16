@@ -3,6 +3,9 @@
 ## Now
 - Expose datasets via MCP (read-only).
 - Create ops/dev docs and runbook placeholders.
+- Add auto-from-latest backfill option for daily bars and volatility.
+- Add daily schedule command for auto backfill runs.
+- Add monthly compaction cleanup command to merge price/volatility with logs + verification script.
 
 ## Done
 - 2026-01-09: Adopt repo-root `requirements.lock` / `requirements-dev.lock` for shared environments.

@@ -65,6 +65,57 @@ def _end_dt_for_date(target: date, tz_name: str) -> str:
     return f"{target.strftime('%Y%m%d')} 23:59:59 {tz}"
 
 
+_LAST_TRADING_LOOKBACK_DAYS = 10
+
+
+def _latest_bar_date(bars: Iterable[Any]) -> date | None:
+    latest = None
+    for bar in bars:
+        bar_date = _bar_to_date(getattr(bar, "date", None))
+        if bar_date is None:
+            continue
+        if latest is None or bar_date > latest:
+            latest = bar_date
+    return latest
+
+
+def _resolve_last_trading_date(
+    ib: Any,
+    *,
+    target: date,
+    symbol: str,
+    exchange: str,
+    currency: str,
+    tz_name: str,
+    throttle: callable[[], None] | None = None,
+    lookback_days: int = _LAST_TRADING_LOOKBACK_DAYS,
+) -> date:
+    if not symbol:
+        return target
+    from ib_insync import Stock  # type: ignore
+
+    contract = Stock(symbol, exchange, currency)
+    qualified = ib.qualifyContracts(contract)
+    if not qualified:
+        return target
+
+    end_dt = _end_dt_for_date(target, tz_name)
+    duration_days = max(2, lookback_days)
+    bars = fetch_daily_bars(
+        ib,
+        qualified[0],
+        what_to_show="TRADES",
+        duration=f"{duration_days} D",
+        bar_size="1 day",
+        end_date_time=end_dt,
+        use_rth=True,
+        format_date=2,
+        throttle=throttle,
+    )
+    latest = _latest_bar_date(bars)
+    return latest or target
+
+
 def _chunk_symbols(symbols: List[str], batch_size: int | None) -> Iterable[List[str]]:
     if not batch_size or batch_size <= 0:
         yield symbols
@@ -123,6 +174,24 @@ class DailyBarsRunner:
         with session as sess:
             ib = sess.ensure_connected()
             from ib_insync import Stock  # type: ignore
+
+            ref_symbol = symbols[0].strip().upper() if symbols else ""
+            effective_date = _resolve_last_trading_date(
+                ib,
+                target=target_date,
+                symbol=ref_symbol,
+                exchange=exchange,
+                currency=currency,
+                tz_name=self.cfg.timezone.name,
+                throttle=self._throttle,
+            )
+            if effective_date != target_date:
+                logger.info(
+                    "daily bars trade_date adjusted from %s to %s",
+                    target_date,
+                    effective_date,
+                )
+                target_date = effective_date
 
             total = len(symbols)
             processed = 0
@@ -211,6 +280,7 @@ class DailyBarsRunner:
         *,
         end_date: date | None = None,
         days: int = 365,
+        auto_from_latest: bool = False,
         symbols: List[str] | None = None,
         exchange: str = "SMART",
         currency: str = "USD",
@@ -236,6 +306,25 @@ class DailyBarsRunner:
             ib = sess.ensure_connected()
             from ib_insync import Stock  # type: ignore
 
+            ref_symbol = symbols[0].strip().upper() if symbols else ""
+            effective_end = _resolve_last_trading_date(
+                ib,
+                target=target_end,
+                symbol=ref_symbol,
+                exchange=exchange,
+                currency=currency,
+                tz_name=self.cfg.timezone.name,
+                throttle=self._throttle,
+            )
+            if effective_end != target_end:
+                logger.info(
+                    "daily bars backfill end_date adjusted from %s to %s",
+                    target_end,
+                    effective_end,
+                )
+                target_end = effective_end
+                window_start = target_end - timedelta(days=max(days - 1, 0))
+
             total = len(symbols)
             processed = 0
             for batch in _chunk_symbols(symbols, batch_size):
@@ -252,7 +341,7 @@ class DailyBarsRunner:
                     start_date = window_start
                     if existing_dates:
                         latest = max(existing_dates)
-                        if latest >= window_start:
+                        if auto_from_latest or latest >= window_start:
                             start_date = latest + timedelta(days=1)
                     if start_date > target_end:
                         continue
