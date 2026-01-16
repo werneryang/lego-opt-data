@@ -1275,9 +1275,7 @@ def streaming_plan(
         if exch_matches:
             return max(exch_matches, key=lambda p: len(getattr(p, "strikes", []) or []))
         tc_matches = [
-            p
-            for p in params
-            if (getattr(p, "tradingClass", "") or "").upper() == symbol.upper()
+            p for p in params if (getattr(p, "tradingClass", "") or "").upper() == symbol.upper()
         ]
         if tc_matches:
             return max(tc_matches, key=lambda p: len(getattr(p, "strikes", []) or []))
@@ -1374,6 +1372,7 @@ def streaming(
         f"rebalances={result.rebalances} "
         f"started_at={result.started_at.isoformat()} ended_at={result.ended_at.isoformat()}"
     )
+
 
 @app.command()
 def rollup(

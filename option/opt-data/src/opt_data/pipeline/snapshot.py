@@ -304,6 +304,19 @@ class SnapshotRunner:
             with log_file.open("a", encoding="utf-8") as fh:
                 fh.write(message + "\n")
 
+        log_line(
+            json.dumps(
+                {
+                    "symbol": "",
+                    "status": "params",
+                    "slot": slot.label,
+                    "view": view,
+                    "universe": str(effective_path),
+                },
+                ensure_ascii=False,
+            )
+        )
+
         error_file = (
             Path(self.cfg.paths.run_logs) / "errors" / f"errors_{trade_date.strftime('%Y%m%d')}.log"
         )

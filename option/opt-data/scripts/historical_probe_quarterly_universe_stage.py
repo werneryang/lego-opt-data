@@ -281,7 +281,7 @@ def main() -> None:
         help="Use regular trading hours (RTH) only",
     )
     parser.add_argument("--host", default="127.0.0.1")
-    parser.add_argument("--port", type=int, default=4001)
+    parser.add_argument("--port", type=int, default=7496)
     parser.add_argument("--client-id", type=int, default=210)
     parser.add_argument("--connect-timeout-sec", type=float, default=8.0)
     parser.add_argument("--connect-retries", type=int, default=2)

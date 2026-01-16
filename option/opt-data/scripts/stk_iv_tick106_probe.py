@@ -3,7 +3,7 @@
 Probe IB 30-day implied vol for a stock via reqMktData + generic tick 106.
 
 Example (remote Gateway):
-  python scripts/stk_iv_tick106_probe.py --host 100.71.7.100 --port 4001 \
+  python scripts/stk_iv_tick106_probe.py --host 100.71.7.100 --port 7496 \
       --client-id 211 --symbol AMZN
 """
 
@@ -68,7 +68,7 @@ def main() -> int:
         description="Probe IB 30-day implied volatility (tickType=24)"
     )
     parser.add_argument("--host", default="127.0.0.1")
-    parser.add_argument("--port", type=int, default=4001)
+    parser.add_argument("--port", type=int, default=7496)
     parser.add_argument("--client-id", type=int, default=211)
     parser.add_argument("--timeout", type=float, default=15.0)
     parser.add_argument("--symbol", default="AMZN")

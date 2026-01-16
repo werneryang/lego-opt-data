@@ -21,7 +21,7 @@ def test_plan_day_includes_all_job_types(tmp_path):
     eod_jobs = [job for job in jobs if job.kind == "close_snapshot_rollup"]
     enrichment_jobs = [job for job in jobs if job.kind == "enrichment"]
 
-    assert len(snapshot_jobs) == 14  # 09:30 through 16:00 inclusive, 30-minute spacing
+    assert len(snapshot_jobs) == 15  # 09:30 through 16:15 inclusive, 30-minute spacing
     assert len(eod_jobs) == 1
     assert len(enrichment_jobs) == 1
     assert jobs[0].kind == "snapshot"

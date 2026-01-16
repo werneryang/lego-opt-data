@@ -21,7 +21,7 @@
   - Daily trading bars (OHLCV).
   - Fundamentals (IB fundamental reports).
   - Daily IV and historical volatility (current day + history).
-- Universe: S&P 500 (initially from existing `config/universe.csv`).
+- Universe: S&P 500 (initially from existing `config/stock-universe.csv`).
 - Data source: IB Gateway (subscription already in place).
  - Expose datasets via MCP for downstream consumers.
 
@@ -209,7 +209,7 @@ python -m stock_data.cli volatility \
 ```
 
 Notes:
-- Leaving `--symbols` empty will use `stock/stock-data/config/universe.csv`.
+- Leaving `--symbols` empty will use `stock/stock-data/config/stock-universe.csv`.
 - `--throttle-sec` and `--batch-size` can be adjusted to stay under IB pacing limits.
 
 ## 10. Open Questions

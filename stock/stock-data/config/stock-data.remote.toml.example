@@ -24,7 +24,7 @@ state = "/Users/michaelyang/projects/legosmos/stock/stock-data/state"
 corporate_actions = "/Users/michaelyang/projects/legosmos/stock/stock-data/config/corporate_actions.csv"
 
 [universe]
-file = "/Users/michaelyang/projects/legosmos/stock/stock-data/config/universe.csv"
+file = "/Users/michaelyang/projects/legosmos/stock/stock-data/config/stock-universe.csv"
 refresh_days = 30
 
 [storage]

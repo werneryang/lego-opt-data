@@ -11,6 +11,7 @@
 - Corporate actions (dividends, splits).
 - MCP read-only exposure for downstream consumers.
 - Dependencies locked via repo-root `requirements.lock` / `requirements-dev.lock`.
+- CI runs from repo root with `make install` and per-subproject lint/test.
 
 ## References
 - Implementation plan: stock/stock-data/IMPLEMENTATION_PLAN.md

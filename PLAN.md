@@ -10,6 +10,7 @@
 
 ## Cross-Project Milestones (Next 4-8 Weeks)
 - Unified dependency locks at repo root for shared environments.
+- CI runs from repo root with `make install` and per-subproject lint/test for option and stock.
 - Stock data MVP: daily bars + daily IV/HV + fundamentals + corporate actions (post-close).
 - Stock IV/HV history backfill: 1 year, then daily increments.
 - MCP exposure for stock datasets (read-only, consistent with opt-data).

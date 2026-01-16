@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import date, datetime, time, timedelta
+import logging
 from typing import Any, Dict, Iterable, List, Sequence
 from zoneinfo import ZoneInfo
 from pathlib import Path
@@ -20,6 +21,7 @@ from .enrichment import EnrichmentRunner
 
 
 JobKind = str
+logger = logging.getLogger(__name__)
 
 
 @dataclass(frozen=True)
@@ -308,6 +310,10 @@ class ScheduleRunner:
             if self.cfg.universe.close_file and Path(self.cfg.universe.close_file).exists()
             else self.cfg.universe.file
         )
+        if close_snapshot_progress:
+            close_snapshot_progress("", "params", {"universe": str(close_universe)})
+        else:
+            logger.info("[close-snapshot:params] universe=%s", close_universe)
 
         close_runner = self._close_snapshot_runner
         if close_runner is None:

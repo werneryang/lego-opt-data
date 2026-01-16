@@ -34,3 +34,14 @@ mcp = [
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/stock_data"]
+
+[tool.ruff]
+line-length = 100
+
+[tool.pytest.ini_options]
+minversion = "7.0"
+pythonpath = ["src"]
+addopts = "-ra"
+testpaths = ["tests"]
+norecursedirs = ["data", "state"]
+asyncio_mode = "auto"

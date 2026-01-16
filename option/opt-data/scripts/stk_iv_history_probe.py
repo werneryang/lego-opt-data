@@ -3,7 +3,7 @@
 Small STK historical IV probe for IB TWS/Gateway.
 
 Example (remote Gateway):
-  python scripts/stk_iv_history_probe.py --host 100.71.7.100 --port 4001 \
+  python scripts/stk_iv_history_probe.py --host 100.71.7.100 --port 7496 \
       --client-id 211 --symbol AMZN --bar-sizes "1 day,8 hours,1 hour"
 """
 
@@ -132,7 +132,7 @@ def _fetch_bars(
 def main() -> int:
     parser = argparse.ArgumentParser(description="Probe STK historical IV data via IB")
     parser.add_argument("--host", default="127.0.0.1")
-    parser.add_argument("--port", type=int, default=4001)
+    parser.add_argument("--port", type=int, default=7496)
     parser.add_argument("--client-id", type=int, default=211)
     parser.add_argument("--timeout", type=float, default=15.0)
     parser.add_argument("--symbol", default="AMZN")

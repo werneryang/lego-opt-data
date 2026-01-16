@@ -67,7 +67,7 @@ def test_runner_stats():
 
         class ib:
             host = "127.0.0.1"
-            port = 4001
+            port = 7496
             client_id = 1
             market_data_type = 1
 

@@ -6,7 +6,7 @@ import uuid
 from dataclasses import dataclass
 from datetime import date, datetime, timedelta
 from pathlib import Path
-from typing import Any, Callable, Dict, Iterable, List, Optional
+from typing import Any, Callable, Iterable, Optional
 from zoneinfo import ZoneInfo
 
 from ..config import AppConfig
@@ -108,10 +108,38 @@ class StreamingRunner:
         if not symbols:
             raise ValueError("No underlyings configured for streaming")
 
-        include_greeks = any(
-            field.lower() in {"iv", "greeks"} for field in streaming_cfg.fields
-        )
+        include_greeks = any(field.lower() in {"iv", "greeks"} for field in streaming_cfg.fields)
         generic_ticks = self.cfg.snapshot.generic_ticks if include_greeks else ""
+
+        per_kind_config = {
+            "options": (
+                streaming_cfg.options_flush_interval_sec,
+                streaming_cfg.options_max_buffer_rows,
+            ),
+            "spot": (
+                streaming_cfg.spot_flush_interval_sec,
+                streaming_cfg.spot_max_buffer_rows,
+            ),
+            "bars": (
+                streaming_cfg.bars_flush_interval_sec,
+                streaming_cfg.bars_max_buffer_rows,
+            ),
+        }
+        buffer_kinds = list(self._buffers.keys())
+        per_kind_config = {k: v for k, v in per_kind_config.items() if k in buffer_kinds}
+        use_per_kind = any(
+            interval is not None or max_rows is not None
+            for interval, max_rows in per_kind_config.values()
+        )
+        if use_per_kind:
+            flush_intervals = {
+                kind: (interval if interval is not None else flush_interval)
+                for kind, (interval, _) in per_kind_config.items()
+            }
+            max_rows_by_kind = {
+                kind: (max_rows if max_rows is not None else max_buffer_rows)
+                for kind, (_, max_rows) in per_kind_config.items()
+            }
 
         universe_entries = load_universe(Path(self.cfg.universe.file))
         conid_map = {entry.symbol: entry.conid for entry in universe_entries}
@@ -132,12 +160,11 @@ class StreamingRunner:
             )
 
             next_flush = self._now_fn()
+            next_flush_by_kind = {kind: self._now_fn() for kind in buffer_kinds}
             next_rebalance = self._now_fn()
             next_metrics = self._now_fn()
             end_time = (
-                self._now_fn() + _timedelta_seconds(duration_seconds)
-                if duration_seconds
-                else None
+                self._now_fn() + _timedelta_seconds(duration_seconds) if duration_seconds else None
             )
 
             try:
@@ -155,10 +182,19 @@ class StreamingRunner:
                         )
                         next_rebalance = now + _timedelta_seconds(rebalance_check_interval)
 
-                    if now >= next_flush:
-                        self._flush_buffers()
-                        next_flush = now + _timedelta_seconds(flush_interval)
-                    self._flush_if_large(max_buffer_rows)
+                    if use_per_kind:
+                        for kind, interval in flush_intervals.items():
+                            if interval <= 0:
+                                continue
+                            if now >= next_flush_by_kind[kind]:
+                                self._flush_buffers([kind])
+                                next_flush_by_kind[kind] = now + _timedelta_seconds(interval)
+                        self._flush_if_large_by_kind(max_rows_by_kind)
+                    else:
+                        if now >= next_flush:
+                            self._flush_buffers()
+                            next_flush = now + _timedelta_seconds(flush_interval)
+                        self._flush_if_large(max_buffer_rows)
                     if metrics_interval > 0 and now >= next_metrics:
                         buffer_rows = self._buffer_rows()
                         last_flush_et = None
@@ -268,9 +304,7 @@ class StreamingRunner:
             )
             self._chain_strikes[sym] = strikes_all
             self._chain_exchange[sym] = (getattr(chain, "exchange", "") or "SMART").upper()
-            self._chain_trading_class[sym] = (
-                getattr(chain, "tradingClass", None) or sym
-            )
+            self._chain_trading_class[sym] = getattr(chain, "tradingClass", None) or sym
             self._option_expiries[sym] = expiries
             self._option_strikes[sym] = strikes
             self._last_rebalance_spot[sym] = spot
@@ -560,10 +594,12 @@ class StreamingRunner:
         with self._lock:
             self._buffers[kind].append(record)
 
-    def _flush_buffers(self) -> None:
+    def _flush_buffers(self, kinds: Iterable[str] | None = None) -> int:
         drained = {}
+        kinds = list(kinds) if kinds is not None else list(self._buffers.keys())
         with self._lock:
-            for kind, buf in self._buffers.items():
+            for kind in kinds:
+                buf = self._buffers.get(kind, [])
                 if buf:
                     drained[kind] = buf[:]
                     self._buffers[kind] = []
@@ -580,6 +616,7 @@ class StreamingRunner:
         if flushed_rows:
             self._last_flush_rows = flushed_rows
             self._last_flush_at = self._now_fn()
+        return flushed_rows
 
     def _buffer_rows(self) -> int:
         with self._lock:
@@ -592,6 +629,18 @@ class StreamingRunner:
             total = sum(len(buf) for buf in self._buffers.values())
         if total >= max_rows:
             self._flush_buffers()
+
+    def _flush_if_large_by_kind(self, max_rows_by_kind: dict[str, int]) -> None:
+        to_flush: list[str] = []
+        with self._lock:
+            for kind, max_rows in max_rows_by_kind.items():
+                if max_rows <= 0:
+                    continue
+                buf = self._buffers.get(kind, [])
+                if len(buf) >= max_rows:
+                    to_flush.append(kind)
+        if to_flush:
+            self._flush_buffers(to_flush)
 
     def _unsubscribe_all(self, ib: Any) -> None:
         for symbol, tickers in self._option_tickers.items():
@@ -616,9 +665,7 @@ class StreamingRunner:
     def _trade_date_str(self) -> str:
         return to_et_date(datetime.now(ZoneInfo("UTC"))).isoformat()
 
-    def _seed_spot(
-        self, ib: Any, symbol: str, trade_date: date, conid: Optional[int]
-    ) -> float:
+    def _seed_spot(self, ib: Any, symbol: str, trade_date: date, conid: Optional[int]) -> float:
         spot = None
         if symbol in self._spot_prices:
             spot = self._spot_prices.get(symbol)

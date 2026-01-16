@@ -121,6 +121,8 @@ class MCPConfig:
     days: int
     allow_raw: bool
     allow_clean: bool
+    enabled_tools: list[str]
+    audit_db: Path
 
 
 @dataclass
@@ -156,6 +158,12 @@ class StreamingConfig:
     rights: list[str]
     fields: list[str]
     bars_interval: str
+    options_flush_interval_sec: float | None = None
+    spot_flush_interval_sec: float | None = None
+    bars_flush_interval_sec: float | None = None
+    options_max_buffer_rows: int | None = None
+    spot_max_buffer_rows: int | None = None
+    bars_max_buffer_rows: int | None = None
     exchange: str = "SMART"
 
 
@@ -414,12 +422,26 @@ class AppConfig:
         else:
             invalid_rights = {r.upper() for r in self.streaming.rights} - {"C", "P"}
             if invalid_rights:
-                errors.append(
-                    f"Invalid streaming.rights: {sorted(invalid_rights)} (allowed: C, P)"
-                )
+                errors.append(f"Invalid streaming.rights: {sorted(invalid_rights)} (allowed: C, P)")
 
         if not self.streaming.bars_interval:
             errors.append("Invalid streaming.bars_interval: must be non-empty")
+
+        for field, value in {
+            "streaming.options_flush_interval_sec": self.streaming.options_flush_interval_sec,
+            "streaming.spot_flush_interval_sec": self.streaming.spot_flush_interval_sec,
+            "streaming.bars_flush_interval_sec": self.streaming.bars_flush_interval_sec,
+        }.items():
+            if value is not None and value < 0:
+                errors.append(f"Invalid {field}: {value} (must be >= 0)")
+
+        for field, value in {
+            "streaming.options_max_buffer_rows": self.streaming.options_max_buffer_rows,
+            "streaming.spot_max_buffer_rows": self.streaming.spot_max_buffer_rows,
+            "streaming.bars_max_buffer_rows": self.streaming.bars_max_buffer_rows,
+        }.items():
+            if value is not None and value < 0:
+                errors.append(f"Invalid {field}: {value} (must be >= 0)")
 
         # Validate CLI configuration
         if self.cli.snapshot_grace_seconds < 0:
@@ -572,6 +594,22 @@ def load_config(file: Optional[Path] = None) -> AppConfig:
             return [item.upper() for item in items]
         return items
 
+    def _optional_float(value: Any) -> float | None:
+        if value is None:
+            return None
+        try:
+            return float(value)
+        except (TypeError, ValueError):
+            return None
+
+    def _optional_int(value: Any) -> int | None:
+        if value is None:
+            return None
+        try:
+            return int(value)
+        except (TypeError, ValueError):
+            return None
+
     def _pool_range(role: str, range_raw: Any) -> tuple[int, int]:
         default_ranges = {
             "prod": (0, 99),
@@ -607,7 +645,7 @@ def load_config(file: Optional[Path] = None) -> AppConfig:
 
     ib = IBConfig(
         host=g("ib", "host", "127.0.0.1"),
-        port=g("ib", "port", 4001),
+        port=g("ib", "port", 7496),
         client_id=None,  # set below after normalizing
         market_data_type=g("ib", "market_data_type", 2),
         client_id_pool=client_id_pool,
@@ -631,7 +669,9 @@ def load_config(file: Optional[Path] = None) -> AppConfig:
         raw=_as_path(g("paths", "raw", "data/raw/ib/chain"), base=base_dir),
         clean=_as_path(g("paths", "clean", "data/clean/ib/chain"), base=base_dir),
         state=_as_path(g("paths", "state", "state"), base=base_dir),
-        contracts_cache=_as_path(g("paths", "contracts_cache", "state/contracts_cache"), base=base_dir),
+        contracts_cache=_as_path(
+            g("paths", "contracts_cache", "state/contracts_cache"), base=base_dir
+        ),
         run_logs=_as_path(g("paths", "run_logs", "state/run_logs"), base=base_dir),
     )
 
@@ -721,6 +761,14 @@ def load_config(file: Optional[Path] = None) -> AppConfig:
         days=int(g("mcp", "days", 3)),
         allow_raw=bool(g("mcp", "allow_raw", True)),
         allow_clean=bool(g("mcp", "allow_clean", True)),
+        enabled_tools=_normalize_list(
+            g(
+                "mcp",
+                "enabled_tools",
+                "health_overview,run_status_overview,list_recent_runs,get_partition_issues,get_chain_sample",
+            )
+        ),
+        audit_db=_as_path(g("mcp", "audit_db", "state/run_logs/mcp_audit.db"), base=base_dir),
     )
     cli = CLIConfig(
         default_generic_ticks=g(
@@ -770,6 +818,14 @@ def load_config(file: Optional[Path] = None) -> AppConfig:
         rights=_normalize_list(g("streaming", "rights", ["C", "P"]), upper=True),
         fields=_normalize_list(g("streaming", "fields", ["bid", "ask", "last", "iv", "greeks"])),
         bars_interval=g("streaming", "bars_interval", "5s"),
+        options_flush_interval_sec=_optional_float(
+            g("streaming", "options_flush_interval_sec", None)
+        ),
+        spot_flush_interval_sec=_optional_float(g("streaming", "spot_flush_interval_sec", None)),
+        bars_flush_interval_sec=_optional_float(g("streaming", "bars_flush_interval_sec", None)),
+        options_max_buffer_rows=_optional_int(g("streaming", "options_max_buffer_rows", None)),
+        spot_max_buffer_rows=_optional_int(g("streaming", "spot_max_buffer_rows", None)),
+        bars_max_buffer_rows=_optional_int(g("streaming", "bars_max_buffer_rows", None)),
         exchange=g("streaming", "exchange", "SMART"),
     )
 

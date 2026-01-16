@@ -16,14 +16,15 @@
   - 定时器模式（适配 launchd/systemd timer/cron：跑完当日任务自动退出，第二天由定时器重启）：`python -m opt_data.cli schedule --live --exit-when-idle --config config/opt-data.snapshot.local.toml`
   - 常用参数：`--symbols AAPL,MSFT`（临时缩小范围）、`--date 2025-12-15`（跑指定交易日；不适用于 `--continuous`）
 - 启动盘中 streaming 订阅（交易日 09:35–16:15 ET，独立进程）：推荐用 `scripts/ops/streaming_loop.py` 长期运行；或由 timer 在 09:35 ET 拉起 `python -m opt_data.cli streaming --config config/opt-data.streaming.local.toml --duration 23100`
-- 纯终端长期值守（不依赖 launchd，需开两个终端窗口）：
-  - 终端 1（snapshot 调度）：`TZ=America/New_York .venv/bin/python -m opt_data.cli schedule --live --continuous --config config/opt-data.snapshot.local.toml`
+
+- 纯终端长期值守（不依赖 launchd，需开两个终端窗口），都在option/opt-data目录下：
+  - 终端 1（snapshot 调度）：`TZ=America/New_York .venv/bin/python -m opt_data.cli schedule --live --continuous --config config/opt-data.snapshot.local.toml snapshot-interval-minutes 5`
   - 终端 2（streaming）：`./scripts/ops/streaming_loop.py`
 
 - 开始前快速预演（只打印计划并立即执行当日任务，适合验证配置；不建议每天都跑）：
   - `python -m opt_data.cli schedule --simulate --config config/opt-data.snapshot.local.toml`
 
-- 打开 UI（Dashboard/Operations 面板）：
+- 打开 UI（Dashboard/Operations 面板）,在option/opt-data目录下：
   - `streamlit run src/opt_data/dashboard/app.py`
   - `streamlit run src/opt_data/dashboard/app.py --server.address 0.0.0.0`
 
@@ -77,6 +78,7 @@
 > 目标：交易日 09:35–16:15 ET 启动，收盘后自动退出。
 
 - 方式 A（纯 Python 常驻）：运行 `scripts/ops/streaming_loop.py`，每天 09:35 ET 自动启动，并调用 `scripts/ops/streaming_duration.py` 计算 `--duration` 在收盘后退出。
+- 退出一致性：`streaming_loop.py` 已捕获 Ctrl+C 并干净退出（不打印堆栈），行为与 `schedule --live --continuous` 类似。
 - 方式 B（定时器）：使用 launchd/systemd timer/cron 在 09:35 ET 拉起 `scripts/launchd/opt-data-streaming.sh`，脚本会调用 `scripts/ops/streaming_duration.py` 自动计算 `--duration` 并在收盘后退出。
 - macOS launchd：复制模板 `docs/ops/launchd/com.legosmos.opt-data.streaming.plist` 到 `~/Library/LaunchAgents/` 并按本机路径调整。
 - 手动运行示例：`python -m opt_data.cli streaming --config config/opt-data.streaming.local.toml --duration 23100`
@@ -84,6 +86,7 @@
 - 时区：与调度一样，确保运行环境显式设置 `TZ=America/New_York`。
 
 ## 当前生产范围与运行参数
+- 现行运行（2026-01-09）：两个终端分别运行 `snapshot` 与 `streaming`；盘中 `snapshot` 为 5 分钟间隔，仅 SPY，主要订阅约 80 条合约（当周五 + 下月度）。
 - 覆盖范围：`config/universe.csv` 全量清单（已超过原 Stage 2/Top 10 目标）。
 - 速率与并发：`rate_limits.snapshot.per_minute=30`、`max_concurrent_snapshots=14`（提高并发/分批调度的方案暂缓，需额外评审）。
 - 调度链路（ET）：09:30–16:00 每 30 分钟 `snapshot` → 17:30 `close-snapshot` 后紧接 `rollup` → 次日 04:30 `enrichment` → 自检/日志扫描。

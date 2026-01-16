@@ -5,7 +5,7 @@ ib = IB()
 
 
 async def get_spx_chain_in_3_seconds():
-    await ib.connectAsync("127.0.0.1", 4001, clientId=1)
+    await ib.connectAsync("127.0.0.1", 7496, clientId=1)
     ib.reqMarketDataType(4)
 
     spx = Index("SPX", "CBOE")

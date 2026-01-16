@@ -17,9 +17,7 @@ def _parse_date_dir(name: str) -> date | None:
 def existing_partition_dates(root: Path, symbol: str, exchange: str) -> set[date]:
     if not root.exists():
         return set()
-    pattern = (
-        f"date=*/symbol={symbol.upper()}/exchange={exchange.upper()}/part-*.parquet"
-    )
+    pattern = f"date=*/symbol={symbol.upper()}/exchange={exchange.upper()}/part-*.parquet"
     dates: set[date] = set()
     for path in root.glob(pattern):
         date_dir = path.parents[2].name
@@ -32,4 +30,3 @@ def existing_partition_dates(root: Path, symbol: str, exchange: str) -> set[date
 def latest_partition_date(root: Path, symbol: str, exchange: str) -> date | None:
     dates = existing_partition_dates(root, symbol, exchange)
     return max(dates) if dates else None
-

@@ -28,7 +28,7 @@ run_logs = "state/run_logs"
 [universe]
 file = "config/universe.csv"              # 默认全量标的清单（Symbol,conid）
 intraday_file = "config/universe.csv"  # 盘中快照精简版（可选）
-close_file = ""                           # 收盘快照专用（为空则使用 file）
+close_file = "config/universe_closeday.csv"                           # 收盘快照专用（为空则使用 file）
 refresh_days = 30                         # 可选：多少天后提醒更新成分
 
 [reference]
@@ -140,6 +140,10 @@ limit = 200
 days = 3
 allow_raw = true
 allow_clean = true
+# 指定 MCP 暴露的工具列表
+enabled_tools = ["health_overview", "run_status_overview", "list_recent_runs", "get_partition_issues", "get_chain_sample"]
+# MCP 调用审计日志
+audit_db = "state/run_logs/mcp_audit.db"
 
 [rollup]
 close_slot = 13                     # 16:00 槽位（默认收盘）

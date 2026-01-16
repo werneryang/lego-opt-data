@@ -384,11 +384,7 @@ class DailyBarsRunner:
                     wrote_any = False
                     for bar in bars:
                         bar_date = _bar_to_date(getattr(bar, "date", None))
-                        if (
-                            bar_date is None
-                            or bar_date < start_date
-                            or bar_date > target_end
-                        ):
+                        if bar_date is None or bar_date < start_date or bar_date > target_end:
                             continue
                         record = {
                             "trade_date": bar_date,

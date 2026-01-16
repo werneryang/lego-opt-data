@@ -36,7 +36,9 @@ class StreamingWriter:
         grouped = df.groupby(["trade_date", "underlying", "exchange"], dropna=False)
         for (trade_date_value, underlying, exchange), group in grouped:
             trade_date_obj = _coerce_date(trade_date_value) or datetime.utcnow().date()
-            part = partition_for(self.cfg, kind_root, trade_date_obj, str(underlying), str(exchange))
+            part = partition_for(
+                self.cfg, kind_root, trade_date_obj, str(underlying), str(exchange)
+            )
             part_dir = part.path()
             part_dir.mkdir(parents=True, exist_ok=True)
 

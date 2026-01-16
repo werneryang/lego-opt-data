@@ -33,3 +33,9 @@
 ## Ownership and review
 - Each subproject has its own owner/maintainers and review requirements.
 - Cross-project changes require review from both subproject owners.
+
+## AI Execution & Model Optimization
+- **Global Rules**: Always adhere to `.agent/rules/global.md` for cross-project standards.
+- **Claude Optimization**: When using Claude, utilize its strong logical reasoning by requesting thought-chains for complex financial calculations.
+- **Gemini Optimization**: Leverage Gemini's long context to analyze cross-repo patterns and ensure architectural consistency across `option` and `stock` projects.
+- **GPT Optimization**: Utilize GPT's strong instruction following to enforce strict adherence to file boundaries and technical constraints. Use it for "clean-up" tasks and logic refactoring.

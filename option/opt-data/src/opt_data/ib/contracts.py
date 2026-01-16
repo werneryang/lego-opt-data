@@ -38,7 +38,7 @@ class ResolvedOption:
 
 def connect_ib(
     host: str = "127.0.0.1",
-    port: int = 4001,
+    port: int = 7496,
     client_id: int = 101,
     market_data_type: int = 2,
 ) -> "IB":

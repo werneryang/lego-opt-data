@@ -21,7 +21,7 @@ set -e
 
 # Configuration
 REMOTE_HOST="${IB_HOST:-100.71.7.100}"
-REMOTE_PORT="${IB_PORT:-4001}"
+REMOTE_PORT="${IB_PORT:-7496}"
 CLIENT_ID="${IB_CLIENT_ID:-220}"
 UNIVERSE="config/universe_history_202511.csv"
 BATCH_COUNT=8
