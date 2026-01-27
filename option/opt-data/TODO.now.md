@@ -1,14 +1,6 @@
 # 本周任务（滚动更新）
 
 ## 待办
-- [ ] 盘中实时订阅方案落地：明确数据源/接口、订阅清单与落盘 schema（SPY spot/5s/VIX spot + 2 expiries × 20 strikes）。（TBD）
-- [ ] 合约选择实现：拉取期权链，筛选到期日（本周五 + 下个月月度），计算行权价步进与 ATM 上下 10 档，生成 40 合约订阅列表。（TBD）
-- [ ] 动态调整逻辑实现（Hysteresis）：价格移动 >3 个行权价步进触发；取消 6 个旧合约、订阅 6 个新合约；确保幂等与节流。（TBD）
-- [ ] 配置项新增：`streaming.underlyings`、`streaming.expiries_policy`、`streaming.strikes_per_side`、`streaming.rebalance_threshold_steps`、`streaming.fields`、`streaming.bars_interval=5s`。（TBD）
-- [ ] 监控与 QA：订阅数量、重平衡次数、延迟/缺字段比例；异常阈值与告警记录。（TBD）
-- [ ] 冒烟验证：盘中启动订阅，触发一次重平衡，检查数据落盘与字段完整性。（TBD）
-- [ ] 结构迁移执行：按 `docs/ops/migration-minimal-downtime.md` 完成 GitHub 目录调整、入口/脚本路径更新与 `configs/` 迁移（2025-12-28）
-- [ ] 结构迁移验证：开发机/生产机最小冒烟 + `selfcheck/logscan` 验证（2025-12-28）
 - [ ] MCP 只读接口（MVP）计划落地：确认数据范围（data/clean + data/raw）、运行状态来源（state/run_logs + data/metrics.db）、CLI 形态与工具清单。（2025-12-24）
 - [ ] MCP 适配层：实现 Parquet 只读读取（分区过滤 + limit）与 run_logs/metrics 聚合；写入 mcp_audit_log。（TBD）
 - [ ] MCP 工具集 v1：health_overview/run_status_overview/list_recent_runs/get_partition_issues/get_chain_sample（强制 limit、只读、统一 meta）。（TBD）
@@ -61,6 +53,18 @@
 ## Done 2026-01-09
 - [x] 依赖锁定：引入仓库根目录 `requirements.lock`/`requirements-dev.lock`，并统一安装与更新流程（根目录 `make install`/`make lock`）。
 
+## Done 2026-01-27
+- [x] 盘中实时订阅方案落地：明确数据源/接口、订阅清单与落盘 schema（SPY spot/5s/VIX spot + 2 expiries × 20 strikes）。（生产机完成）
+- [x] 合约选择实现：拉取期权链，筛选到期日（本周五 + 下个月月度），计算行权价步进与 ATM 上下 10 档，生成 40 合约订阅列表。（生产机完成）
+- [x] 动态调整逻辑实现（Hysteresis）：价格移动 >3 个行权价步进触发；取消 6 个旧合约、订阅 6 个新合约；确保幂等与节流。（生产机完成）
+- [x] 配置项新增：`streaming.underlyings`、`streaming.expiries_policy`、`streaming.strikes_per_side`、`streaming.rebalance_threshold_steps`、`streaming.fields`、`streaming.bars_interval=5s`。（生产机完成）
+- [x] 监控与 QA：订阅数量、重平衡次数、延迟/缺字段比例；异常阈值与告警记录。（生产机完成）
+- [x] 冒烟验证：盘中启动订阅，触发一次重平衡，检查数据落盘与字段完整性。（生产机完成）
+- [x] 结构迁移执行：按 `docs/ops/migration-minimal-downtime.md` 完成 GitHub 目录调整、入口/脚本路径更新与 `configs/` 迁移。（生产机完成）
+- [x] 结构迁移验证：开发机/生产机最小冒烟 + `selfcheck/logscan` 验证。（生产机完成）
+- [x] 实时行情权限开通与验证。（生产机完成）
+- [x] 交易日历数据源配置/校验，供 APScheduler/systemd 使用。（生产机完成）
+
 ## Done 2026-01-08
 - [x] Streaming 无人值守运行窗口（交易日 09:35–16:00 ET）与 launchd 模板、自动时长脚本同步到运维手册与计划。（2026-01-08）
 
@@ -78,8 +82,7 @@
   - 验收：`python -m opt_data.cli schedule --simulate --date <早收盘日期> --config config/opt-data.test.toml` 显示最后一个槽位为真实收盘时刻；新增早收盘相关单测通过；`docs/ops/ops-runbook.md` 更新依赖与回退说明。
 
 ## 阻塞
-- 实时行情权限需本地 IB Gateway/TWS 账号开通；若仅有延迟权限需验证降级路径。
-- APScheduler/systemd 模块需访问交易日历（含早收盘），当前依赖手工维护，需补充数据源或校验流程。
+- 无（已在生产机完成）。
 
 ## Done 2025-09-26
 - [x] 环境准备与依赖安装：创建 Python 3.11 venv，`make install && make test && make lint`

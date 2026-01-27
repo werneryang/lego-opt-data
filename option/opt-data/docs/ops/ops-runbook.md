@@ -93,6 +93,13 @@
 - 环境前置：IB Gateway/TWS 实时行情权限（若降级至延迟需关注 `delayed_fallback` 占比）、`pandas-market-calendars` 交易日历可用、`TZ=America/New_York`。
 - 输出与日志：数据写入 `data/raw|clean/ib/chain/`（分 view/parquet），状态与日志位于 `state/run_logs/`（errors/selfcheck/metrics）。
 
+## 生产验收记录
+- **2026-01-27（生产机完成）**
+  - 盘中 streaming 订阅落地：SPY spot/5s bars/VIX spot + 2 expiries × 20 strikes，完成一次 Hysteresis 重平衡；订阅落盘与字段完整性通过。
+  - 订阅监控与 QA：订阅数量、重平衡次数、延迟/缺字段比例已可观测并记录。
+  - 结构迁移执行与验证：完成目录与入口迁移后，在生产机完成最小冒烟并通过 `selfcheck/logscan`。
+  - 外部依赖：实时行情权限已开通并验证；交易日历数据源可用并完成校验（供调度与早收盘识别）。
+
 ## 运行前准备
 1. 启动 IB Gateway/TWS（默认：`127.0.0.1:4001`），确认登录账号具备美股期权**实时行情**权限；若仅有延迟权限，允许自动降级。
 2. 推荐使用项目专用虚拟环境（避免污染 base Conda 并触发 NumPy 升级冲突）：

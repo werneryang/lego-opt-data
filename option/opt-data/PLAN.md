@@ -132,6 +132,12 @@
 ## 进展快照（2025-12-28 更新）
 - 结构迁移与多包布局定稿：新增独立迁移手册 `docs/ops/migration-minimal-downtime.md`，并在 `docs/ops/ops-runbook.md`、`docs/dev/ops-runbook-dev.md` 中改为引用链接；同步 `.agent/workflows/structure-migration-minimal-downtime.md`。
 
+## 进展快照（2026-01-27 更新）
+- 盘中实时订阅已在生产机完成：SPY spot/5s bars/VIX spot、2 expiries × 20 strikes；包含合约选择、Hysteresis 重平衡、`streaming.*` 配置项与落盘 schema。
+- 盘中订阅监控与 QA 已落地，完成一次重平衡冒烟验证，落盘与字段完整性通过。
+- 结构迁移执行与验证已在生产机完成（含最小冒烟与 `selfcheck/logscan`）。
+- 实时行情权限与交易日历数据源已在生产机完成配置与校验，相关阻塞解除。
+
 ## 本周目标（2025-11-03 当周）
 - **M1 · 槽位与调度（早收盘感知）**
   - 在 `src/opt_data/util/calendar.py` 增加会话开/收盘获取（优先使用 `pandas-market-calendars`，无依赖则 Mon–Fri 回退）。
